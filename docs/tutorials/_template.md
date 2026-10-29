@@ -1,120 +1,120 @@
-# 第 X 课：主题（v0.X）
+# Lesson X: Topic (v0.X)
 
-上一课：[上一课](上一课.md) · [教程总览](README.md) · 下一课：v0.Y（规划中）
+Previous: [Previous lesson](previous-lesson.md) · [Tutorial overview](README.md) · Next: v0.Y (planned)
 
-> 代码快照：`v0.X` · 相邻差异：`v0.X-1..v0.X` · 命令环境：Bash/zsh
+> Code snapshot: `v0.X` · Adjacent diff: `v0.X-1..v0.X` · Shell: Bash/zsh
 
-> 补丁快照（按需）：`v0.X.Y` · 补丁基线：`v0.X..v0.X.Y`
+> Patch snapshot (if needed): `v0.X.Y` · Patch baseline: `v0.X..v0.X.Y`
 
-仅在本课同时讲解补丁版本时保留上一行；补丁内容必须单独声明补丁 tag、基线，并为该 tag 提供固定源码链接。
+Keep the line above only when this lesson also covers a patch version; patch content must declare its own patch tag and baseline, and provide pinned source links for that tag.
 
-> 运行要求：Python 3.10+。如历史 `pyproject.toml` 元数据与源码语法不一致，在这里明确说明。
+> Requirements: Python 3.10+. If historical `pyproject.toml` metadata does not match the source syntax, state it clearly here.
 
-## 本课目标
+## Lesson Goals
 
-围绕一个明确的学习结果，说明本课只新增的核心概念，以及读者完成本课后应能解释或完成的事情。优先用一条教学主线组织全文，不要提前描述后续版本行为。
+Center on one clear learning outcome. State the only new core concepts in this lesson, and what the reader should be able to explain or do after it. Prefer one teaching thread for the whole text, and do not describe later version behavior in advance.
 
-## 上一版的问题
+## Problems in the Previous Version
 
-先用一到两段通俗说明上一版本的限制、本版要解决的问题，以及这些问题如何影响正常使用。只讨论本版本相对上一版本的差异。
+In one or two plain paragraphs, describe the limits of the previous version, the problem this version solves, and how those problems affect normal use. Discuss only the differences between this version and the previous one.
 
-## 前置条件与版本切换
+## Prerequisites and Version Checkout
 
-列出环境、上一课和可复现的版本切换命令。
+List the environment, the previous lesson, and reproducible version switch commands.
 
 ```bash
 git checkout v0.X-1
 git diff --stat v0.X-1..v0.X
-git diff v0.X-1..v0.X -- <本版相关文件>
+git diff v0.X-1..v0.X -- <files relevant to this version>
 git checkout v0.X
 ```
 
-## 新增与改动文件
+## New and Changed Files
 
-先用 `git diff --stat` 确认本版范围，再填写文件表；表格只列与本课教学主线直接相关的文件，不要把完整变更列表当作教程正文。
+First confirm this version's scope with `git diff --stat`, then fill in the file table. List only the files directly related to the lesson's teaching thread; do not use the full change list as tutorial text.
 
-| 文件 | 变化 | 作用 |
+| File | Change | Purpose |
 |---|---|---|
 | `src/...` | ... | ... |
 
-## 版本变更定位
+## Version Change Map
 
-用最清楚的方式说明本版本相对上一版本的结构变化。跨模块、改变调用链或改变运行时流程时，使用流程图、架构图、时序图或等价的结构化表示；局部改动可以使用变更表或真实 diff。不要为了满足形式重复表达同一变化。
+Show the structural change of this version against the previous one in the clearest way. When changes cross modules, change the call chain, or change the runtime flow, use a flow diagram, architecture diagram, sequence diagram, or an equivalent structured view; local changes can use a change table or a real diff. Do not repeat the same change just to satisfy a format.
 
-跨模块版本默认使用“上一版基线图 + 本版变更图”，并在图前给出图例：
-
-```text
-[旧] 上一版已有    [+] 本版新增    [~] 本版修改
-[C] 主要消费者    [B] 本版边界/不负责
-```
-
-基线图要能单独说明上一版的真实入口、关键调用链、数据或消息流向和收口方式；变更图要在保留相关旧节点的基础上标出本版插入点、新能力入口、主要消费者，以及正常路径和至少一条重要失败/降级路径。图中节点应使用对应 tag 中真实存在的模块、函数、状态字段或协议步骤，箭头应表示真实调用、数据流或控制流。
-
-图后可按需用简短的变更映射表把节点/边对应到文件和符号，避免把改动文件表原样画成方框。默认使用可直接阅读的 ASCII 文本图，不依赖外部图片或渲染服务。
+Cross-module versions use "a baseline diagram of the previous version + a change diagram of this version" by default, with a legend before the diagrams:
 
 ```text
-上一版本：
-入口 -> 既有模块 -> 输出
-
-本版本：
-入口 -> 既有模块 -> 新增模块 -> 输出
-                         |
-                         +-> 主要消费者
-                         +-> 边界/失败路径
+[old] in previous version    [+] new in this version    [~] changed in this version
+[C] main consumer            [B] boundary of this version / not its responsibility
 ```
 
-图中的模块、函数和调用顺序必须与对应代码 tag 一致；不得把后续版本能力提前画入本课。作者应使用 `git show <tag>` 或真实 diff 核对图中节点和边。
+The baseline diagram must stand alone and show the previous version's real entry point, key call chain, data or message flow, and how it finishes. The change diagram must keep the related old nodes and mark this version's insertion points, new capability entry points, main consumers, the normal path, and at least one important failure/degradation path. Nodes must be modules, functions, state fields, or protocol steps that really exist at the corresponding tag, and arrows must show real calls, data flow, or control flow.
 
-## 核心概念与数据结构
-
-按教学主线逐个介绍本版本新增的概念。每个概念按以下顺序展开：
+After the diagram, you can add a short change mapping table that maps nodes/edges to files and symbols, so that you do not just draw the changed file table as boxes. Use ASCII text diagrams that can be read directly by default, without external images or rendering services.
 
 ```text
-要解决的问题 -> 直观解释 -> 最小代码片段或真实 diff
-             -> 这段代码改变了什么 -> 正常路径与边界
+Previous version:
+entry -> existing module -> output
+
+This version:
+entry -> existing module -> new module -> output
+                                |
+                                +-> main consumer
+                                +-> boundary/failure path
 ```
 
-首次出现的术语给出中文解释。只有确实帮助理解主线时，才列出数据结构、输入、输出、返回值及相关配置；不要先集中罗列内部字段和函数。
+Modules, functions, and call order in the diagram must match the corresponding code tag; do not draw later-version capabilities into this lesson. Authors should check nodes and edges with `git show <tag>` or the real diff.
 
-## 为什么这样设计
+## Core Concepts and Data Structures
 
-说明本版为何选择当前方案而不是其他可行方案；写清收益、代价、由此带来的限制，以及本版刻意不解决的事情。
+Introduce the concepts new in this version one by one along the teaching thread. Develop each concept in this order:
 
-## 设计边界
+```text
+problem to solve -> intuitive explanation -> minimal code snippet or real diff
+                 -> what this code changes -> normal path and boundaries
+```
 
-明确本版支持与不支持的场景，分别说明正常路径、失败/降级路径、异常边界和协议或安全不变量。不要把未实现的能力描述成已实现。
+Explain each term in plain English where it first appears. List data structures, inputs, outputs, return values, and related configuration only when they really help the main thread; do not list internal fields and functions first.
 
-## 关键流程
+## Why This Design
 
-用代码块或短流程图展示入口、主路径和至少一条重要失败或降级路径。说明读者在运行时应观察到什么。
+Explain why this version chose the current approach instead of other viable ones; state the benefits, costs, resulting limits, and what this version intentionally does not solve.
 
-“版本变更定位”说明相对上一版改变了什么；“关键流程”说明当前版本运行时如何执行。两者不要互相替代。
+## Design Boundaries
 
-## 实现拆解
+State clearly which scenarios this version supports and which it does not; describe the normal path, failure/degradation paths, exception boundaries, and protocol or safety invariants. Do not describe unimplemented capabilities as implemented.
 
-只解释核心概念没有覆盖的实现细节，例如调用顺序、默认值、异常边界和配置项，并链接对应 tag 的源码。避免重复前面的流程和边界说明。
+## Key Flow
 
-每个核心概念至少给出一段最小关键代码或真实 `git diff`，并用通俗语言解释它解决的具体问题、输入、输出和不变量；完整实现只通过固定 tag 链接提供。
+Use a code block or short flow diagram to show the entry, the main path, and at least one important failure or degradation path. Say what the reader should observe at runtime.
 
-## 运行与观察（按需）
+"Version Change Map" says what changed against the previous version; "Key Flow" says how the current version runs. One does not replace the other.
 
-仅在能帮助理解本课概念时，提供面向真实使用流程的命令和可观察现象。每条命令都说明 shell，并写出读者应观察的关键输出或状态变化，以及它如何对应本课概念。命令行参数称为“命令行首条任务”，并说明程序随后仍进入交互循环。不要新增孤立的最小离线示例、测试命令或验收清单。
+## Implementation Breakdown
 
-## 本版特性、下一课与代码索引
+Explain only implementation details that the core concepts did not cover, such as call order, default values, exception boundaries, and configuration items, and link to the source at the corresponding tag. Avoid repeating the earlier flow and boundary descriptions.
 
-总结本版独有能力，预告下一课，并列出本课涉及的核心实现文件。测试文件只有在帮助理解实现时才列出。源码链接必须固定到本课声明的 tag（若有补丁，也要列出补丁 tag 的链接）：
+Give at least one minimal key code snippet or real `git diff` for each core concept, and explain in plain language the specific problem it solves, its inputs, outputs, and invariants; provide the full implementation only through pinned tag links.
+
+## Run and Observe (If Needed)
+
+Only when it helps the reader understand the lesson's concepts, give commands and observable results from a real usage flow. State the shell for each command, and write the key output or state change the reader should observe and how it maps to the lesson's concept. Call a command-line argument a "command-line first task", and state that the program then still enters the interactive loop. Do not add isolated minimal offline examples, test commands, or acceptance checklists.
+
+## Version Features, Next Lesson, and Code Index
+
+Summarize the capabilities unique to this version, preview the next lesson, and list the core implementation files this lesson covers. List test files only when they help understand the implementation. Source links must be pinned to the tag this lesson declares (if there is a patch, also list links for the patch tag):
 
 ```markdown
 [src/mini_agent/example.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.X/src/mini_agent/example.py)
 ```
 
 <!--
-作者提交前自检（不要保留在课程正文中）：
-- 同步 README（中英文）、教程索引、操作手册、CHANGELOG 和 pyproject.toml 版本信息。
-- 确认命令均注明 shell，并统一使用 PYTHONPATH=src python ...；CLI 参数说明使用“命令行首条任务”，且没有暗示进程随后立即退出。
-- 确认默认值、调用顺序、失败路径、返回值、配置项和协议字段均与对应 tag 一致，术语首次出现时已解释。
-- 确认源码链接固定到已声明的 tag，不链接默认分支或本机路径。
-- 提交前运行：
+Author pre-commit self-check (do not keep in the lesson text):
+- Sync the README, tutorial index, operation manual, CHANGELOG, and pyproject.toml version.
+- Confirm that every command states its shell and uses PYTHONPATH=src python ...; CLI arguments are called a "command-line first task", without suggesting that the process exits right after.
+- Confirm that default values, call order, failure paths, return values, configuration items, and protocol fields match the corresponding tag, and that terms are explained where they first appear.
+- Confirm that source links are pinned to the declared tag, not to the default branch or local paths.
+- Before committing, run:
   PYTHONPATH=src python scripts/check_tutorials.py
   PYTHONPATH=src python scripts/check_tutorial_facts.py
 -->

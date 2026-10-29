@@ -1,33 +1,33 @@
-# 第 14 课：项目级指令（Project Instructions，v0.14）
+# Lesson 14: Project instructions (Project Instructions, v0.14)
 
-上一课：[上下文压缩](13-context-compaction.md) · [教程总览](README.md) · 下一课：[任务清单与状态](15-task-state.md)
+Previous: [Context compaction](13-context-compaction.md) · [Tutorial overview](README.md) · Next: [Task list and state](15-task-state.md)
 
-> 代码快照：`v0.14` · 相邻差异：`v0.13.1..v0.14` · 命令环境：Bash/zsh
+> Code snapshot: `v0.14` · Adjacent diff: `v0.13.1..v0.14` · Shell: Bash/zsh
 
-> 运行要求：Python 3.10+。历史 tag 的 `pyproject.toml` 仍标记 Python 3.9，但 v0.14 源码已使用 3.10 语法。
+> Requirements: Python 3.10+. The `pyproject.toml` of historical tags still says Python 3.9, but the v0.14 source already uses 3.10 syntax.
 
-## 本课目标
+## Lesson Goals
 
-本课只介绍一个变化：Agent 在启动时读取适用的 `AGENTS.md`，把项目规则放入 system prompt（系统提示词），并在每次 LLM 请求中保留这段规则。
+This lesson introduces only one change: at startup the Agent reads the applicable `AGENTS.md`, puts the project rules into the system prompt, and keeps those rules in every LLM request.
 
-完成本课后，你应该能够：
+After this lesson, you should be able to:
 
-- 说明 Git 仓库内外 `AGENTS.md` 的发现范围和合并顺序；
-- 看懂来源标记、12,000 字符上限和读取失败的处理；
-- 解释为什么项目指令放在 `protected_messages`，而不是普通 `history`；
-- 区分“告诉模型一条规则”和 `PermissionGate` 实际授予工具权限。
+- Describe the discovery range and merge order of `AGENTS.md` inside and outside a Git repository;
+- Understand the source markers, the 12,000-character limit, and how read failures are handled;
+- Explain why project instructions go into `protected_messages` instead of the ordinary `history`;
+- Tell the difference between "telling the model a rule" and the tool permissions `PermissionGate` actually grants.
 
-本课的核心不变量是：**项目规则随每次请求保留，但不会被当作工具授权配置。**
+The core invariant of this lesson: **project rules are kept with every request, but they are not treated as tool authorization configuration.**
 
-## 上一版的问题
+## Problems in the Previous Version
 
-v0.13 能在上下文超预算时压缩旧历史，但它只管理已经进入消息历史的内容。项目的测试命令、代码风格或禁止操作如果没有显式发给模型，模型就看不到；如果把规则追加到普通历史，后续 trimming（裁剪）可能删除它，compaction（压缩）也可能改写它。
+v0.13 can compact old history when the context is over budget, but it only manages content that has already entered the message history. If the project's test commands, code style, or forbidden operations are not explicitly sent to the model, the model cannot see them; if the rules are appended to the ordinary history, later trimming may delete them and compaction may rewrite them.
 
-因此 v0.14 把“项目规则”和“对话历史”分开管理：规则在进程启动时加载一次，成为受保护的 system 消息；历史仍交给 `ContextManager` 按预算处理。
+So v0.14 manages "project rules" and "conversation history" separately: the rules are loaded once at process startup and become a protected system message; the history is still handled by `ContextManager` according to the budget.
 
-## 前置条件与版本切换
+## Prerequisites and Version Checkout
 
-先阅读第 13 课，理解 `ContextManager`、历史轮次和受保护前缀。以下命令均适用于 Bash/zsh；最后切回本课的 `v0.14` 快照。
+Read Lesson 13 first to understand `ContextManager`, history rounds, and the protected prefix. All commands below are for Bash/zsh; the last one switches back to this lesson's `v0.14` snapshot.
 
 ```bash
 git checkout v0.13.1
@@ -36,56 +36,56 @@ git diff v0.13.1..v0.14 -- src/mini_agent/instructions.py src/mini_agent/prompt.
 git checkout v0.14
 ```
 
-## 新增与改动文件
+## New and Changed Files
 
-完整差异以 `git diff --stat v0.13.1..v0.14` 为准。下表只保留理解本课主线所需的文件。
+The full difference is given by `git diff --stat v0.13.1..v0.14`. The table below keeps only the files needed to understand this lesson's main thread.
 
-| 文件 | 变化 | 作用 |
+| File | Change | Purpose |
 |---|---|---|
-| `src/mini_agent/instructions.py` | 新增 `InstructionLoader` | 找到并合并适用于启动目录的 `AGENTS.md` |
-| `src/mini_agent/prompt.py` | 修改 `build_system_prompt()` | 在有规则时添加 `<project_instructions>` 区块 |
-| `src/mini_agent/context.py` | 增加 `protected_messages` | 每次构造请求时保留 system prompt，历史仍可裁剪/压缩 |
-| `src/mini_agent/__main__.py` | 修改启动流程 | 在创建上下文前加载规则并注入受保护消息 |
-| `tests/test_instructions.py`、`tests/test_prompt.py`、`tests/test_context.py` | 新增覆盖 | 固化发现、上限、注入和保留行为 |
+| `src/mini_agent/instructions.py` | Adds `InstructionLoader` | Finds and merges the `AGENTS.md` files that apply to the startup directory |
+| `src/mini_agent/prompt.py` | Changes `build_system_prompt()` | Adds a `<project_instructions>` block when there are rules |
+| `src/mini_agent/context.py` | Adds `protected_messages` | Keeps the system prompt in every request; history can still be trimmed/compacted |
+| `src/mini_agent/__main__.py` | Changes the startup flow | Loads the rules and injects protected messages before the context is created |
+| `tests/test_instructions.py`, `tests/test_prompt.py`, `tests/test_context.py` | New coverage | Pins down discovery, the limit, injection, and retention behavior |
 
-## 版本变更定位
+## Version Change Map
 
-图例：`[旧]` v0.13.1 已有，`[+]` v0.14 新增，`[~]` v0.14 修改，`[C]` 主要消费者，`[B]` 本版边界。
+Legend: `[old]` already in v0.13.1, `[+]` new in v0.14, `[~]` changed in v0.14, `[C]` main consumer, `[B]` boundary of this version.
 
-v0.13.1 的真实入口和收口方式是：
+The real entry and finish of v0.13.1:
 
 ```text
-[旧] CLI main()
-  -> [旧] AgentState + history + ContextManager
-  -> [旧] agent_loop
-       -> [旧] prepare_messages()
-            -> trimming / compaction（只处理 history）
+[old] CLI main()
+  -> [old] AgentState + history + ContextManager
+  -> [old] agent_loop
+       -> [old] prepare_messages()
+            -> trimming / compaction (history only)
             -> [C] call_llm()
 ```
 
-v0.14 在启动入口插入加载和注入：
+v0.14 inserts loading and injection at the startup entry:
 
 ```text
-[旧] CLI main()
+[old] CLI main()
   -> [+] InstructionLoader(os.getcwd())
-       -> [+] discover(): Git root 到 cwd 逐层找 AGENTS.md
-       -> [+] load(): Source 标记、最多 12,000 字符
+       -> [+] discover(): look for AGENTS.md level by level from the Git root to cwd
+       -> [+] load(): Source markers, at most 12,000 characters
   -> [~] build_system_prompt(project_instructions)
   -> [~] ContextManager(protected_messages + history)
-       -> [旧] prepare_messages()
-            -> [旧] 只裁剪/压缩 history
-            -> [C] 每次 call_llm() 都带项目规则
+       -> [old] prepare_messages()
+            -> [old] only trims/compacts history
+            -> [C] every call_llm() carries the project rules
 
-[B] 启动后不刷新文件；规则不改变 PermissionGate 的 allow/deny/ask 结果
+[B] Files are not refreshed after startup; the rules do not change PermissionGate allow/deny/ask results
 ```
 
-关键插入点不是“多了一段文本”，而是 `protected_messages`：它让规则进入发送视图，却不进入可变的 `history`。
+The key insertion point is not "one more block of text" but `protected_messages`: it puts the rules into the sent view without putting them into the mutable `history`.
 
-## 核心概念与数据结构
+## Core Concepts and Data Structures
 
-### 1. 发现范围决定规则作用域
+### 1. The discovery range sets the scope of the rules
 
-要解决的问题是：启动在子目录时，哪些项目规则适用？`InstructionLoader` 先从 `cwd` 向上寻找 Git 根目录。若找到 Git 根目录，就按“根目录 → 当前目录”逐层检查 `AGENTS.md`；越靠近 `cwd` 的文件越晚出现，因此可以覆盖或补充上层规则。若不在 Git 仓库中，只检查 `cwd` 自身，不向父目录继承。
+The problem: when the agent starts in a subdirectory, which project rules apply? `InstructionLoader` first searches upward from `cwd` for the Git root. If it finds one, it checks `AGENTS.md` level by level from "root → current directory"; files closer to `cwd` appear later, so they can override or add to upper-level rules. Outside a Git repository, it checks only `cwd` itself and does not inherit from parent directories.
 
 ```python
 return [
@@ -95,30 +95,30 @@ return [
 ]
 ```
 
-`discover()` 的返回值是路径列表，不执行文件内容。这个顺序不变量让合并结果可预测，也把规则作用域固定为本次启动目录。
+`discover()` returns a list of paths and does not execute file content. This ordering invariant makes the merge result predictable and fixes the scope of the rules to the startup directory.
 
-### 2. 加载结果带来源并有硬上限
+### 2. Loaded results carry sources and have a hard limit
 
-`load()` 为每个文件加上 `Source: <path>`，再按发现顺序拼接正文。读取某个文件发生 `OSError` 时，不会让 CLI 启动失败，而是写入 `[读取失败，已跳过]`。累计文本最多 12,000 个字符；超限时追加截断标记并停止读取后续文件。没有文件时返回空字符串。
+`load()` adds `Source: <path>` to each file and concatenates the bodies in discovery order. When reading a file raises `OSError`, the CLI startup does not fail; instead, `[read failed, skipped]` is written. The accumulated text is at most 12,000 characters; when it goes over, a truncation marker is appended and later files are not read. When there are no files, it returns an empty string.
 
-核心拼接逻辑会先计算本次还剩多少空间；如果完整区块放不下，就保留前缀并追加截断标记，然后结束加载：
+The core concatenation logic first computes how much space is left; if the full block does not fit, it keeps the prefix, appends a truncation marker, and stops loading:
 
 ```python
 available = self.max_chars - used - len(separator)
 if len(chunk) > available:
-    marker = f"\\n[指令已截断，最多保留 {self.max_chars} 个字符]"
+    marker = f"\\n[Instructions truncated; at most {self.max_chars} characters kept]"
     chunk = chunk[:max(0, available - len(marker))] + marker
     chunks.append(separator + chunk)
     break
 ```
 
-这保证返回值不会超过加载器上限，同时保留“哪个文件提供了规则”的来源线索。
+This guarantees that the return value does not exceed the loader limit, while keeping the source hint of "which file provided the rule".
 
-因此调用方只需要处理一个字符串：空字符串表示不添加项目区块，非空字符串表示已经完成来源标记和长度控制。
+So the caller only has to handle one string: an empty string means no project block is added, and a non-empty string means source marking and length control are already done.
 
-### 3. 受保护消息与普通历史是两种生命周期
+### 3. Protected messages and ordinary history have two different lifecycles
 
-要解决的问题是：规则怎样穿过第 13 课的裁剪和压缩？CLI 把完整 system prompt 放进 `protected_messages`。`ContextManager._build_messages()` 每次复制这组消息，再追加 `history`；只有后者会被裁剪、分轮或压缩。
+The problem: how do the rules get through the trimming and compaction of Lesson 13? The CLI puts the full system prompt into `protected_messages`. `ContextManager._build_messages()` copies this group of messages every time and then appends `history`; only the latter is trimmed, split into rounds, or compacted.
 
 ```python
 source = ([dict(message) for message in self.protected_messages]
@@ -126,11 +126,11 @@ source = ([dict(message) for message in self.protected_messages]
 source.extend(dict(message) for message in self.history)
 ```
 
-规则原文不会被历史裁剪或摘要改写，但它仍然计入上下文预算。受保护只表示“不可由历史策略移除”，不表示可以无限增长。
+The original text of the rules is not rewritten by history trimming or summarization, but it still counts toward the context budget. Protected only means "cannot be removed by history strategies", not that it can grow without limit.
 
-### 4. Prompt 注入不等于权限授予
+### 4. Prompt injection is not permission granting
 
-`build_system_prompt()` 只有在参数非空时才追加：
+`build_system_prompt()` appends the block only when the argument is not empty:
 
 ```python
 if project_instructions.strip():
@@ -141,47 +141,47 @@ if project_instructions.strip():
     )
 ```
 
-模型可以根据这段内容选择“先运行测试”或“不要碰某目录”，但真正的文件写入、shell 执行仍由工具层和 `PermissionGate` 判断。v0.14 没有把自然语言规则编译成 allow/deny/ask 配置。
+The model can use this content to choose "run the tests first" or "do not touch a certain directory", but actual file writes and shell execution are still decided by the tool layer and `PermissionGate`. v0.14 does not compile natural language rules into allow/deny/ask configuration.
 
-## 为什么这样设计
+## Why This Design
 
-规则和历史的生命周期不同。规则应该每轮出现且保持原文，历史则需要在窗口变小时牺牲旧内容。分开保存能同时满足这两个需求，也使规则作用域和请求内容更容易审计。
+Rules and history have different lifecycles. Rules should appear every round in their original text, while history must give up old content when the window gets small. Storing them separately meets both needs and makes the scope of the rules and the request content easier to audit.
 
-代价是规则会占用每次请求的上下文预算；12,000 字符只是加载器上限，不保证整个 system prompt 一定小于模型窗口。启动时只加载一次可以让一次运行的行为稳定，但运行中修改 `AGENTS.md`、切换工作目录都不会自动生效。
+The cost is that the rules use context budget in every request; 12,000 characters is only the loader limit and does not guarantee that the whole system prompt is smaller than the model window. Loading only once at startup keeps the behavior of one run stable, but changing `AGENTS.md` or switching the working directory during a run does not take effect automatically.
 
-选择纯文本注入而不是自动修改权限系统，避免了把自然语言解释成安全决策的风险，也保持了实现简单；相应地，项目规则不能替代权限闸门。
+Choosing plain text injection instead of automatically changing the permission system avoids the risk of interpreting natural language as security decisions and keeps the implementation simple; accordingly, project rules cannot replace the permission gate.
 
-## 设计边界
+## Design Boundaries
 
-- Git 仓库内只检查从仓库根到启动 `cwd` 的路径；非 Git 目录只检查当前目录。
-- 只支持文件名严格为 `AGENTS.md`，不自动读取其他编辑器或 Agent 格式。
-- 文件不存在、读取失败或被截断都不会阻止启动；但模型可能缺少部分项目约束。
-- 规则在进程启动时确定，不会因后续访问新目录而刷新。
-- 加载器最多输出 12,000 个字符；system prompt 和受保护消息本身仍可能使预算紧张。
-- `PermissionGate` 的授权结果、工具异常边界和工具调用回灌协议均不因本版改变。
+- Inside a Git repository, only the path from the repository root to the startup `cwd` is checked; outside Git, only the current directory is checked.
+- Only files named exactly `AGENTS.md` are supported; other editor or Agent formats are not read automatically.
+- A missing file, a read failure, or truncation does not stop startup; but the model may lack some project constraints.
+- The rules are fixed at process startup and are not refreshed when new directories are visited later.
+- The loader outputs at most 12,000 characters; the system prompt and protected messages themselves can still make the budget tight.
+- `PermissionGate` authorization results, the tool exception boundary, and the tool call feedback protocol are not changed by this version.
 
-## 关键流程
+## Key Flow
 
 ```text
-启动 cwd
+startup cwd
   -> _git_root()
-  -> discover()：得到有序 AGENTS.md 路径
-  -> load()：读取、标记来源、限制长度
+  -> discover(): ordered AGENTS.md paths
+  -> load(): read, mark sources, limit length
   -> build_system_prompt(project_instructions)
   -> protected_messages
   -> prepare_messages()
-       ├─ 规则：始终保留
-       └─ history：按预算 trimming / compaction
+       ├─ rules: always kept
+       └─ history: trimming / compaction by budget
   -> call_llm()
 ```
 
-正常路径中，模型每次请求都能看到 `<project_instructions>`。没有规则文件时，`load()` 返回空字符串，system prompt 与 v0.13.1 相同。读取失败时启动继续，但 system prompt 中会留下跳过标记；若后续历史超预算，仍只处理历史副本。CLI 或 LLM 顶层异常不由本课新增逻辑兜底。
+On the normal path, the model sees `<project_instructions>` in every request. When there is no rules file, `load()` returns an empty string, and the system prompt is the same as in v0.13.1. On a read failure startup continues, but a skip marker remains in the system prompt; if the history later exceeds the budget, only the history copy is handled. Top-level CLI or LLM exceptions are not caught by the logic added in this lesson.
 
-## 实现拆解
+## Implementation Breakdown
 
-### 启动入口
+### The startup entry
 
-`__main__.py` 先创建 `AgentState`，再读取当前工作目录的规则，最后把 system 消息交给上下文管理器：
+`__main__.py` first creates `AgentState`, then reads the rules for the current working directory, and finally hands the system message to the context manager:
 
 ```python
 instructions = InstructionLoader(os.getcwd()).load()
@@ -194,36 +194,36 @@ context = ContextManager(state, history)
 context.protected_messages = protected_messages
 ```
 
-这样规则只在启动处决定一次；每轮 `prepare_messages()` 都从同一份受保护消息复制，不会因为忘记在某条路径拼接而遗漏。
+This way the rules are decided only once, at startup; every `prepare_messages()` copies from the same protected messages, so no path can forget to add them.
 
-### 压缩视图中的位置
+### Position in the compacted view
 
-当上下文已经进入压缩模式，`ContextManager` 会重建“受保护 system → Structured State → Historical Summary → 任务 → 最近历史”的视图。项目规则属于最前面的受保护 system 部分；`Historical Summary` 仍只描述旧历史，不能覆盖项目规则。
+When the context is already in compaction mode, `ContextManager` rebuilds the view "protected system → Structured State → Historical Summary → task → recent history". The project rules belong to the protected system part at the very front; the `Historical Summary` still only describes old history and cannot override the project rules.
 
-### 默认摘要器的调用边界
+### Call boundary of the default summarizer
 
-v0.14 沿用 v0.13 的摘要通道。`summarize_messages()` 调用 `call_llm(..., include_tools=False, stream_output=False)`：摘要请求没有工具定义，也不会把内部摘要流打印到终端。项目指令不参与摘要，因此不会被摘要器改写。
+v0.14 keeps the summary channel of v0.13. `summarize_messages()` calls `call_llm(..., include_tools=False, stream_output=False)`: the summary request has no tool definitions and does not print the internal summary stream to the terminal. Project instructions do not take part in summarization, so the summarizer does not rewrite them.
 
-## 运行与观察（按需）
+## Run and Observe (If Needed)
 
-配置好本地 LLM 后，在包含 `AGENTS.md` 的项目目录启动（Bash/zsh）：
+After you configure a local LLM, start in a project directory that contains `AGENTS.md` (Bash/zsh):
 
 ```bash
-PYTHONPATH=src python -m mini_agent "读取项目规则并列出当前目录"
+PYTHONPATH=src python -m mini_agent "read the project rules and list the current directory"
 ```
 
-这是“命令行首条任务”；首条任务处理完成后程序仍进入交互循环。观察模型请求或上下文日志时，应看到 system prompt 中有 `<project_instructions>` 区块；在没有 `AGENTS.md` 的目录启动时，该区块不会出现。若任务变长并触发压缩，项目区块仍保留，而旧 history 可能被摘要或裁剪。
+This is a "command-line first task"; after the first task is handled, the program still enters the interactive loop. When you look at model requests or context logs, you should see a `<project_instructions>` block in the system prompt; when you start in a directory without `AGENTS.md`, the block does not appear. If the task gets long and triggers compaction, the project block is still kept, while old history may be summarized or trimmed.
 
-## 本版特性、下一课与代码索引
+## Version Features, Next Lesson, and Code Index
 
-v0.14 引入了启动目录作用域、层级发现、来源标记、12,000 字符限制，以及不受历史裁剪影响的项目级 system prompt。它不提供动态刷新、不支持其他规则文件格式，也不把规则转换成工具权限。下一课 v0.15 会把 Todo 与任务状态保存到独立的 `AgentState`，让计划在上下文压缩后仍可准确呈现。
+v0.14 introduces startup directory scope, level-by-level discovery, source markers, a 12,000-character limit, and a project-level system prompt that is not affected by history trimming. It provides no dynamic refresh, supports no other rules file formats, and does not turn rules into tool permissions. The next lesson, v0.15, saves Todo and task state in the independent `AgentState`, so the plan can still be shown accurately after context compaction.
 
-本课涉及的 v0.14 固定源码：
+Pinned v0.14 source for this lesson:
 
-- [`src/mini_agent/instructions.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.14/src/mini_agent/instructions.py) — 发现和加载 `AGENTS.md`
-- [`src/mini_agent/prompt.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.14/src/mini_agent/prompt.py) — 组装项目指令区块
-- [`src/mini_agent/context.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.14/src/mini_agent/context.py) — 受保护消息、历史裁剪与压缩视图
-- [`src/mini_agent/__main__.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.14/src/mini_agent/__main__.py) — 启动时注入规则
-- [`tests/test_instructions.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.14/tests/test_instructions.py) — 发现、顺序和长度边界
-- [`tests/test_prompt.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.14/tests/test_prompt.py) — 项目指令区块
-- [`tests/test_context.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.14/tests/test_context.py) — 受保护消息行为
+- [`src/mini_agent/instructions.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.14/src/mini_agent/instructions.py) — discovers and loads `AGENTS.md`
+- [`src/mini_agent/prompt.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.14/src/mini_agent/prompt.py) — assembles the project instruction block
+- [`src/mini_agent/context.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.14/src/mini_agent/context.py) — protected messages, history trimming, and the compacted view
+- [`src/mini_agent/__main__.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.14/src/mini_agent/__main__.py) — injects the rules at startup
+- [`tests/test_instructions.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.14/tests/test_instructions.py) — discovery, ordering, and length boundaries
+- [`tests/test_prompt.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.14/tests/test_prompt.py) — project instruction block
+- [`tests/test_context.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.14/tests/test_context.py) — protected message behavior

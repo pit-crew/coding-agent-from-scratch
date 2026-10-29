@@ -1,18 +1,18 @@
-# 第 23 课：先调查，再交付计划（v0.23）
+# Lesson 23: Investigate first, then hand off a plan (v0.23)
 
-上一课：[Plan Contract（结构化计划）](22-plan-contract.md) · [教程总览](README.md) · 下一课：[v0.24 证据驱动重规划与停滞收口](24-replanning-policy.md)
+Previous: [Plan Contract (structured plan)](22-plan-contract.md) · [Tutorial overview](README.md) · Next: [v0.24 Evidence-driven replanning and stagnation stop](24-replanning-policy.md)
 
-> 代码快照：`v0.23` · 相邻差异：`v0.22..v0.23` · 命令环境：Bash/zsh
+> Code snapshot: `v0.23` · Adjacent diff: `v0.22..v0.23` · Shell: Bash/zsh
 
-> 运行要求：Python 3.10+；核心运行时只使用标准库。`v0.23` tag 由维护者建立后，版本对照命令和固定源码链接才可直接使用。
+> Requirements: Python 3.10+; the core runtime uses only the standard library. The version comparison commands and pinned source links work directly only after the maintainer creates the `v0.23` tag.
 
-## 本课目标
+## Lesson Goals
 
-上一课让计划有了稳定的步骤和不可变修订，但提交计划会立即进入执行。模型即使声称“先调查”，运行时也没有阻止它在调查中写文件。本课结束后，你应能解释：只读调查如何由 Runtime 强制、为什么提交计划后可以停下来交给用户决定，以及批准计划为什么不等于批准具体工具。
+The previous lesson gave plans stable steps and immutable revisions, but submitting a plan entered execution immediately. Even if the model claimed it would "investigate first", the runtime did not stop it from writing files during the investigation. After this lesson, you should be able to explain how the Runtime enforces read-only investigation, why it can stop after a plan is submitted and hand the decision to the user, and why approving a plan is not the same as approving specific tools.
 
-## 前置条件
+## Prerequisites
 
-先读第 22 课，准备基础 Python、Git 和可用的 LLM 配置。下面的 Bash/zsh 命令用上一版作参照，再查看本版差异：
+Read Lesson 22 first, and prepare basic Python, Git, and a working LLM configuration. The Bash/zsh commands below use the previous version as a reference and then show this version's diff:
 
 ```bash
 git checkout v0.22
@@ -21,155 +21,155 @@ git diff v0.22..v0.23 -- src/mini_agent/state.py src/mini_agent/agent.py src/min
 git checkout v0.23
 ```
 
-`git diff --stat` 先显示改动规模；后一个 diff 帮你找到状态转换和两层工具准入。切换 tag 前，请保存自己工作区中未提交的修改。
+`git diff --stat` shows the size of the change first; the following diff helps you find the state transitions and the two layers of tool admission. Before switching tags, save any uncommitted changes in your own workspace.
 
-## 新增与改动文件
+## New and Changed Files
 
-| 文件 | 本课作用 |
+| File | Role in this lesson |
 | --- | --- |
-| `src/mini_agent/state.py` | 保存规划阶段、用户决定与反馈触发记录；校验当前 revision 和阶段转换。 |
-| `src/mini_agent/tools/plan.py` | 增加 `begin_plan`、`cancel_planning`，扩展 `commit_plan` 的反馈引用。 |
-| `src/mini_agent/agent.py`、`src/mini_agent/tools/base.py` | 分别在整轮和单个调用层拒绝不合规动作。 |
-| `src/mini_agent/__main__.py` | 提供 `--plan` 启动和 revision 级的用户交接命令。 |
-| `src/mini_agent/context.py` | 让当前阶段和用户反馈在压缩对话后仍可见。 |
+| `src/mini_agent/state.py` | Stores the planning phase, user decisions, and feedback trigger records; validates the current revision and phase transitions. |
+| `src/mini_agent/tools/plan.py` | Adds `begin_plan` and `cancel_planning`, and extends `commit_plan` with a feedback reference. |
+| `src/mini_agent/agent.py`, `src/mini_agent/tools/base.py` | Reject non-compliant actions at the whole-round level and the single-call level respectively. |
+| `src/mini_agent/__main__.py` | Provides `--plan` startup and revision-level user handoff commands. |
+| `src/mini_agent/context.py` | Keeps the current phase and user feedback visible after the conversation is compacted. |
 
-## 上一版的问题
+## Problems in the Previous Version
 
-v0.22 的 `commit_plan` 会直接把任务送到 `executing`。复杂任务虽能写出计划，模型却可以在调查尚未完成时调用写文件或执行命令。用户也无法先看一份完整计划，再决定是否允许按它推进。
+In v0.22, `commit_plan` sent the task straight to `executing`. Complex tasks could produce a plan, but the model could call file writes or command execution before the investigation was done. The user also could not look at a full plan first and then decide whether to let it proceed.
 
-本版让“调查”和“执行”成为不同的运行阶段。调查阶段只准调用无副作用工具；`--plan` 任务提交计划后停在 `awaiting_approval`，等待用户明确决定。普通简单任务仍可直接执行。
+This version makes "investigation" and "execution" different runtime phases. The investigation phase allows only side-effect-free tools; a `--plan` task stops in `awaiting_approval` after submitting the plan and waits for an explicit user decision. Ordinary simple tasks can still run directly.
 
-## 版本变更定位
+## Version Change Map
 
-图例：`[旧]` 上版已有，`[+]` 本版新增，`[~]` 本版修改，`[C]` 主要消费者，`[B]` 本版边界。
-
-```text
-v0.22 基线
-[旧] 用户任务 -> agent_loop -> LLM tool_calls -> ToolExecutor -> PermissionGate -> handler
-                              -> commit_plan -> AgentState.commit_plan()
-                                                -> PlanRevision / executing
-                    <- 每个 call 的 role=tool 结果 <- ToolExecutor
-                    -> ContextManager(State 快照) -> 下一轮 LLM / 完成提醒
-[旧] 写入或执行 -> generation -> 独立 verification -> 最终完成
-```
-
-v0.23 在调用链前加入规划阶段判断；计划提交后的交接由 CLI 驱动，不由模型自行批准：
+Legend: `[old]` already in the previous version, `[+]` new in this version, `[~]` changed in this version, `[C]` main consumer, `[B]` boundary of this version.
 
 ```text
-v0.23 变更
-[+] 普通任务 -> begin_plan ─┐
-[+] --plan 首条任务 ───────┴-> [~] PlanningState.exploring
-                                  -> [C] ContextManager 显示只读阶段
-                                  -> [~] agent_loop 整轮准入
-                                  -> [~] ToolExecutor 单调用准入
-                                       ├-> 无副作用调查 -> role=tool -> 下一轮 LLM
-                                       ├-> 独占 commit_plan -> PlanRevision
-                                       │      ├-> auto: executing
-                                       │      └-> plan_only: awaiting_approval -> CLI 用户决定
-                                       │                ├-> approve 当前 revision -> executing
-                                       │                └-> reject / continue -> exploring -> 新 revision
-                                       └-> [B] 副作用、verification、混合提交被拒绝
-                                               -> 每个 call 仍有 role=tool；不进 PermissionGate
-[旧] executing -> PermissionGate -> handler -> generation / verification
+v0.22 baseline
+[old] user task -> agent_loop -> LLM tool_calls -> ToolExecutor -> PermissionGate -> handler
+                               -> commit_plan -> AgentState.commit_plan()
+                                                 -> PlanRevision / executing
+                     <- role=tool result for each call <- ToolExecutor
+                     -> ContextManager(State snapshot) -> next LLM round / completion reminder
+[old] write or execute -> generation -> independent verification -> final completion
 ```
 
-两层检查解决不同问题：agent loop 看完整回合，能发现 `commit_plan` 与其他调用混在一起；执行器即使被单独调用，也会在权限和 handler 前检查当前阶段。拒绝不会产生新的 generation 或验证证据。
+v0.23 adds a planning phase check before the call chain; the handoff after plan submission is driven by the CLI, not approved by the model itself:
 
-## 关键流程
+```text
+v0.23 change
+[+] ordinary task -> begin_plan ─┐
+[+] --plan first task ───────────┴-> [~] PlanningState.exploring
+                                       -> [C] ContextManager shows the read-only phase
+                                       -> [~] agent_loop whole-round admission
+                                       -> [~] ToolExecutor single-call admission
+                                            ├-> side-effect-free investigation -> role=tool -> next LLM round
+                                            ├-> commit_plan alone -> PlanRevision
+                                            │      ├-> auto: executing
+                                            │      └-> plan_only: awaiting_approval -> CLI user decision
+                                            │                ├-> approve current revision -> executing
+                                            │                └-> reject / continue -> exploring -> new revision
+                                            └-> [B] side effects, verification, mixed submissions rejected
+                                                    -> every call still gets role=tool; PermissionGate not entered
+[old] executing -> PermissionGate -> handler -> generation / verification
+```
 
-普通任务由模型独占调用 `begin_plan`；`--plan` 则从任务开始就进入 `exploring`。阶段记录在 State 中，下一轮上下文从 State 快照重建，因而不会依赖模型记住一句“请只读”。下面是单调用闸门的关键判断：
+The two checks solve different problems: the agent loop sees the whole round and can detect `commit_plan` mixed with other calls; the executor checks the current phase before permissions and the handler, even when called alone. Rejections produce no new generation and no verification evidence.
+
+## Key Flow
+
+For an ordinary task, the model calls `begin_plan` on its own; with `--plan`, the task is in `exploring` from the start. The phase is recorded in State, and the next round's context is rebuilt from the State snapshot, so it does not depend on the model remembering a sentence like "read-only, please". The key decisions of the single-call gate:
 
 ```python
 if phase == "awaiting_approval":
-    return "工具调用拒绝: 当前计划等待用户决定"
+    return "Tool call refused: the current plan is awaiting the user's decision"
 if phase == "exploring":
     if name == "commit_plan":
         return None
     if name == "run_shell" and arguments.get("purpose", "execution") == "verification":
-        return "工具调用拒绝: exploring 阶段不能进行 verification"
+        return "Tool call refused: no verification in the exploring phase"
     if effect_class != "none":
-        return "工具调用拒绝: exploring 阶段只允许只读调查"
+        return "Tool call refused: only read-only investigation in the exploring phase"
 ```
 
-这段只摘取等待、提交、验证和副作用四个判断；实际函数还检查 `cancel_planning`、进度工具与恢复工具。`effect_class` 是工具自身声明的副作用类别，不由计划文字决定。`run_shell(purpose="execution")` 属于可能有副作用的调用；即使命令看起来只读也不能用于调查。`verification` 虽被归为无副作用调用，调查阶段仍会单独拒绝，因为此时没有新执行结果可验收。
+This excerpt covers only four checks: waiting, submission, verification, and side effects; the actual function also checks `cancel_planning`, progress tools, and recovery tools. `effect_class` is the side-effect category the tool itself declares; it is not decided by plan text. `run_shell(purpose="execution")` is a call that may have side effects; even if the command looks read-only, it cannot be used for investigation. `verification` is classified as side-effect-free, but the investigation phase still rejects it separately, because there is no new execution result to accept yet.
 
-调查后，模型独占调用 `commit_plan`。普通模式继续执行；`--plan` 模式立即把控制权交给 CLI，agent loop 不再向模型发起下一轮请求。用户输入 `/approve <revision_id>` 时，State 只接受当前待批 revision。下面的转换刻意不改权限策略：
+After investigating, the model calls `commit_plan` on its own. Ordinary mode continues executing; `--plan` mode hands control to the CLI immediately, and the agent loop makes no further request to the model. When the user enters `/approve <revision_id>`, State accepts only the current revision awaiting approval. The transition below deliberately does not change the permission policy:
 
 ```python
 if decision == "approved":
     self.planning_state = replace(self.planning_state, phase="executing")
 ```
 
-因此批准只表示“可以继续按当前方案工作”。后续写文件或执行命令仍由 PermissionGate 按工具和参数逐次决定是否放行。批准旧 revision、重复批准以及缺少反馈的驳回都会被拒绝，状态保持原样。
+So approval only means "you may continue working on the current approach". Later file writes or command execution are still decided call by call by the PermissionGate, based on the tool and its arguments. Approving an old revision, approving twice, and a rejection without feedback are all refused, and the state stays as it was.
 
-驳回和继续调查都要求反馈，并产生当前任务内的用户反馈触发记录。模型提交修改后的完整计划时，必须同时引用当前 `parent_revision_id` 与 `trigger_id`；新 revision 创建后才消费触发记录。继续调查保留原计划，如果新事实没有改变方案，用户可输入 `/review <revision_id>` 让原 revision 重新等待审批。驳回后的旧计划不能通过 `/review` 重新交付。
+Rejecting and continuing the investigation both require feedback and produce a user feedback trigger record within the current task. When the model submits a revised full plan, it must reference both the current `parent_revision_id` and the `trigger_id`; the trigger record is consumed only after the new revision is created. Continuing the investigation keeps the original plan; if new facts do not change the approach, the user can enter `/review <revision_id>` to put the original revision back into awaiting approval. A rejected plan cannot be handed off again through `/review`.
 
-## 实现拆解
+## Implementation Breakdown
 
-`begin_task(..., mode="plan_only")` 让 `--plan` 从一开始就处于只读阶段。普通模式仍从 `direct` 开始，不会按任务长度自动推断是否必须规划。普通模式的 `cancel_planning` 只在尚未提交计划时可用；plan-only 任务不能用它绕开用户交接。
+`begin_task(..., mode="plan_only")` puts `--plan` in the read-only phase from the start. Ordinary mode still starts from `direct` and does not infer from task length whether planning is required. In ordinary mode, `cancel_planning` is available only before a plan has been submitted; plan-only tasks cannot use it to get around the user handoff.
 
-当 exploring 中的 `commit_plan` 与其他工具出现在同一回复时，agent loop 为整批调用分别生成拒绝结果。这样不会出现“先写文件、再提交计划”或“先提交计划、再执行同批写入”的部分成功。无效调用仍按原顺序写入 `role=tool` 结果，供模型下一轮修正。
+When `commit_plan` in exploring appears in the same reply as other tools, the agent loop generates a rejection result for each call in the batch. So there is never partial success such as "write a file first, then submit the plan" or "submit the plan first, then run writes in the same batch". Invalid calls still get `role=tool` results written in the original order, so the model can correct them in the next round.
 
-用户决定由 CLI 写入 State，不由模型工具伪造。Structured State 显示最近一次决定及有界反馈摘要；上下文压缩后仍可从 State 重建。用户反馈触发修订是本版为交接所需的最小记录；失败与只读观察触发的通用重规划策略属于下一课。
+User decisions are written into State by the CLI and cannot be forged by model tools. Structured State shows the most recent decision and a bounded feedback summary; after context compaction they can still be rebuilt from State. Revision triggered by user feedback is the minimal record this version needs for the handoff; general replanning policies triggered by failures and read-only observations belong to the next lesson.
 
-## 运行与观察
+## Run and Observe
 
-在 Bash/zsh 中运行下面的命令行首条任务。需要先按操作手册准备本地 `config_local.py`；程序处理首条任务后仍进入交互循环。
+Run the command-line first task below in Bash/zsh. Prepare the local `config_local.py` first as the operation manual describes; after handling the first task, the program still enters the interactive loop.
 
 ```bash
-PYTHONPATH=src python -m mini_agent --plan "先检查当前项目的测试入口，给出修改前的计划"
+PYTHONPATH=src python -m mini_agent --plan "check the current project's test entry first and give a plan before changing anything"
 ```
 
-观察模型只读调查并提交 revision 后，CLI 会从 State 中取出刚保存的计划并显示完整内容，然后等待决定。例如，模型可能提交下面这份计划；目标和步骤取决于实际调查结果：
+After the model investigates read-only and submits a revision, the CLI takes the plan just saved from State, shows its full content, and waits for a decision. For example, the model might submit the plan below; the goal and steps depend on the actual investigation:
 
 ```text
-计划 revision 1
-目标：确认项目的测试入口并拟定修改方案
-制订原因：需要先了解现有测试如何运行
-限制：
-- 调查期间不修改文件
-任务验收标准：
-- 明确测试入口及后续验证命令
-步骤：
-1. [pending] inspect：检查项目测试入口
-   依赖：无
-   本步骤验收：
-   - 找到现有测试命令
-2. [pending] propose：拟定修改方案
-   依赖：inspect
-   本步骤验收：
-   - 说明修改范围和验证方式
+Plan revision 1
+Goal: Confirm the project's test entry and draft a change plan
+Reason: Need to understand how the existing tests run first
+Constraints:
+- Do not change files during the investigation
+Task acceptance criteria:
+- The test entry and the later verification command are identified
+Steps:
+1. [pending] inspect: Inspect the project's test entry
+   Depends on: none
+   Step acceptance:
+   - The existing test command is found
+2. [pending] propose: Draft the change plan
+   Depends on: inspect
+   Step acceptance:
+   - The change scope and verification method are stated
 
-计划 revision 1 等待决定：
+Plan revision 1 awaiting decision:
 /approve 1
-/reject 1 <反馈>
-/continue 1 <反馈>
+/reject 1 <feedback>
+/continue 1 <feedback>
 ```
 
-这份展示直接来自已提交的计划，不需要模型再复述。此时可以输入 `/continue 1 请再检查一处依赖`；模型会回到只读调查。若原计划仍合适，输入 `/review 1` 会再次显示这份计划，然后可输入 `/approve 1`。若模型提交了新 revision，就审阅新内容并对提示中的新 ID 做决定。也可输入 `/reject 1 <具体反馈>`，让模型根据反馈提交新计划。具体 revision 编号以运行时提示为准。
+This display comes directly from the submitted plan; the model does not need to restate it. You can now enter `/continue 1 please also check one dependency`; the model goes back to read-only investigation. If the original plan is still appropriate, entering `/review 1` shows this plan again, and you can then enter `/approve 1`. If the model submits a new revision, review the new content and decide on the new ID shown in the prompt. You can also enter `/reject 1 <specific feedback>` to have the model submit a new plan based on the feedback. Actual revision numbers follow the runtime prompts.
 
-批准后若模型请求写文件或执行命令，仍会看到对应的权限决策；计划批准不会写入一条永久 allow 规则。`/reset` 或 `/new <任务>` 会结束当前任务的交接上下文，新任务默认回到普通模式。
+After approval, if the model requests a file write or command execution, you still see the matching permission decision; approving a plan does not write a permanent allow rule. `/reset` or `/new <task>` ends the handoff context of the current task, and a new task returns to ordinary mode by default.
 
-## 为什么这样设计
+## Why This Design
 
-只在提示词里要求“先调查”容易被一次错误工具调用绕过；State 阶段和双层准入使边界可以由测试重复验证。代价是同一批次里的合法调查也会随非法混合提交一起拒绝，模型需要拆成下一轮再调用。
+Asking for "investigate first" only in the prompt is easy to bypass with one wrong tool call; the State phase and two-layer admission make the boundary repeatably testable. The cost is that legal investigation calls in the same batch are rejected together with an illegal mixed submission, and the model has to split them into the next round.
 
-用户批准的是完整方案，不是某次具体写入的权限。把两个决定分开，才能在计划合理但某条命令不安全时仍由 PermissionGate 拦住。交接也需要任务内保留 revision ID 和反馈，而不能把一次自然语言“同意”误当成可重复使用的授权。
+The user approves the full approach, not the permission for one specific write. Keeping the two decisions separate lets the PermissionGate still stop an unsafe command when the plan is reasonable. The handoff also needs the revision ID and feedback kept within the task, instead of treating one natural language "agreed" as a reusable authorization.
 
-## 设计边界
+## Design Boundaries
 
-- 普通简单任务保持 Direct Path；Runtime 不根据关键词推断复杂度。
-- 本版不提供失败或观察触发的通用 `request_replan`、重规划预算及停滞护栏。
-- 计划批准、步骤完成和独立 verification 是不同事实；只有实际执行后的当前 generation 验证可支持完成判定。
-- 等待批准不调用 LLM，也不让模型工具继续运行；用户输入无效 revision 时不改变计划状态。
+- Ordinary simple tasks keep the Direct Path; the Runtime does not infer complexity from keywords.
+- This version provides no general `request_replan` triggered by failures or observations, no replanning budget, and no stagnation guard.
+- Plan approval, step completion, and independent verification are different facts; only verification of the current generation after actual execution can support a completion decision.
+- While awaiting approval, the LLM is not called and model tools do not keep running; an invalid revision entered by the user does not change the plan state.
 
-## 本版特性、下一课与代码索引
+## Version Features, Next Lesson, and Code Index
 
-本版新增可强制的只读调查、`--plan` 交接和 revision 级用户决定。下一课会讨论真实失败或新观察出现时如何有界地修订计划。
+This version adds enforceable read-only investigation, the `--plan` handoff, and revision-level user decisions. The next lesson discusses how to revise the plan in a bounded way when real failures or new observations appear.
 
-固定到本课 tag 的源码入口：
+Source entries pinned to this lesson's tag:
 
-- [`state.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.23/src/mini_agent/state.py)：规划阶段、用户决定和反馈触发记录。
-- [`agent.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.23/src/mini_agent/agent.py)：整轮准入及提交后的交接停止点。
-- [`base.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.23/src/mini_agent/tools/base.py)：单调用准入先于权限和 handler。
-- [`__main__.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.23/src/mini_agent/__main__.py)：CLI 启动和用户决定入口。
+- [`state.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.23/src/mini_agent/state.py): planning phase, user decisions, and feedback trigger records.
+- [`agent.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.23/src/mini_agent/agent.py): whole-round admission and the handoff stop point after submission.
+- [`base.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.23/src/mini_agent/tools/base.py): single-call admission before permissions and the handler.
+- [`__main__.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.23/src/mini_agent/__main__.py): CLI startup and the user decision entry.

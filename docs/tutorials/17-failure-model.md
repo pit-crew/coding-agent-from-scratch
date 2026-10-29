@@ -1,33 +1,33 @@
-# 第 17 课：失败模型（v0.17）
+# Lesson 17: Failure model (v0.17)
 
-上一课：[计划驱动执行](16-plan-driven-execution.md) · [教程总览](README.md) · 下一课：[受限恢复策略](18-recovery-policy.md)
+Previous: [Plan-driven execution](16-plan-driven-execution.md) · [Tutorial overview](README.md) · Next: [Bounded recovery policy](18-recovery-policy.md)
 
-> 代码快照：`v0.17` · 相邻差异：`v0.16..v0.17` · 命令环境：Bash/zsh
+> Code snapshot: `v0.17` · Adjacent diff: `v0.16..v0.17` · Shell: Bash/zsh
 
-> 本课只讲“失败发生了什么”的记录与保守收口。自动恢复、重试、检查点和回滚属于后续版本。
+> This lesson covers only how to record "what happened in a failure" and how to finish conservatively. Automatic recovery, retries, checkpoints, and rollback belong to later versions.
 
-## 本课目标
+## Lesson Goals
 
-当一个工具失败时，“失败”并不是一个足够精确的答案。我们至少需要知道：参数有没有通过校验、权限有没有通过、处理函数（handler，即真正执行工具工作的函数）有没有开始运行，以及环境是否可能已经改变。
+When a tool fails, "failed" is not a precise enough answer. We need to know at least: did the arguments pass validation, did the permission check pass, did the handler (the function that does the tool's actual work) start running, and might the environment have changed?
 
-读完本课，你应能用自己的话说明：
+After this lesson, you should be able to explain in your own words:
 
-- `ExecutionResult` 是工具边界观察到的结果；`ExecutionAttempt` 是写入 State 的一次调用记录；`FailureEvent` 是从调用记录中抽出的失败事实；`ExecutionGeneration` 是验证证据所属的代次。
-- 参数错误、权限拒绝、handler 异常、超时、shell 非零退出和验证失败为什么必须分开记录。
-- 为什么一个已经获准、但可能改变环境的 `possible` 调用，即使最后失败，也会让旧验证证据失效。
-- 为什么一回合全是只读调用时可以并发，而只要有潜在副作用就按模型原顺序执行和提交。
+- `ExecutionResult` is the result observed at the tool boundary; `ExecutionAttempt` is the call record written to State; `FailureEvent` is the failure fact extracted from a call record; `ExecutionGeneration` is the generation that verification evidence belongs to.
+- Why argument errors, permission denials, handler exceptions, timeouts, nonzero shell exits, and verification failures must be recorded separately.
+- Why an approved `possible` call that may change the environment invalidates old verification evidence even if it ends in failure.
+- Why a round of only read-only calls can run concurrently, while any potential side effect makes the round run and commit in the model's original order.
 
-本课的主线是：**模型表达意图，Executor（工具执行边界）观察事实，State（任务状态）保存可追溯记录。**
+The main thread of this lesson: **the model expresses intent, the Executor (the tool execution boundary) observes facts, and State (task state) keeps traceable records.**
 
-## 上一版的问题
+## Problems in the Previous Version
 
-v0.16 的工具结果主要以文本进入 `AgentState`。文本可以说“失败了”，却不能稳定回答“handler 是否进入”“权限是否通过”“环境是否可能被改变”“这是哪一次调用”。上下文被裁剪或压缩后，只看历史消息还可能找不到这些答案。
+In v0.16, tool results entered `AgentState` mainly as text. Text can say "it failed", but it cannot reliably answer "did the handler start", "did the permission check pass", "might the environment have changed", or "which call was this". After the context is trimmed or compacted, the history messages alone may no longer contain these answers.
 
-v0.17 先解决记录问题，而不是替模型选择修复方案：每次调用都有 attempt（一次不可变的调用记录），每次失败都有带因果链接的 failure（失败事件），验证证据绑定到当前 generation（代次）。因此后续版本可以基于事实选择恢复，但本版不声称能恢复未知副作用。
+v0.17 solves the recording problem first, instead of choosing a fix for the model: every call has an attempt (an immutable call record), every failure has a failure event with causal links, and verification evidence is bound to the current generation. So later versions can choose recovery based on facts, but this version does not claim it can recover from unknown side effects.
 
-## 前置条件与版本切换
+## Prerequisites and Version Checkout
 
-需要 Python 3.10+；运行时仍只使用标准库。命令均适用于 Bash/zsh。建议先阅读第 16 课，再用下面的命令把差异和本版源码范围对照起来：
+You need Python 3.10+; the runtime still uses only the standard library. All commands are for Bash/zsh. Read Lesson 16 first, then use the commands below to compare the diff with this version's source scope:
 
 ```bash
 git checkout v0.16
@@ -36,62 +36,62 @@ git diff v0.16..v0.17 -- src/mini_agent/state.py src/mini_agent/tools/base.py sr
 git checkout v0.17
 ```
 
-前两条命令分别回答“改动有多大”和“改了哪些相关文件”。最后一条切到本课快照，后面的源码链接和行为都以这个 tag 为准。查看差异时，应特别留意：工具边界开始返回结构化结果，State 开始保存 attempt/failure/generation；这正是本课要理解的变化。
+The first two commands answer "how big is the change" and "which related files changed". The last one switches to this lesson's snapshot; later source links and behavior follow this tag. When you look at the diff, note in particular that the tool boundary starts returning structured results and State starts saving attempt/failure/generation; that is exactly the change this lesson explains.
 
-## 新增与改动文件
+## New and Changed Files
 
-`git diff --stat v0.16..v0.17` 显示本版还有其他配套改动。下表只列本课主线直接使用的部分：
+`git diff --stat v0.16..v0.17` shows that this version also has other supporting changes. The table below lists only the parts this lesson's main thread uses directly:
 
-| 文件 | 变化 | 作用 |
+| File | Change | Purpose |
 |---|---|---|
-| `src/mini_agent/state.py` | 增加 generation、attempt、failure、参数指纹和预算 | 保存不依赖消息历史的执行事实 |
-| `src/mini_agent/tools/base.py` | 增加 `Tool.effect_class`、`ExecutionResult` 和参数校验结果 | 在工具边界统一观察值 |
-| `src/mini_agent/agent.py` | 按 effect class 选择并发/串行；拒绝混合 verification | 保持记录顺序和协议完整 |
-| `src/mini_agent/context.py` | 渲染最近失败、代次和预算 | 裁剪或压缩后仍能诊断 |
-| `src/mini_agent/config.py` | 设置失败、指纹和 repair cycle 上限 | 防止尝试无界增长 |
+| `src/mini_agent/state.py` | Adds generation, attempt, failure, argument fingerprints, and budgets | Stores execution facts independent of message history |
+| `src/mini_agent/tools/base.py` | Adds `Tool.effect_class`, `ExecutionResult`, and argument validation results | Unifies observed values at the tool boundary |
+| `src/mini_agent/agent.py` | Chooses concurrent/serial by effect class; rejects mixed verification | Keeps record order and the protocol complete |
+| `src/mini_agent/context.py` | Renders recent failures, generations, and budgets | Diagnosis still works after trimming or compaction |
+| `src/mini_agent/config.py` | Sets limits for failures, fingerprints, and repair cycles | Keeps attempts from growing without bound |
 
-## 版本变更定位
+## Version Change Map
 
-图例：`[旧]` 是 v0.16 已有，`[+]` 是 v0.17 新增，`[~]` 是 v0.17 修改，`[C]` 是主要消费者，`[B]` 是本版边界。
+Legend: `[old]` already in v0.16, `[+]` new in v0.17, `[~]` changed in v0.17, `[C]` main consumer, `[B]` boundary of this version.
 
-先看上一版的入口和收口方式，读者可以把它当作“没有结构化失败事实时会发生什么”的基线：
+First the entry and finish of the previous version; treat it as the baseline of "what happens without structured failure facts":
 
 ```text
-[旧] agent loop -> [旧] ToolExecutor -> PermissionGate -> handler
-                         -> 文本结果 -> [旧] AgentState.record_tool
-                         -> role=tool 回灌 -> generation/verification 收口
+[old] agent loop -> [old] ToolExecutor -> PermissionGate -> handler
+                          -> text result -> [old] AgentState.record_tool
+                          -> role=tool fed back -> generation/verification finish
 ```
 
-v0.17 把“观察工具结果”和“把事实写入状态”分开，并在调用调度处加入副作用分类：
+v0.17 separates "observing tool results" from "writing facts to state", and adds side-effect classification where calls are scheduled:
 
 ```text
-[旧] agent loop
-  -> [~] 解析 tool calls
-       -> 全 none effect：[+] 并发执行，按模型顺序提交事实
-       -> 含 possible：[+] 按模型顺序串行执行和提交
-       -> 混合 verification 与 possible：[+] verification 记为 invalid
+[old] agent loop
+  -> [~] parse tool calls
+       -> all none effect: [+] run concurrently, commit facts in model order
+       -> contains possible: [+] run and commit serially in model order
+       -> verification mixed with possible: [+] verification recorded as invalid
   -> [~] ToolExecutor.execute_result()
-       -> 参数校验 -> PermissionGate -> [~] handler
+       -> argument validation -> PermissionGate -> [~] handler
        -> [+] ExecutionResult
-       -> [+] AgentState.reserve_attempt()（possible 在 handler 前推进代次）
+       -> [+] AgentState.reserve_attempt() (possible advances the generation before the handler)
        -> [+] record_execution_result()
             -> [+] ExecutionAttempt / FailureEvent / ExecutionGeneration
-            -> [~] verification evidence 绑定 generation
-  -> [旧] 每个调用回灌 role=tool
-  -> [~] ContextManager 展示最近失败和预算
+            -> [~] verification evidence bound to the generation
+  -> [old] role=tool fed back for every call
+  -> [~] ContextManager shows recent failures and budgets
 
-[B] 不负责：recover 工具、自动 retry、参数修正、checkpoint、rollback、跨进程持久化。
+[B] Not responsible for: a recover tool, automatic retry, argument correction, checkpoint, rollback, cross-process persistence.
 ```
 
-这张图中的入口是 `ToolExecutor.execute_result()`，主要消费者是 `AgentState`、`ContextManager` 和 agent loop。图后半段的关键是不论 handler 成功还是失败，结构化结果都会被记录并回灌；“可能发生了副作用”会先改变代次，不能等 handler 返回成功才决定。
+The entry in this diagram is `ToolExecutor.execute_result()`, and the main consumers are `AgentState`, `ContextManager`, and the agent loop. The key to the second half of the diagram is that whether the handler succeeds or fails, the structured result is recorded and fed back; "side effects may have occurred" changes the generation first, and cannot wait for the handler to return success.
 
-## 核心概念与数据结构
+## Core Concepts and Data Structures
 
-### 1. 先把一次调用看成“观察值”
+### 1. First treat a call as an "observed value"
 
-要解决的问题是：错误文本太晚、太粗。工具执行器（Executor）是所有工具调用经过的边界，它按固定顺序做三件事：**参数校验 → 权限检查 → handler 执行**。`ExecutionResult` 把这三个阶段的观察结果放在一起，供 State 和上下文使用。
+The problem: error text arrives too late and is too coarse. The tool executor (Executor) is the boundary every tool call passes through, and it does three things in a fixed order: **argument validation → permission check → handler execution**. `ExecutionResult` puts the observations of these three stages together for State and the context to use.
 
-下面的片段只展示最重要的字段；`duration_ms`、输出摘要、退出码和内部预留信息也属于 v0.17 的完整结果结构。看这段代码的目的，是理解“结果不是一个 `ok: bool`”这一点：
+The snippet below shows only the most important fields; `duration_ms`, the output brief, the exit code, and internal reservation information also belong to the full v0.17 result structure. The purpose of this code is to understand that "the result is not an `ok: bool`":
 
 ```python
 @dataclass(frozen=True)
@@ -105,13 +105,13 @@ class ExecutionResult:
     error_kind: str | None = None
 ```
 
-这段定义带来的现象是：参数无效时 `outcome="invalid"`，不会询问权限；权限拒绝时 `outcome="denied"`，handler 不会进入；handler 抛异常时由 Executor 转成 `outcome="failed"`。每个结果仍然对应一个 `role=tool` 消息，不能因为失败就跳过协议回灌。
+The effect of this definition: invalid arguments give `outcome="invalid"` and no permission is asked; a permission denial gives `outcome="denied"` and the handler is not entered; a handler exception is turned by the Executor into `outcome="failed"`. Every result still matches one `role=tool` message; failures cannot skip the protocol feedback.
 
-### 2. `effect_class` 说明“环境是否可能变化”
+### 2. `effect_class` says "whether the environment may change"
 
-`effect_class` 是副作用分类，不是权限等级。`none` 表示可以按只读处理；`possible` 表示运行时不能安全证明没有副作用。它回答的是“执行后环境可能变了吗”，而 PermissionGate 回答的是“这次调用获准了吗”。例如 `run_shell(purpose="verification")` 在本次调用中按 `none` 处理。
+`effect_class` is a side-effect classification, not a permission level. `none` means the call can be treated as read-only; `possible` means the runtime cannot safely prove there are no side effects. It answers "might the environment have changed after execution", while the PermissionGate answers "was this call approved". For example, `run_shell(purpose="verification")` is treated as `none` in this call.
 
-对已通过权限的 `possible` 调用，State 在 handler 之前原子地预留 attempt，并推进 generation、清空旧验证证据：
+For an approved `possible` call, State atomically reserves the attempt before the handler, advances the generation, and clears old verification evidence:
 
 ```python
 before = self._verification_generation
@@ -121,16 +121,16 @@ if effect_class == "possible":
 return AttemptReservation(attempt_id, before, self._verification_generation)
 ```
 
-这个顺序解释了一个容易误解的现象：handler 之后抛错，generation 也不会回退，因为它可能已经写入部分内容；参数错误和权限拒绝由于 handler 没有运行，不推进 generation。
+This order explains an easily misunderstood effect: if the handler then raises, the generation does not roll back, because it may already have written part of its content; argument errors and permission denials do not advance the generation because the handler did not run.
 
-### 3. Attempt、Failure 和因果链接
+### 3. Attempt, Failure, and causal links
 
-要解决的问题是“下一轮模型如何知道失败对应哪一次调用”。`ExecutionAttempt` 保存一次调用的不可变事实，包括工具名、参数的 canonical JSON hash（把 JSON 按稳定顺序编码后计算的指纹）、脱敏参数摘要、generation、结果和 `failure_id`。敏感值不会原样渲染到 Context。
+The problem is "how does the model's next round know which call a failure belongs to". `ExecutionAttempt` stores the immutable facts of one call, including the tool name, the canonical JSON hash of the arguments (a fingerprint computed after encoding the JSON in a stable order), a redacted argument summary, the generation, the result, and `failure_id`. Sensitive values are not rendered into the Context verbatim.
 
-`FailureEvent` 从 attempt 中描述失败本身：失败类别、发生阶段、是否可重试、受影响文件，以及 `caused_by_attempt_id`。因此可以沿着
-`failure_id -> caused_by_attempt_id -> generation_id` 回溯，不必靠时间顺序或自然语言猜测。
+`FailureEvent` describes the failure itself from the attempt: the failure category, the stage where it happened, whether it is retryable, the affected files, and `caused_by_attempt_id`. So you can trace back along
+`failure_id -> caused_by_attempt_id -> generation_id` instead of guessing from time order or natural language.
 
-下面这两个字段是最短的因果链示意。代码前看它是为了理解“failure 不会凭空出现”；代码后可以看到，State 保存的是 ID 关系，而不是把整段自然语言错误重新猜一遍：
+The two fields below are the shortest sketch of the causal chain. Look at them first to understand that "a failure does not appear from nowhere"; afterwards you can see that State stores ID relationships instead of guessing again from a whole natural language error:
 
 ```python
 ExecutionAttempt(..., generation_id=generation_id, failure_id=failure_id)
@@ -138,76 +138,76 @@ FailureEvent(..., generation_id=generation_id,
              caused_by_attempt_id=attempt_id)
 ```
 
-v0.17 的基础分类和默认可重试性如下：
+The basic classification and default retryability in v0.17:
 
-| 观察到的结果 | category（类别） | retryable（可重试） |
+| Observed result | category | retryable |
 |---|---|---|
-| 参数或协议不合法 | `protocol` | 否 |
-| 权限明确拒绝 | `permission` | 否 |
-| 超时 | `transient` | 是 |
-| verification 非零或失败 | `validation` | 是 |
-| 已获准的 possible handler 异常 | `unknown` | 否 |
-| 其他执行失败，例如普通 shell 非零退出 | `deterministic` | 否 |
+| Invalid arguments or protocol | `protocol` | No |
+| Explicit permission denial | `permission` | No |
+| Timeout | `transient` | Yes |
+| Verification nonzero or failed | `validation` | Yes |
+| Exception in an approved possible handler | `unknown` | No |
+| Other execution failures, such as an ordinary shell nonzero exit | `deterministic` | No |
 
-表格的用途不是让读者背分类，而是说明同一句“失败了”会走不同的后续边界：超时和验证失败可以计入有限的重试/修复预算；未知副作用不能安全自动重试。
+The purpose of the table is not to make readers memorize categories but to show that the same "it failed" takes different follow-up boundaries: timeouts and verification failures can count toward limited retry/repair budgets; unknown side effects cannot be retried automatically and safely.
 
-### 4. 验证证据只属于当前代次
+### 4. Verification evidence belongs only to the current generation
 
-验证证据是一次明确的检查结果，不是“最近一次工具调用成功”的同义词。只有 `run_shell(purpose="verification")` 在当前 generation 返回 `[exit=0]`，才会留下通过证据。任何获准的 `possible` 调用都会清空旧证据；权限拒绝不会清空，因为 handler 没有运行。
+Verification evidence is the result of one explicit check, not a synonym for "the latest tool call succeeded". Only `run_shell(purpose="verification")` returning `[exit=0]` in the current generation leaves passing evidence. Any approved `possible` call clears old evidence; a permission denial does not clear it, because the handler did not run.
 
-在 v0.17 中，确定性、协议或权限错误会收口为 `failed`；未知副作用会收口为 `blocked`；可重试失败达到同一参数指纹预算，或验证失败耗尽 repair cycle，也会停止。`blocked` 表示当前运行不能安全继续，不表示任务成功。
+In v0.17, deterministic, protocol, or permission errors finish as `failed`; unknown side effects finish as `blocked`; a retryable failure that reaches the budget for the same argument fingerprint, or a verification failure that exhausts the repair cycles, also stops. `blocked` means the current run cannot safely continue; it does not mean the task succeeded.
 
-验证收口的关键判断可以压缩成下面的条件：
+The key decision for the verification finish can be reduced to this condition:
 
 ```python
 passed = result.outcome == "succeeded" and result.exit_code == 0
 self._last_verified_generation = generation_id if passed else -1
 ```
 
-它说明“命令返回成功”还不够：证据必须和当前 generation 一起保存；下一次获准的 `possible` 调用会先清空它。
+It shows that "the command returned success" is not enough: the evidence must be stored together with the current generation; the next approved `possible` call clears it first.
 
-## 为什么这样设计
+## Why This Design
 
-把结果压成 `ok: bool` 最简单，但会丢失“是否获准”“是否进入 handler”和“是否可能改变环境”。结构化结果和不可变记录多了一些字段，却让后续恢复有可靠事实可依赖；代价是只读 shell 也可能因为无法证明安全而被保守归为 `possible`。
+Reducing results to `ok: bool` is simplest, but it loses "was it approved", "did it enter the handler", and "might it have changed the environment". Structured results and immutable records add some fields but give later recovery reliable facts to depend on; the cost is that read-only shell commands may also be conservatively classified as `possible` because their safety cannot be proven.
 
-全是 `none` 的调用可以并发，提高吞吐；只要出现 `possible`，整回合就按模型顺序执行和提交，牺牲并发度换取 generation 和 attempt 顺序稳定。混合 `possible` 与 verification 的回合把 verification 标为 invalid，避免检查在修改前或修改中运行。
+Calls that are all `none` can run concurrently for throughput; as soon as `possible` appears, the whole round runs and commits in the model's order, trading concurrency for stable generation and attempt order. A round that mixes `possible` with verification marks the verification as invalid, so that a check never runs before or during a change.
 
-本版刻意把“记录事实”和“决定如何修复”分开：没有自动重试、恢复动作、回滚或跨进程持久化。这样下一课可以在明确的失败事实和预算上实现受限恢复，而不会把修复策略藏在记录层里。
+This version deliberately separates "recording facts" from "deciding how to fix": no automatic retry, recovery actions, rollback, or cross-process persistence. This way the next lesson can implement bounded recovery on top of clear failure facts and budgets, without hiding the repair strategy inside the recording layer.
 
-## 设计边界
+## Design Boundaries
 
-- Executor 负责把 handler 异常转成错误结果；LLM 或 CLI 顶层异常仍由上层处理。
-- 工具结果全部回灌后才进入下一轮；失败不会跳过对应的协议消息。
-- hash 用于稳定关联和计数，不是授权凭证；脱敏摘要也不能替代 PermissionGate。
-- 本版无法判断 partial write 的实际影响，只能把未知副作用归为 `unknown` 并保守阻塞。
-- 状态只存在当前进程。普通 history trimming 不会删除 State 中的 failure，但进程重启后不会自动恢复。
+- The Executor turns handler exceptions into error results; top-level LLM or CLI exceptions are still handled above.
+- The next round starts only after all tool results are fed back; a failure does not skip its protocol message.
+- The hash is used for stable association and counting, not as an authorization credential; the redacted summary cannot replace the PermissionGate either.
+- This version cannot judge the actual effect of a partial write; it can only classify unknown side effects as `unknown` and block conservatively.
+- State exists only in the current process. Ordinary history trimming does not delete failures in State, but they are not restored automatically after a process restart.
 
-## 关键流程
+## Key Flow
 
-下面的流程用于观察一条调用从意图到状态的完整路径；读者不需要先记住函数名，只要先看每个分支发生在哪个边界：
+The flow below shows the complete path of one call from intent to state; you do not need to memorize function names first, only see at which boundary each branch happens:
 
 ```text
 tool call
-  -> 参数/schema 校验
-       └─失败 -> invalid attempt -> protocol failure
+  -> argument/schema validation
+       └─failure -> invalid attempt -> protocol failure
   -> PermissionGate
-       └─拒绝 -> denied attempt -> permission failure
-  -> possible? 预留 attempt、推进 generation、清空旧验证
+       └─denied -> denied attempt -> permission failure
+  -> possible? reserve the attempt, advance the generation, clear old verification
   -> handler
-       ├─timeout / 非零 / 异常 -> ExecutionResult -> FailureEvent
-       └─成功 -> attempt；verification 另写 evidence
-  -> role=tool 回灌 -> 下一轮模型读取 Structured State
+       ├─timeout / nonzero / exception -> ExecutionResult -> FailureEvent
+       └─success -> attempt; verification also writes evidence
+  -> role=tool fed back -> the model's next round reads Structured State
 ```
 
-运行真实任务时，应观察到：权限拒绝和参数错误不改变 generation；获准的文件写入或 execution shell 即使失败也要求重新验证；上下文压缩后最近 failure、generation 和剩余预算仍可见。命令行首条任务处理后，程序仍进入交互循环。
+When you run a real task, you should see: permission denials and argument errors do not change the generation; an approved file write or execution shell requires verification again even when it fails; after context compaction, the recent failures, the generation, and the remaining budgets are still visible. After the command-line first task is handled, the program still enters the interactive loop.
 
-## 实现拆解
+## Implementation Breakdown
 
-`Tool.effect_for()` 把工具默认等级和 verification 特例分开。`ToolExecutor.execute_result()` 只负责校验、授权、执行并转换成观察值，不替 State 猜测原因。`AgentState.record_execution_result()` 再依据结果生成 attempt、failure、验证证据和终态。`ContextManager._render_state()` 读取 State 的 `snapshot()`，所以这些事实不依赖旧消息是否仍在发送视图中。
+`Tool.effect_for()` separates the tool's default level from the verification special case. `ToolExecutor.execute_result()` only validates, authorizes, executes, and converts to an observed value; it does not guess causes for State. `AgentState.record_execution_result()` then generates the attempt, failure, verification evidence, and final status from the result. `ContextManager._render_state()` reads State's `snapshot()`, so these facts do not depend on whether old messages are still in the sent view.
 
-## 本版特性、下一课与代码索引
+## Version Features, Next Lesson, and Code Index
 
-v0.17 把“失败”从一段文本变成可观察、可计数、可追溯的事实，并让验证证据严格属于某个 generation。下一课将在这些事实和预算约束下选择有限的恢复动作。
+v0.17 turns "failure" from a piece of text into observable, countable, traceable facts, and makes verification evidence belong strictly to one generation. The next lesson chooses bounded recovery actions under these facts and budget constraints.
 
 - [`src/mini_agent/config.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.17/src/mini_agent/config.py)
 - [`src/mini_agent/state.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.17/src/mini_agent/state.py)

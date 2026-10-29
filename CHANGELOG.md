@@ -337,260 +337,260 @@ Previously unreleased mainline changes included in this snapshot:
   investigation reports, Todo marker stability, failed tools, and verification
   closure.
 
-## [v0.16] - 计划驱动执行（Plan-driven Execution）
+## [v0.16] - Plan-driven Execution
 
 - Added verification evidence, task reset, completion reminders, and blocked/failed task states.
 - Added `run_shell` purpose enum with unified exit status output.
 - Added stage-five end-to-end acceptance coverage for project instructions, Todo replanning, context compaction, and verification closure.
 
-## [v0.15] - 任务清单与状态（Todo / Task State）
+## [v0.15] - Todo / Task State
 
 - Added state-bound `update_todo` with atomic validation and Structured State rendering.
 - Added per-run registries to isolate Todo state between AgentState instances.
 - v0.15 does not auto-plan, persist todos, or block completion.
 
-## [v0.14] - 项目级指令（Project Instructions）
+## [v0.14] - Project Instructions
 
 ### Added
-- `InstructionLoader`：发现并合并适用的 `AGENTS.md`，保留来源并限制长度。
-- protected context：项目规则在 trimming/compaction 后仍会重新注入。
-- `docs/tutorials/14-project-instructions.md` 与指令加载测试。
+- `InstructionLoader`: discovers and merges applicable `AGENTS.md` files, keeping sources and limiting length.
+- Protected context: project rules are re-injected after trimming/compaction.
+- `docs/tutorials/14-project-instructions.md` and instruction loading tests.
 
 ### Changed
-- CLI 启动时加载项目级指令；`build_system_prompt()` 支持 `<project_instructions>` 区块。
-- `ContextManager` 支持独立 protected messages，兼容旧 history 调用。
+- The CLI loads project instructions at startup; `build_system_prompt()` supports a `<project_instructions>` block.
+- `ContextManager` supports separate protected messages, compatible with old history calls.
 
 ### Why
-- 让 Agent 在执行任务前获得项目约束，同时避免把规则误当作可压缩的对话历史。
+- Give the Agent project constraints before it runs a task, while avoiding treating rules as compactable conversation history.
 
-## [v0.13.1] - Context Observability 增强
+## [v0.13.1] - Context Observability enhancement
 
 ### Added
-- `ContextStats` 与 `ContextManager.stats_snapshot()`：记录实际请求的 token 总量、预算、输出预留及互斥分桶。
-- `ContextEvent` observer：观察 prepared、trimmed、compacted 事件；默认终端日志可通过 `CONTEXT_OBSERVABILITY` 关闭。
-- v0.13 教程追加 Context Observability 说明；本版本不新增独立教程。
+- `ContextStats` and `ContextManager.stats_snapshot()`: record the total tokens of the actual request, the budget, the output reserve, and mutually exclusive buckets.
+- `ContextEvent` observer: observes prepared, trimmed, and compacted events; the default terminal log can be turned off with `CONTEXT_OBSERVABILITY`.
+- The v0.13 tutorial adds Context Observability notes; this version adds no separate tutorial.
 
 ### Changed
-- trimming 日志记录 tool result 截断和完整轮次删除的对象与 token 节省量。
-- compaction 日志记录压缩轮次、摘要大小和保留轮次；观测回调异常不影响上下文构建。
+- Trimming logs record the objects and token savings of tool result truncation and complete round deletion.
+- Compaction logs record compacted rounds, summary size, and kept rounds; observer callback exceptions do not affect context building.
 
-## [v0.13] - 上下文压缩
+## [v0.13] - Context compaction
 
 ### Added
-- `ContextManager.compact()`：老轮次摘要、近期轮次保留和 Structured State 注入
-- 摘要请求复用 `http.client`，不携带工具 schema；摘要失败自动降级为 trimming
-- `docs/tutorials/13-context-compaction.md` 与压缩流程单测
+- `ContextManager.compact()`: old-round summaries, recent-round retention, and Structured State injection
+- Summary requests reuse `http.client` and carry no tool schemas; summary failure automatically degrades to trimming
+- `docs/tutorials/13-context-compaction.md` and compaction flow unit tests
 
 ### Changed
-- `MAX_ITERATIONS` 从 10 调整为 50
-- `prepare_messages()` 在预算超限且存在老轮次时自动触发 compaction
+- `MAX_ITERATIONS` changed from 10 to 50
+- `prepare_messages()` automatically triggers compaction when the budget is exceeded and old rounds exist
 
-## [v0.12] - 预算与裁剪
+## [v0.12] - Budget and trimming
 
 ### Added
-- `src/mini_agent/context.py`：`count_tokens`（`len(text) // 3` 启发式）、`ContextBudget`（窗口、输出预留和历史比例）与 `TrimPolicy`
-- `CONTEXT_WINDOW = 128_000`：写入 `config.py` 与 `config_example.py`，可由 `config_local.py` 覆盖
-- `docs/tutorials/12-token-budget-trimming.md`：第十二课教学文档
-- `tests/test_context.py`：token 估算、预算、轮次原子性、tool result 截断、保底消息与预算收敛测试
+- `src/mini_agent/context.py`: `count_tokens` (`len(text) // 3` heuristic), `ContextBudget` (window, output reserve, and history ratio), and `TrimPolicy`
+- `CONTEXT_WINDOW = 128_000`: written to `config.py` and `config_example.py`, can be overridden by `config_local.py`
+- `docs/tutorials/12-token-budget-trimming.md`: Lesson 12 teaching document
+- `tests/test_context.py`: tests for token estimates, budgets, round atomicity, tool result truncation, guaranteed messages, and budget convergence
 
 ### Changed
-- `ContextManager.prepare_messages()` 从完整 history 构建独立副本：超限时先截断旧 tool result，仍超限时从最老轮次删除
-- system 消息和首条 user task 不参与裁剪；带 `tool_calls` 的 assistant 消息与其连续 tool results 作为不可拆分轮次处理
+- `ContextManager.prepare_messages()` builds a separate copy from the full history: when over the limit, it first truncates old tool results, and when still over the limit, deletes from the oldest round
+- System messages and the first user task do not take part in trimming; assistant messages with `tool_calls` and their consecutive tool results are handled as an indivisible round
 
 ### Why
-- 上下文是有限资源，长任务不应因 token 累积而直接失败。
-- OpenAI tool calling 要求 tool result 紧跟相应 tool call；按轮次原子删除避免产生会导致 400 的孤儿 `role=tool` 消息。
-- 原始 history 与 AgentState 都不被裁剪，给 v0.13 历史摘要和 Structured State 锚定保留正确边界。
+- Context is a finite resource, and long tasks should not fail directly because tokens accumulate.
+- OpenAI tool calling requires tool results to directly follow the matching tool call; atomic deletion by round avoids orphan `role=tool` messages that would cause a 400.
+- Neither the original history nor AgentState is trimmed, keeping the correct boundary for v0.13 history summaries and Structured State anchoring.
 
-## [v0.11] - 上下文架构
+## [v0.11] - Context architecture
 
 ### Added
-- `src/mini_agent/state.py`：`AgentState` 数据类（task/current_goal/tool_history/files_changed/errors/status）+ `record_tool` 执行记录接口 + `snapshot` 线程安全快照
-- `src/mini_agent/context.py`：`ContextManager`，`prepare_messages()` 作为 LLM 调用前统一入口（本版恒等返回，只立边界）
-- `tests/test_state.py`：State 单测（10 个：记录/派生字段/深拷贝隔离/并发安全）
-- `tests/test_context.py`：ContextManager 单测（5 个：引用保持/恒等返回/State 不被注入）
-- `tests/test_executor.py`：Executor 回调单测（14 个：三路径回调/回调异常不影响执行/brief 截断/并发回调）
-- `docs/tutorials/11-context-architecture.md`：第十一课教学文档
+- `src/mini_agent/state.py`: `AgentState` dataclass (task/current_goal/tool_history/files_changed/errors/status) + `record_tool` execution record interface + `snapshot` thread-safe snapshot
+- `src/mini_agent/context.py`: `ContextManager`, with `prepare_messages()` as the unified entry before LLM calls (returns identity in this version, only setting the boundary)
+- `tests/test_state.py`: State unit tests (10: records/derived fields/deep copy isolation/concurrency safety)
+- `tests/test_context.py`: ContextManager unit tests (5: reference kept/identity return/State not injected)
+- `tests/test_executor.py`: Executor callback unit tests (14: callbacks on three paths/callback exceptions do not affect execution/brief truncation/concurrent callbacks)
+- `docs/tutorials/11-context-architecture.md`: Lesson 11 teaching document
 
 ### Changed
-- `src/mini_agent/agent.py`：`agent_loop(messages)` 改为 `agent_loop(context_manager, tool_executor)`，经 `cm.prepare_messages()` 调 LLM；消除 v0.10 的"MAX_ITERATIONS 半截状态"契约（每轮 tool results 全部回灌后才进下一轮或返回）
-- `src/mini_agent/tools/base.py`：`ToolExecutor` 加 `on_result` 结果回调（权限拒绝/handler 异常/执行成功三路径都通知，brief 截断 200 字符，回调异常只打印不影响执行）
-- `src/mini_agent/__main__.py`：组装 AgentState + ContextManager 注入 loop，`run_task` 统一 argv/交互两条路径并维护 `state.status`
-- `src/mini_agent/agent.py`：`call_llm` 按 `BASE_URL` 的 scheme 选 `HTTPConnection`/`HTTPSConnection`（此前明文 HTTP 打 https 网关会收到 302，LLM 回复为空）
-- `tests/test_tools.py`：修复 `test_run_shell_exit_code` 在 pytest 下读 stdin 挂掉的问题（放行策略绕过 ASK 交互）
+- `src/mini_agent/agent.py`: `agent_loop(messages)` changed to `agent_loop(context_manager, tool_executor)`, calling the LLM through `cm.prepare_messages()`; removes the v0.10 "MAX_ITERATIONS half state" contract (all tool results of each round are fed back before entering the next round or returning)
+- `src/mini_agent/tools/base.py`: `ToolExecutor` adds an `on_result` result callback (notified on all three paths: permission refusal/handler exception/success; brief truncated to 200 characters; callback exceptions are only printed and do not affect execution)
+- `src/mini_agent/__main__.py`: assembles AgentState + ContextManager and injects them into the loop; `run_task` unifies the argv/interactive paths and maintains `state.status`
+- `src/mini_agent/agent.py`: `call_llm` chooses `HTTPConnection`/`HTTPSConnection` by the scheme of `BASE_URL` (before this, plaintext HTTP to an https gateway got a 302 and an empty LLM reply)
+- `tests/test_tools.py`: fixed `test_run_shell_exit_code` hanging on reading stdin under pytest (an allow policy bypasses the ASK interaction)
 
 ### Why
-- **Agent State ≠ LLM Context**（D1）：messages 是易耗品（迟早裁剪/压缩），State 是压缩后不失忆的锚。v0.09 的 PermissionGate always 状态已验证"运行时状态独立于 messages"可行。
-- **纯重构版**：外部行为与 v0.10 完全一致，不裁剪、不压缩、不估算 token——先把"谁能碰 messages"（只有 ContextManager）、"状态放哪"（AgentState）立好边界，v0.12/v0.13 的工程实现才有落点。
-- **State 由 Executor 结果回调更新，loop 不感知**（D5）：否则 State 会变成第二个无人维护的 messages。回调把记录收敛到 Executor 一处，且是观察者不是参与者（异常不影响执行结果）。
-- **线程安全**：v0.06 起同一轮 tool_calls 并发执行，回调来自线程池工作线程，`record_tool` 加 Lock、读取走 `snapshot()` 深拷贝。
-- **半截状态消除**：v0.10 文档已警告 messages 可能停在"有 tool_calls 无 tool 结果"的协议非法状态，本版从代码上根治——这也为 v0.12 按轮次原子裁剪铺路（轮次完整性从此有保证）。
+- **Agent State ≠ LLM Context** (D1): messages are consumables (trimmed/compacted sooner or later), and State is the anchor that does not lose memory after compaction. The v0.09 PermissionGate always state already proved that "runtime state independent of messages" works.
+- **Pure refactor version**: external behavior is fully the same as v0.10, with no trimming, no compaction, and no token estimates—first set the boundaries of "who can touch messages" (only ContextManager) and "where state lives" (AgentState), so the engineering of v0.12/v0.13 has a place to land.
+- **State is updated by the Executor result callback, and the loop is unaware of it** (D5): otherwise State would become a second, unmaintained messages. The callback concentrates records in one place, the Executor, and it is an observer, not a participant (exceptions do not affect execution results).
+- **Thread safety**: since v0.06, tool_calls in the same round run concurrently, and callbacks come from thread pool worker threads; `record_tool` takes a Lock, and reads go through a `snapshot()` deep copy.
+- **Half state removed**: the v0.10 docs already warned that messages might stop in the protocol-illegal state of "tool_calls without tool results"; this version fixes it at the code level—this also paves the way for v0.12 atomic trimming by round (round integrity is guaranteed from now on).
 
-## [v0.10] - shell 执行
+## [v0.10] - Shell execution
 
 ### Added
-- `src/mini_agent/tools/shell.py`：`run_shell` 工具（`subprocess.run` + `shell=True` + 超时 30s + 输出截断 2000 字符 + 退出码前缀）
-- `docs/tutorials/10-shell-execution.md`：第十课教学文档
+- `src/mini_agent/tools/shell.py`: `run_shell` tool (`subprocess.run` + `shell=True` + 30 s timeout + output truncated at 2000 characters + exit code prefix)
+- `docs/tutorials/10-shell-execution.md`: Lesson 10 teaching document
 
 ### Changed
-- `src/mini_agent/tools/__init__.py`：注册 `run_shell_tool`（7 个工具）
-- `src/mini_agent/permission.py`：`PERMISSION_RULES` 加 `run_shell` 二维权限规则（`git *`/`python *`/`pip *`/`ls *`/`cat *`/`echo *` → allow，`*` → ask）；`_from_config` 对复杂格式排序，`*` 排最前（优先级最低），与 findLast 语义配合
-- `src/mini_agent/prompt.py`：`header()` 能力描述从"后续会扩展到跑命令"改为"当前能读写改文件、跑命令、做数学计算"
-- `tests/test_tools.py`：新增 3 个 run_shell 测试（执行 echo、非零退出码、二维权限 git allow/rm deny）
+- `src/mini_agent/tools/__init__.py`: registers `run_shell_tool` (7 tools)
+- `src/mini_agent/permission.py`: `PERMISSION_RULES` adds two-dimensional `run_shell` permission rules (`git *`/`python *`/`pip *`/`ls *`/`cat *`/`echo *` → allow, `*` → ask); `_from_config` sorts the complex format with `*` first (lowest priority), working with findLast semantics
+- `src/mini_agent/prompt.py`: the capability description in `header()` changed from "will later extend to running commands" to "can currently read, write, and edit files, run commands, and do math"
+- `tests/test_tools.py`: adds 3 run_shell tests (run echo, non-zero exit code, two-dimensional permission git allow/rm deny)
 
 ### Why
-- v0.09 的二维权限已为 `run_shell` 铺路（`_extract_pattern` 返回 command 字符串），v0.10 落地工具本身。
-- 不做 BashArity 命令泛化：fnmatch 的 `git *` 通配符已能按命令前缀匹配，教学简洁性优先。后续如需按"命令+参数"分离匹配再引入。
-- `shell=True` 让命令字符串直接执行，教学简洁；安全性由二维权限闸门兜底（安全命令 allow，其他 ask）。
-- 超时 30s 硬编码：跑测试够用，长任务后续 Context Management 版本再调。
-- 输出截断 2000 字符：防长输出爆上下文，与 `read_file` 的 limit 设计一致。
-- `_from_config` 排序修复：findLast 从后往前找，`*` 会匹配一切，必须排最前（优先级最低），否则 `*` 永远先匹配返回 ask，具体模式被遮蔽。
+- The v0.09 two-dimensional permissions already paved the way for `run_shell` (`_extract_pattern` returns the command string); v0.10 lands the tool itself.
+- No BashArity command generalization: the fnmatch `git *` wildcard already matches by command prefix, and teaching simplicity comes first. Introduce it later if separate "command + arguments" matching is needed.
+- `shell=True` runs the command string directly, for teaching simplicity; safety is backed by the two-dimensional permission gate (safe commands allow, others ask).
+- The 30 s timeout is hard-coded: enough for running tests; long tasks are adjusted in a later Context Management version.
+- Output truncated at 2000 characters: prevents long output from blowing up the context, consistent with the `read_file` limit design.
+- `_from_config` sorting fix: findLast searches from the end, and `*` matches everything, so it must be placed first (lowest priority); otherwise `*` always matches first and returns ask, shadowing specific patterns.
 
-## [v0.09] - 权限系统升级
+## [v0.09] - Permission system upgrade
 
 ### Changed
-- `src/mini_agent/permission.py`：从一维 `tool_name -> action` 升级为二维 `(tool_name, pattern) -> action`
-  - 规则内部存扁平 `list[dict]`（Rule 三元组：permission + pattern + action）
-  - `_from_config()` 兼容旧版简单 dict 格式（`{"write_file": "ask"}`）和新版复杂格式（`{"run_shell": {"git *": "allow"}}`）
-  - `check()` 用 `fnmatch` 做 wildcard 匹配，`findLast` 语义（后出现优先级更高），未匹配默认 `ask`
-  - `approve()` 存 `(tool_name, pattern)` 而非只存 `tool_name`，实现"同类命令免问"
-  - `_extract_pattern()` 从 args 提取 pattern（文件工具提取 path，run_shell 提取 command，其他返回 `*`）
-- `tests/test_tools.py`：新增 4 个二维权限测试（pattern allow/deny 覆盖、always 存 pattern、findLast 优先级）
+- `src/mini_agent/permission.py`: upgraded from one-dimensional `tool_name -> action` to two-dimensional `(tool_name, pattern) -> action`
+  - Rules are stored internally as a flat `list[dict]` (Rule triple: permission + pattern + action)
+  - `_from_config()` is compatible with the old simple dict format (`{"write_file": "ask"}`) and the new complex format (`{"run_shell": {"git *": "allow"}}`)
+  - `check()` does wildcard matching with `fnmatch`, with `findLast` semantics (later rules have higher priority), defaulting to `ask` when nothing matches
+  - `approve()` saves `(tool_name, pattern)` instead of only `tool_name`, so "commands of the same kind are not asked again"
+  - `_extract_pattern()` extracts the pattern from args (file tools extract path, run_shell extracts command, others return `*`)
+- `tests/test_tools.py`: adds 4 two-dimensional permission tests (pattern allow/deny override, always saves pattern, findLast priority)
 
 ### Why
-- v0.04 的一维权限只按工具名控制，无法区分 `git status`（安全）和 `rm -rf /`（危险）——所有 `run_shell` 共享同一个 action，粒度太粗。
-- 二维权限按命令模式控制：`git *` 可以 allow，`rm *` 可以 deny，其他 ask。为 v0.10 `run_shell` 工具的命令模式权限铺路。
-- `findLast` 语义让运行时 `approved` 规则（追加在末尾）自然覆盖前面的 `ask` 规则，无需显式删除旧规则。
-- 未匹配默认 `ask` 而非 `allow`——安全优先，新工具默认需要用户确认。
-- 借鉴 OpenCode `PermissionNext` 的 `evaluate` / `fromConfig` / `findLast` 设计，去掉事件总线、pending 队列、持久化——CLI 同步交互不需要。
-- `_extract_pattern()` 对 `run_shell` 返回完整命令字符串作为占位，v0.10 直接用 fnmatch 通配符（如 `git *`）按命令前缀匹配，不做 BashArity 命令泛化——fnmatch 已够用。
+- The v0.04 one-dimensional permissions controlled only by tool name and could not distinguish `git status` (safe) from `rm -rf /` (dangerous)—all `run_shell` calls shared the same action, which was too coarse.
+- Two-dimensional permissions control by command pattern: `git *` can be allow, `rm *` can be deny, and others ask. This paves the way for command pattern permissions of the v0.10 `run_shell` tool.
+- `findLast` semantics let runtime `approved` rules (appended at the end) naturally override earlier `ask` rules, without explicitly deleting old rules.
+- Defaulting to `ask` instead of `allow` when nothing matches—safety first, new tools need user confirmation by default.
+- Borrows the `evaluate` / `fromConfig` / `findLast` design of OpenCode `PermissionNext`, removing the event bus, pending queue, and persistence—synchronous CLI interaction does not need them.
+- `_extract_pattern()` returns the full command string for `run_shell` as a placeholder; v0.10 uses fnmatch wildcards (such as `git *`) directly to match by command prefix, without BashArity command generalization—fnmatch is enough.
 
-## [v0.08] - 文件操作补全
+## [v0.08] - File operations completed
 
 ### Added
-- `src/mini_agent/tools/file.py`：新增 `edit_file`（精确字符串替换，多匹配安全检查）、`list_dir`（目录列举，200 条上限）、`grep`（正则搜索，100 条上限，纯标准库 `re`+`os.walk`+`fnmatch`）
-- `docs/tutorials/08-file-operations.md`：第八课教学文档
+- `src/mini_agent/tools/file.py`: adds `edit_file` (exact string replacement, multi-match safety check), `list_dir` (directory listing, 200 entry limit), and `grep` (regex search, 100 entry limit, pure standard library `re`+`os.walk`+`fnmatch`)
+- `docs/tutorials/08-file-operations.md`: Lesson 8 teaching document
 
 ### Changed
-- `src/mini_agent/tools/file.py`：`read_file` 加 `offset`/`limit` 分段读取 + 行号前缀（`00001| `）+ 剩余行提示
-- `src/mini_agent/permission.py`：`list_dir`/`grep` 走 ALLOW，`edit_file` 走 ASK
-- `src/mini_agent/tools/__init__.py`：注册 6 个工具
-- `tests/test_tools.py`：从 8 个测试扩到 15 个（新增 read_file offset/limit、edit_file 单次/无匹配/多匹配、list_dir、grep 有匹配/无匹配）
+- `src/mini_agent/tools/file.py`: `read_file` adds `offset`/`limit` partial reads + line number prefixes (`00001| `) + a remaining-lines hint
+- `src/mini_agent/permission.py`: `list_dir`/`grep` go to ALLOW, `edit_file` goes to ASK
+- `src/mini_agent/tools/__init__.py`: registers 6 tools
+- `tests/test_tools.py`: expanded from 8 to 15 tests (adds read_file offset/limit, edit_file single/no match/multiple matches, list_dir, grep match/no match)
 
 ### Why
-- v0.03 只有 read_file/write_file，agent 看不到目录结构、改文件只能整文件重写、找不到内容在哪——补齐 list_dir/edit_file/grep 形成完整操作链路。
-- `edit_file` 用字符串匹配而非行号编辑：LLM 容易数错行号，从 read_file 输出复制原文更可靠。多匹配时报错而非静默替换第一处，防误改。
-- `read_file` 加 offset/limit：大文件不爆上下文；行号前缀帮 LLM 定位 edit_file 的 old_string。
-- `grep` 用纯标准库而非 ripgrep：零第三方依赖约定。性能差但教学场景够用，v0.10 加 run_shell 后 LLM 可自己调 rg。
-- 不做 OpenCode 的 8 种模糊匹配策略、输出临时文件、文件锁、LSP 集成——对教学项目过度设计。
+- v0.03 had only read_file/write_file; the agent could not see directory structure, could change files only by rewriting whole files, and could not find where content was—adding list_dir/edit_file/grep forms a complete operation chain.
+- `edit_file` uses string matching instead of line number editing: LLMs easily miscount line numbers, and copying original text from read_file output is more reliable. Multiple matches report an error instead of silently replacing the first one, to prevent wrong changes.
+- `read_file` adds offset/limit: large files do not blow up the context; line number prefixes help the LLM locate the old_string for edit_file.
+- `grep` uses the pure standard library instead of ripgrep: the zero third-party dependency convention. Performance is worse but enough for teaching; after v0.10 adds run_shell, the LLM can call rg itself.
+- No OpenCode-style 8 fuzzy matching strategies, temporary output files, file locks, or LSP integration—over-design for a teaching project.
 
-## [v0.07] - 系统提示词工程化
+## [v0.07] - System prompt engineering
 
 ### Added
-- `src/mini_agent/prompt.py`：`build_system_prompt(agent_name)` 分层组装（header 身份 + `_CORE_RULES` 行为规范 + `environment` 环境信息）；`_detect_git` 纯目录遍历判断 git 仓库
-- `tests/test_prompt.py`：system prompt smoke test（组装/ header / 回退/ 环境字段）
-- `docs/tutorials/07-system-prompt.md`：第七课教学文档
+- `src/mini_agent/prompt.py`: `build_system_prompt(agent_name)` layered assembly (header identity + `_CORE_RULES` behavior rules + `environment` environment info); `_detect_git` detects a git repository by pure directory traversal
+- `tests/test_prompt.py`: system prompt smoke test (assembly / header / fallback / environment fields)
+- `docs/tutorials/07-system-prompt.md`: Lesson 7 teaching document
 
 ### Changed
-- `src/mini_agent/__main__.py`：`messages[0]` 从一行硬编码字符串改为调用 `build_system_prompt()`
+- `src/mini_agent/__main__.py`: `messages[0]` changed from a one-line hard-coded string to a call to `build_system_prompt()`
 
 ### Why
-- 一行 system prompt 缺环境信息（工作目录/平台/日期），模型靠猜路径和命令易出错。
-- 无行为规范，模型可能啰嗦、加 emoji、复述工具输出、主动总结——多轮迭代时污染上下文。
-- 分层组装（header/core_rules/environment）借鉴 OpenCode 四层结构做减法：去掉 provider 适配（单模型）和 custom 加载（留 v0.08）。
-- `header(agent_name)` 为多 agent/sub-agent 预留接口，当前只实现 build，后续加 explore/plan 只需在 dict 加一行。
-- `agent.py` 不动——核心 loop 仍只认 messages 列表，prompt 构造是入口层职责，保持 loop 清晰。
+- A one-line system prompt lacks environment info (working directory/platform/date), and the model easily makes mistakes guessing paths and commands.
+- Without behavior rules, the model may be verbose, add emoji, restate tool output, or summarize unprompted—polluting the context over many iterations.
+- The layered assembly (header/core_rules/environment) borrows OpenCode's four-layer structure and subtracts from it: removes provider adaptation (single model) and custom loading (left for v0.08).
+- `header(agent_name)` reserves an interface for multi-agent/sub-agent; currently only build is implemented, and adding explore/plan later needs only one more line in the dict.
+- `agent.py` is untouched—the core loop still knows only the messages list; prompt construction is the entry layer's duty, keeping the loop clear.
 
-## [v0.06] - 并发 tool_calls
+## [v0.06] - Concurrent tool_calls
 
 ### Changed
-- `src/mini_agent/agent.py`：`agent_loop` 里 tool_calls 执行从串行 for 循环改为 `ThreadPoolExecutor` 并发；`pool.map` 保证结果按原序回灌
+- `src/mini_agent/agent.py`: tool_calls execution in `agent_loop` changed from a serial for loop to `ThreadPoolExecutor` concurrency; `pool.map` guarantees results are fed back in the original order
 
 ### Why
-- 同一轮的多个 tool_calls 互不依赖，串行执行浪费时间。
-- `ThreadPoolExecutor` 是"最小改动 + 足够好的并发"——不需要把整个调用链 async 化。
-- `pool.map` 保证结果顺序与 tool_calls 原序一致，回灌顺序安全。
-- v0.04 的 `_ask_lock` 在并发场景生效：防止多个 ASK 权限交互交错。
+- Several tool_calls in the same round do not depend on each other, and serial execution wastes time.
+- `ThreadPoolExecutor` is "minimal change + good enough concurrency"—the whole call chain does not need to become async.
+- `pool.map` guarantees the result order matches the original tool_calls order, so feedback order is safe.
+- The v0.04 `_ask_lock` takes effect in the concurrent case: it prevents several ASK permission interactions from interleaving.
 
-## [v0.05] - 流式输出
+## [v0.05] - Streaming output
 
 ### Changed
-- `src/mini_agent/agent.py`：`call_llm` 改流式（`stream=True` + SSE 解析 + chunk 拼接 + 打字机效果）；`agent_loop` 里 print 标记移到 `call_llm` 之前
+- `src/mini_agent/agent.py`: `call_llm` changed to streaming (`stream=True` + SSE parsing + chunk joining + typewriter effect); the print marker in `agent_loop` moved before `call_llm`
 
 ### Why
-- 非流式下 LLM 全部想完才返回，长回复时终端有明显等待。
-- 流式边收边显示，打字机效果让用户体感更快。
-- `http.client` + `Accept-Encoding: identity` 保证收到未压缩的原始文本流，逐行解析可靠。
-- tool_calls 的 arguments 跨 chunk 拼接（`+=`），用 index 聚合——流式下结构化数据的处理方式。
+- Without streaming, the LLM returns only after it has fully finished thinking, and long replies cause a visible wait in the terminal.
+- Streaming shows text as it arrives, and the typewriter effect makes it feel faster to the user.
+- `http.client` + `Accept-Encoding: identity` guarantees an uncompressed raw text stream, so line-by-line parsing is reliable.
+- tool_calls arguments are joined across chunks (`+=`) and aggregated by index—the way to handle structured data under streaming.
 
-## [v0.04] - 权限闸门
+## [v0.04] - Permission gate
 
 ### Added
-- `src/mini_agent/permission.py`：`PermissionPolicy`（allow/deny/ask 三态）+ `PermissionGate`（检查+交互+锁）
-- `docs/tutorials/04-permission-gate.md`：第四课教学文档
+- `src/mini_agent/permission.py`: `PermissionPolicy` (three states allow/deny/ask) + `PermissionGate` (check + interaction + lock)
+- `docs/tutorials/04-permission-gate.md`: Lesson 4 teaching document
 
 ### Changed
-- `src/mini_agent/tools/base.py`：`ToolExecutor` 加 `gate` 参数，`execute` 里先过 `gate.guard` 再调 handler
-- `src/mini_agent/tools/__init__.py`：import PermissionGate（executor 自动创建默认 gate）
-- `tests/test_tools.py`：write_file 用放行策略绕过 ASK；新增 DENY 策略测试
+- `src/mini_agent/tools/base.py`: `ToolExecutor` adds a `gate` parameter, and `execute` first passes `gate.guard` before calling the handler
+- `src/mini_agent/tools/__init__.py`: imports PermissionGate (the executor automatically creates a default gate)
+- `tests/test_tools.py`: write_file uses an allow policy to bypass ASK; adds a DENY policy test
 
 ### Why
-- v0.03 的 write_file 直接执行不问人，有覆盖重要文件的风险。
-- 三态（allow/deny/ask）覆盖"总是允许/总是禁止/看情况"三种现实需求，比两态更灵活。
-- 拒绝不是报错而是工具结果，回灌给 LLM 让它调整策略——容错在工具层。
-- `_ask_lock` 为 v0.06 并发 tool_calls 预留，防止多个权限提示交错。
+- The v0.03 write_file ran directly without asking anyone, with the risk of overwriting important files.
+- Three states (allow/deny/ask) cover the three real needs "always allow/always forbid/depends", more flexible than two states.
+- A refusal is not an error but a tool result, fed back to the LLM so it adjusts its strategy—fault tolerance is in the tool layer.
+- `_ask_lock` is reserved for v0.06 concurrent tool_calls, to prevent several permission prompts from interleaving.
 
-## [v0.03] - 文件读写工具
+## [v0.03] - File read/write tools
 
 ### Added
-- `src/mini_agent/tools/file.py`：`read_file`/`write_file` 工具
-- `examples/input.txt`、`examples/input2.txt`：示例文件
-- `docs/tutorials/03-file-tools.md`：第三课教学文档
+- `src/mini_agent/tools/file.py`: `read_file`/`write_file` tools
+- `examples/input.txt`, `examples/input2.txt`: example files
+- `docs/tutorials/03-file-tools.md`: Lesson 3 teaching document
 
 ### Changed
-- `src/mini_agent/tools/__init__.py`：注册 read_file/write_file
-- `tests/test_tools.py`：加 read_file/write_file 测试
+- `src/mini_agent/tools/__init__.py`: registers read_file/write_file
+- `tests/test_tools.py`: adds read_file/write_file tests
 
 ### Why
-- agent 不改文件没法做编程任务，文件读写是基础能力。
-- 先让"能写文件"跑通，权限是独立概念，v0.04 专门讲。
-- 加工具只需写 handler + 注册，不动 agent.py——验证三件套分离关注点的好处。
+- An agent that does not change files cannot do programming tasks; file read/write is a basic capability.
+- First make "can write files" work; permissions are a separate concept, covered specifically in v0.04.
+- Adding a tool needs only a handler + registration, without touching agent.py—proving the benefit of the three-part separation of concerns.
 
-## [v0.02] - 第一个工具
+## [v0.02] - First tool
 
 ### Added
-- `src/mini_agent/tools/base.py`：`Tool`/`ToolRegistry`/`ToolExecutor` 三件套
-- `src/mini_agent/tools/calc.py`：`calculate` 工具（数学表达式计算，正则白名单防注入）
-- `src/mini_agent/tools/__init__.py`：注册中心，创建 registry + executor 并注册 calculate
-- `tests/test_tools.py`：工具 smoke test（registry/calculate/异常处理）
-- `docs/tutorials/02-first-tool.md`：第二课教学文档
+- `src/mini_agent/tools/base.py`: the `Tool`/`ToolRegistry`/`ToolExecutor` trio
+- `src/mini_agent/tools/calc.py`: `calculate` tool (math expression evaluation, regex allowlist against injection)
+- `src/mini_agent/tools/__init__.py`: registration center, creates the registry + executor and registers calculate
+- `tests/test_tools.py`: tool smoke test (registry/calculate/exception handling)
+- `docs/tutorials/02-first-tool.md`: Lesson 2 teaching document
 
 ### Changed
-- `src/mini_agent/agent.py`：`call_llm` 加 `tools` 参数（function calling 协议）；`agent_loop` 加 tool_calls 执行 + `role=tool` 回灌
-- `src/mini_agent/__main__.py`：system prompt 改为"你是一个助手，通过调用工具完成任务"
+- `src/mini_agent/agent.py`: `call_llm` adds a `tools` parameter (function calling protocol); `agent_loop` adds tool_calls execution + `role=tool` feedback
+- `src/mini_agent/__main__.py`: system prompt changed to "You are an assistant that completes tasks by calling tools"
 
 ### Why
-- 引入 OpenAI function calling 协议，让 LLM 能真正"做事"而不只是聊天。
-- Tool 三件套（定义/注册/执行）分离关注点，后续加工具只需写 handler + 注册，不动 loop。
-- Executor 捕获 handler 异常返回错误信息给 LLM，让 LLM 决定重试或告知用户——容错在工具层，不在 loop 层。
+- Introduces the OpenAI function calling protocol, so the LLM can really "do things" instead of only chatting.
+- The Tool trio (definition/registration/execution) separates concerns; adding tools later needs only a handler + registration, without touching the loop.
+- The Executor catches handler exceptions and returns error messages to the LLM, letting the LLM decide whether to retry or tell the user—fault tolerance is in the tool layer, not the loop layer.
 
-## [v0.01] - 最简 agent loop
+## [v0.01] - Minimal agent loop
 
 ### Added
-- `src/mini_agent/agent.py`：`call_llm`（非流式）+ `agent_loop`（无工具纯对话循环）
-- `src/mini_agent/__main__.py`：CLI 入口，支持单次任务模式和交互模式
-- `src/mini_agent/config.py`：`BASE_URL`/`API_KEY`/`MODEL`/`MAX_ITERATIONS`（硬编码）
-- `src/mini_agent/__init__.py`：包入口
-- `tests/test_loop.py`：import 链路 smoke test
-- `docs/tutorials/01-minimal-loop.md`：第一课教学文档
-- `docs/tutorials/README.md`：教学路径索引
-- `docs/plans/teaching-repo-plan.md`：多阶段教学仓库完整方案
-- `docs/operation/manual.md`：操作手册（v0.01 版）
+- `src/mini_agent/agent.py`: `call_llm` (non-streaming) + `agent_loop` (tool-free pure conversation loop)
+- `src/mini_agent/__main__.py`: CLI entry, supporting single task mode and interactive mode
+- `src/mini_agent/config.py`: `BASE_URL`/`API_KEY`/`MODEL`/`MAX_ITERATIONS` (hard-coded)
+- `src/mini_agent/__init__.py`: package entry
+- `tests/test_loop.py`: import chain smoke test
+- `docs/tutorials/01-minimal-loop.md`: Lesson 1 teaching document
+- `docs/tutorials/README.md`: teaching path index
+- `docs/plans/teaching-repo-plan.md`: complete multi-stage teaching repository plan
+- `docs/operation/manual.md`: operation manual (v0.01 version)
 
 ### Why
-- 从最小可用的对话 loop 起步，先讲清"什么是 agent loop"：messages 列表、调 LLM、判断结束条件。
-- 不引入工具、权限、流式、并发，让第一课的 loop 概念最干净。
-- `http.client` + `Accept-Encoding: identity` 是踩坑后的选择（网关对 gzip 响应异常），从第一版就确立。
+- Start from the minimal usable conversation loop and first make clear "what an agent loop is": the messages list, calling the LLM, and deciding the end condition.
+- Introduce no tools, permissions, streaming, or concurrency, so the loop concept of the first lesson is as clean as possible.
+- `http.client` + `Accept-Encoding: identity` is the choice after hitting a pitfall (the gateway responds abnormally to gzip) and is set from the first version.
 ## [v0.17] - Failure Model
 
 - Added auditable `ExecutionGeneration`, `ExecutionAttempt`, `FailureEvent`, and reserved `RecoveryAction` state records.

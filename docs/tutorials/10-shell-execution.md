@@ -1,41 +1,41 @@
-# 第 10 课：shell 执行
+# Lesson 10: Shell execution
 
-> 版本 v0.10 | [上一课](09-permission-upgrade.md) | [返回教程总览](README.md)
+> Version v0.10 | [Previous lesson](09-permission-upgrade.md) | [Back to the tutorial overview](README.md)
 
-> 代码快照：`v0.10` · 相邻差异：`v0.09..v0.10` · 命令环境：Bash/zsh
+> Code snapshot: `v0.10` · Adjacent diff: `v0.09..v0.10` · Shell: Bash/zsh
 >
-> 运行要求：Python 3.10+。该 tag 的 `pyproject.toml` 仍标 3.9，但源码已使用 3.10 语法。
+> Requirements: Python 3.10+. The `pyproject.toml` at this tag still says 3.9, but the source already uses 3.10 syntax.
 
-## 本课目标
+## Lesson Goals
 
-前几课的 agent 能读写文件和调用工具，却不能自己运行测试或脚本。它修改代码后，仍要依赖用户去终端验证结果。
+In earlier lessons the agent could read and write files and call tools, but it could not run tests or scripts itself. After it changed code, it still depended on the user to verify the result in a terminal.
 
-这一课新增 `run_shell` 工具，让 agent 能运行命令。v0.09 的二维权限已经能按命令模式判断权限，本课把这项能力真正接到工具上。
+This lesson adds the `run_shell` tool so the agent can run commands. The two-dimensional permissions of v0.09 can already decide permissions by command pattern; this lesson connects that capability to a real tool.
 
-## 前置
+## Prerequisites
 
-- 已读上一课文档
-- `git checkout v0.10` 切到本版代码（或直接看 `src/mini_agent/tools/shell.py`）
+- Read the previous lesson
+- `git checkout v0.10` to switch to this version's code (or look directly at `src/mini_agent/tools/shell.py`)
 
-## 新增/改动了什么
+## What Was Added or Changed
 
 ```bash
 git diff --stat v0.09..v0.10
 ```
 
-| 文件 | 改动 |
+| File | Change |
 |------|------|
-| `src/mini_agent/tools/shell.py` | **新增**：`run_shell` 工具（subprocess + 超时 + 输出截断） |
-| `src/mini_agent/tools/__init__.py` | 注册 `run_shell_tool`（7 个工具） |
-| `src/mini_agent/permission.py` | `PERMISSION_RULES` 加 `run_shell` 二维权限规则；`_from_config` 排序修复 |
-| `src/mini_agent/prompt.py` | `header()` 能力描述更新 |
-| `tests/test_tools.py` | 新增 3 个 run_shell 测试 |
+| `src/mini_agent/tools/shell.py` | **New**: `run_shell` tool (subprocess + timeout + output truncation) |
+| `src/mini_agent/tools/__init__.py` | Registers `run_shell_tool` (7 tools) |
+| `src/mini_agent/permission.py` | `PERMISSION_RULES` adds two-dimensional `run_shell` rules; `_from_config` ordering fix |
+| `src/mini_agent/prompt.py` | `header()` capability description updated |
+| `tests/test_tools.py` | Adds 3 run_shell tests |
 
-## 核心概念
+## Core Concepts
 
-### 1. run_shell 工具
+### 1. The run_shell tool
 
-运行 shell 命令时，需要同时避免三类问题：命令卡住、输出过长，以及失败后模型看不出原因。`run_shell` 因此在执行时设置超时、收集输出并带上退出码。
+Running shell commands must avoid three problems at once: a command hangs, the output is too long, or the model cannot see why a command failed. So `run_shell` sets a timeout, collects output, and includes the exit code.
 
 ```python
 def run_shell(command: str):
@@ -48,106 +48,106 @@ def run_shell(command: str):
         timeout=_TIMEOUT,   # 30s
     )
     output = proc.stdout + proc.stderr
-    # ... 截断 + 退出码前缀
+    # ... truncation + exit code prefix
 ```
 
-关键设计：
-- **`shell=True`**：直接执行命令字符串，读者不必先学习如何拆分参数数组。权限闸门负责兜住安全问题。
-- **`capture_output=True`**：把 stdout 和 stderr 一起收集。
-- **`timeout=30`**：30 秒后一定超时返回，避免命令卡住 agent。
-- **输出截断 2000 字符**：长输出不会占满上下文，和 `read_file` 的 limit 有相同目的。
-- **退出码前缀**：退出码非零时加 `[exit=N]`，让 LLM 能判断命令失败。
+Key design:
+- **`shell=True`**: runs the command string directly, so readers do not first have to learn how to split it into an argument array. The permission gate takes care of safety.
+- **`capture_output=True`**: collects stdout and stderr together.
+- **`timeout=30`**: always times out and returns after 30 seconds, so a command cannot hang the agent.
+- **Output truncated at 2000 characters**: long output does not fill the context, for the same purpose as the `read_file` limit.
+- **Exit code prefix**: a nonzero exit code adds `[exit=N]`, so the LLM can tell the command failed.
 
-### 2. 二维命令模式权限
+### 2. Two-dimensional command pattern permissions
 
-shell 命令的风险差别很大。例如读取 git 状态通常可以直接执行，删除文件则需要确认。因此权限规则不只看 `run_shell` 这个工具名，还要看命令文本。
+The risk of shell commands varies a lot. For example, reading git status can usually run directly, while deleting files needs confirmation. So the permission rules look not only at the tool name `run_shell` but also at the command text.
 
-v0.09 的 `_extract_pattern()` 对 `run_shell` 返回完整命令字符串，v0.10 的权限规则用 fnmatch 通配符按命令前缀匹配：
+v0.09's `_extract_pattern()` returns the full command string for `run_shell`, and v0.10's permission rules match command prefixes with fnmatch wildcards:
 
 ```python
 PERMISSION_RULES = {
     # ...
     "run_shell": {
-        "git *": ALLOW,      # git 操作放行
-        "python *": ALLOW,   # python 脚本/测试放行
-        "pip *": ALLOW,      # pip 安装放行
-        "ls *": ALLOW,       # 只读命令放行
-        "cat *": ALLOW,      # 只读命令放行
-        "echo *": ALLOW,     # 只读命令放行
-        "*": ASK,             # 其他命令每次问
+        "git *": ALLOW,      # Allow git operations
+        "python *": ALLOW,   # Allow python scripts/tests
+        "pip *": ALLOW,      # Allow pip installs
+        "ls *": ALLOW,       # Allow read-only commands
+        "cat *": ALLOW,      # Allow read-only commands
+        "echo *": ALLOW,     # Allow read-only commands
+        "*": ASK,             # Ask for every other command
     },
 }
 ```
 
-结果是：`git status` → allow，`python tests/test_tools.py` → allow，`rm -rf /` → ask。
+The result: `git status` → allow, `python tests/test_tools.py` → allow, `rm -rf /` → ask.
 
-### 3. _from_config 排序修复
+### 3. The _from_config ordering fix
 
-通配规则 `*` 能匹配所有命令。如果它先被找到，像 `echo *` 这样的具体规则就永远没有机会生效。
+The wildcard rule `*` matches every command. If it is found first, a specific rule such as `echo *` never gets a chance to apply.
 
-v0.10 发现并修复了 v0.09 的一个 findLast 语义缺陷：
+v0.10 found and fixed a findLast semantics flaw in v0.09:
 
-**问题**：复杂格式 dict 里 `*` 放在最后，`_from_config` 按插入顺序展开后，`*` 也排在具体模式后面。findLast 从后往前找，会先遇到匹配一切的 `*`，具体模式便被遮蔽。
+**Problem**: in the complex format dict, `*` is placed last; after `_from_config` expands it in insertion order, `*` is also placed after the specific patterns. findLast searches from the end backwards, so it meets the match-everything `*` first, and the specific patterns are hidden.
 
-**修复**：`_from_config` 对复杂格式的 pattern 排序，把 `*` 放到最前，即最低优先级；具体模式放到后面，即更高优先级：
+**Fix**: `_from_config` sorts the patterns of the complex format, putting `*` first, that is, at the lowest priority, and specific patterns after it, at higher priority:
 
 ```python
-# "*" 排最前（优先级最低），具体模式排后面（优先级更高）
+# "*" goes first (lowest priority), specific patterns go after (higher priority)
 items = sorted(value.items(), key=lambda kv: kv[0] != "*")
 ```
 
-findLast 从后往前找，先碰具体模式（如 `echo *`），匹配就返回；匹配不到才往前碰 `*` 兜底。
+findLast searches from the end backwards, so it meets specific patterns (such as `echo *`) first and returns on a match; only when nothing matches does it reach the `*` fallback.
 
-## 为什么这样设计
+## Why This Design
 
-### 为什么不做 BashArity 命令泛化？
+### Why no BashArity command generalization?
 
-原计划提过 “BashArity 命令泛化”，即把 `git checkout main` 泛化为 `git checkout *`。但 `_extract_pattern` 已返回完整 command 字符串，fnmatch 的 `git *` 也已经能按命令前缀匹配。
+The original plan mentioned "BashArity command generalization", that is, generalizing `git checkout main` to `git checkout *`. But `_extract_pattern` already returns the full command string, and fnmatch's `git *` can already match by command prefix.
 
-所以本版不引入 BashArity。以后如果必须把“命令”和“参数”分开匹配，才需要补上。
+So this version does not introduce BashArity. It only needs to be added later if "command" and "arguments" must be matched separately.
 
-### 为什么用 shell=True？
+### Why shell=True?
 
-`shell=True` 让命令字符串直接执行（`subprocess.run("echo hello", shell=True)` 等价于在终端敲 `echo hello`）。因此示例不需要先拆分参数数组。
+`shell=True` runs the command string directly (`subprocess.run("echo hello", shell=True)` is equivalent to typing `echo hello` in a terminal). So the examples do not need to split argument arrays first.
 
-它不自动保证命令安全。二维权限闸门会放行规则允许的命令，其余命令仍然 ask。
+It does not make commands safe by itself. The two-dimensional permission gate allows the commands the rules allow, and other commands still ask.
 
-### 为什么超时 30s？
+### Why a 30s timeout?
 
-30 秒足够运行这里的测试。长任务，例如 `npm install`，可能超时，本版不会自动延长它。超时后工具返回错误信息，但不会结束 agent loop。
+30 seconds is enough to run the tests here. Long tasks, such as `npm install`, may time out, and this version does not extend the timeout automatically. After a timeout the tool returns an error message, but the agent loop does not end.
 
-### 为什么输出截断 2000 字符？
+### Why truncate output at 2000 characters?
 
-这是为了防止长输出占满上下文。`read_file` 限制的是 2000 行，`run_shell` 截断的是 2000 字符；单位不同，但都在限制回灌给 LLM 的数据量。
+This prevents long output from filling the context. `read_file` limits 2000 lines and `run_shell` truncates at 2000 characters; the units differ, but both limit the amount of data fed back to the LLM.
 
-截断后尾部会标出实际长度，因此 LLM 能知道输出并不完整。
+After truncation, the end marks the actual length, so the LLM knows the output is incomplete.
 
-### 为什么 stdout + stderr 合并？
+### Why merge stdout + stderr?
 
-LLM 一次就能看到全部输出。若分开返回，它还要分别解析两部分；合并后可以直接从 stderr 中看到 `Traceback` 等错误信息并判断结果。
+The LLM sees all output at once. If they were returned separately, it would have to parse both parts; merged, it can directly see error information such as a `Traceback` in stderr and judge the result.
 
-## 使用指导
+## Usage Guide
 
-### 本版可用的命令
+### Commands available in this version
 
 ```bash
-# 跑测试（现在可以用 run_shell 跑了！）
+# Run the tests (now they can be run with run_shell!)
 PYTHONPATH=src python tests/test_tools.py
 
-# 验证 run_shell 工具
+# Verify the run_shell tool
 PYTHONPATH=src python -c "from mini_agent.tools import executor; print(executor.execute('run_shell', {'command': 'echo hello'}))"
-# 期望输出: hello
+# Expected output: hello
 
-# 验证二维权限
+# Verify two-dimensional permissions
 PYTHONPATH=src python -c "from mini_agent.permission import PermissionPolicy; p = PermissionPolicy(); print(p.check('run_shell', 'git status'))"
-# 期望输出: allow
+# Expected output: allow
 ```
 
-在 POSIX（Linux/macOS）上，`test_run_shell_exit_code` 使用命令 `false`。默认权限规则会询问一次；在提示中输入 `once`，测试随后会继续并完成。Windows 使用已放行的 `python -c "exit(1)"`，不会出现这次确认。
+On POSIX (Linux/macOS), `test_run_shell_exit_code` uses the command `false`. The default permission rules ask once; enter `once` at the prompt, and the test then continues and finishes. Windows uses the already allowed `python -c "exit(1)"`, so this confirmation does not appear.
 
-### 本版典型示例
+### Typical examples for this version
 
-**示例 1：跑 echo 命令**
+**Example 1: run an echo command**
 
 ```python
 from mini_agent.tools import executor
@@ -155,14 +155,14 @@ result = executor.execute("run_shell", {"command": "echo hello_world"})
 # → "hello_world\n"
 ```
 
-**示例 2：非零退出码**
+**Example 2: nonzero exit code**
 
 ```python
 result = executor.execute("run_shell", {"command": 'python -c "exit(1)"'})
-# → "[exit=1] (无输出)"
+# → "[exit=1] (no output)"
 ```
 
-**示例 3：二维权限 git allow / rm deny**
+**Example 3: two-dimensional permissions, git allow / rm deny**
 
 ```python
 from mini_agent.permission import PermissionPolicy, PermissionGate
@@ -173,23 +173,23 @@ gate = PermissionGate(policy)
 exec_test = ToolExecutor(registry, gate=gate)
 
 exec_test.execute("run_shell", {"command": "git --version"})
-# → 放行，返回 "git version 2.x.x..."
+# → allowed, returns "git version 2.x.x..."
 
 exec_test.execute("run_shell", {"command": "rm -rf /tmp/nonexist"})
-# → 拒绝："权限拒绝: 规则禁止调用 run_shell(rm -rf /tmp/nonexist)"
+# → denied: "Permission denied: rules forbid calling run_shell(rm -rf /tmp/nonexist)"
 ```
 
-### 本版独有特性
+### Features unique to this version
 
-- **跑命令能力**：agent 现在能跑测试、跑脚本、跑 git 命令
-- **命令模式权限**：`git *`/`python *` 等安全命令放行，其他命令每次问
-- **输出截断**：长输出被截断到 2000 字符，尾部标注实际长度
-- **退出码前缀**：非零退出码时带 `[exit=N]` 前缀，让 LLM 知道命令失败了
-- **findLast 排序修复**：`*` 排最前（优先级最低），具体模式优先匹配
+- **Running commands**: the agent can now run tests, scripts, and git commands
+- **Command pattern permissions**: safe commands such as `git *`/`python *` are allowed, and other commands ask every time
+- **Output truncation**: long output is truncated to 2000 characters, with the actual length marked at the end
+- **Exit code prefix**: a nonzero exit code adds the `[exit=N]` prefix, so the LLM knows the command failed
+- **findLast ordering fix**: `*` goes first (lowest priority), so specific patterns match first
 
-## 本版完整代码
+## Full Code for This Version
 
-- [`src/mini_agent/tools/shell.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.10/src/mini_agent/tools/shell.py) — run_shell 工具
-- [`src/mini_agent/permission.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.10/src/mini_agent/permission.py) — 二维权限规则
-- [`src/mini_agent/prompt.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.10/src/mini_agent/prompt.py) — header 能力描述更新
-- [`tests/test_tools.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.10/tests/test_tools.py) — 22 个 smoke test
+- [`src/mini_agent/tools/shell.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.10/src/mini_agent/tools/shell.py) — run_shell tool
+- [`src/mini_agent/permission.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.10/src/mini_agent/permission.py) — two-dimensional permission rules
+- [`src/mini_agent/prompt.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.10/src/mini_agent/prompt.py) — header capability description update
+- [`tests/test_tools.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.10/tests/test_tools.py) — 22 smoke tests

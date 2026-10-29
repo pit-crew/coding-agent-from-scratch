@@ -1,38 +1,38 @@
-# v0.51 首份编码基线
+# v0.51 First Coding Baseline
 
-此目录用于保存首轮真实模型运行的脱敏原始 trial、从原始结果重建的报告、逐题观察和人工复核队列。
+This directory saves the redacted raw trials of the first real model run, the report rebuilt from the raw results, per-task observations, and the manual review queue.
 
-题目及评分标准冻结为 `coding-benchmark@1.0`（SHA-256：`bf728faf8cff54e173a73c21946499b48b81fccce73a2b187f3d7b20b7e12d16`），于 2026-09-27 经用户审阅批准。12 个 live trial 已于 2026-09-27 顺序完成，未重跑或替换任何样本。原始记录和重建报告保存在 [`live-20260927/`](live-20260927/)。离线 grader 检查和 fixture trial 不计入模型成绩。
+The tasks and grading criteria are frozen as `coding-benchmark@1.0` (SHA-256: `bf728faf8cff54e173a73c21946499b48b81fccce73a2b187f3d7b20b7e12d16`), reviewed and approved by the user on 2026-09-27. The 12 live trials completed in order on 2026-09-27, and no samples were rerun or replaced. Raw records and the rebuilt report are saved in [`live-20260927/`](live-20260927/). Offline grader checks and fixture trials do not count toward model scores.
 
-## 首轮结果
+## First-round results
 
-**评审修正（2026-09-28）**：以下仍是 suite 1.0 的原始自动评分。收据任务没有向 Agent 声明 grader 要求的精确文本格式，三次格式失败属于评分合同争议，不能直接解释为编码能力失败；总计 8 次验收通过、6 次最终成功也带有这一限制。原始 trial 和报告保持不变，不追溯重评分。当前 suite 已提升为 1.1，在任务正文中公开三行精确格式；1.1 尚无真实模型基线，不沿用此处成绩。
+**Review correction (2026-09-28)**: the following is still the raw automatic grading of suite 1.0. The receipt task did not state to the Agent the exact text format the grader required, so the three format failures are a grading contract dispute and cannot be interpreted directly as coding ability failures; the totals of 8 acceptance passes and 6 final successes carry the same limitation. The raw trials and report stay unchanged and are not regraded retroactively. The current suite has been raised to 1.1, which publishes the exact three-line format in the task text; 1.1 has no real model baseline yet, and the scores here are not carried over.
 
-| 题目 | 已运行 / 可评分 | 独立验收通过 | 最终成功 | 观察 |
+| Task | Run / gradable | Passed independent acceptance | Final success | Observation |
 |---|---:|---:|---:|---|
-| `pagination-boundary` | 3 / 3 | 3 | 3 | 三次均修复末页边界并通过独立评分。 |
-| `orders-discount-receipt` | 3 / 3 | 0 | 0 | 三次的折扣计算、应付金额等行为检查通过；收据格式未匹配冻结的精确展示标准。差异见各 trial 的 `grader.log` 和 `diff.patch`。 |
-| `cache-expiry-regression` | 3 / 3 | 2 | 1 | 两次达到 120 秒上限；其中一次提交的修复和回归测试通过评分，但 Agent 未正常完成。另一次超时前没有文件改动且评分失败。第三次完整通过。 |
-| `config-priority-investigation` | 3 / 3 | 3 | 2 | 三次提交的优先级行为均通过评分；一次虽有正确改动但达到 120 秒上限。 |
+| `pagination-boundary` | 3 / 3 | 3 | 3 | All three runs fixed the last-page boundary and passed independent grading. |
+| `orders-discount-receipt` | 3 / 3 | 0 | 0 | In all three runs, behavior checks such as discount calculation and amount due passed; the receipt format did not match the frozen exact display standard. See each trial's `grader.log` and `diff.patch` for the differences. |
+| `cache-expiry-regression` | 3 / 3 | 2 | 1 | Two runs hit the 120-second limit; in one of them, the submitted fix and regression test passed grading, but the Agent did not finish normally. The other made no file changes before the timeout and failed grading. The third passed fully. |
+| `config-priority-investigation` | 3 / 3 | 3 | 2 | The priority behavior submitted in all three runs passed grading; one had a correct change but hit the 120-second limit. |
 
-总计计划 12、运行 12、可评分 12；独立验收通过 8，最终成功 6。失败类别为 `task_failed=3`、`agent_timeout=3`，基础设施错误为 0。评分通过和最终成功是不同指标：超时样本即使通过 grader，也不会记为最终成功。
+In total: 12 planned, 12 run, 12 gradable; 8 passed independent acceptance and 6 final successes. Failure categories are `task_failed=3` and `agent_timeout=3`, with 0 infrastructure errors. Passing grading and final success are different metrics: a timed-out sample is not recorded as a final success even if it passes the grader.
 
-## 冻结来源与观测限制
+## Frozen sources and observation limits
 
-- 代码 revision：`95c533793ff1af0242ba3124ae6b33590c51b4d5`；运行期间代码摘要一致。
-- 模型来源摘要：provider/profile `legacy-default`、协议 `openai_chat`、fingerprint `f5d29d7d52439c419e672fd0a4d7007a8197e4afe7b24083d4d0116fb4fc4cf6`。真实 endpoint、模型 ID 和凭据不进入归档。
-- 9 个 trial 有用量观测：合计 56 次模型调用、59 次工具调用、输入 124,975 tokens、输出 10,016 tokens；3 个超时 trial 的调用和 token 用量不可用。上述汇总不代表 12 次单独 HTTP 请求，每个 trial 可包含多次模型调用。
-- Agent 耗时中位数 8,445.5 ms，p95 为 120,017 ms。没有价格快照，`cost_usd` 为 `null`。
-- 每题只有 3 个样本，结果只描述这次冻结题集与模型来源上的观察，不代表一般编码能力。
+- Code revision: `95c533793ff1af0242ba3124ae6b33590c51b4d5`; the code digest was consistent during the run.
+- Model source summary: provider/profile `legacy-default`, protocol `openai_chat`, fingerprint `f5d29d7d52439c419e672fd0a4d7007a8197e4afe7b24083d4d0116fb4fc4cf6`. Real endpoints, model IDs, and credentials do not enter the archive.
+- 9 trials have usage observations: 56 model calls, 59 tool calls, 124,975 input tokens, and 10,016 output tokens in total; call and token usage of the 3 timed-out trials is unavailable. The totals above do not represent 12 separate HTTP requests; each trial can contain several model calls.
+- The Agent duration median is 8,445.5 ms, and p95 is 120,017 ms. There is no price snapshot, so `cost_usd` is `null`.
+- Each task has only 3 samples; the results only describe observations on this frozen task set and model source and do not represent general coding ability.
 
-## 人工复核队列
+## Manual review queue
 
-重建报告的 `manual_review_queue` 列出以下 5 个 trial：
+The `manual_review_queue` of the rebuilt report lists the following 5 trials:
 
-- `orders-discount-receipt`：`04268614`、`60549c61`、`51ffeed7`。复核收据中的折扣标签、百分比和负号格式与 grader 要求的差异。
-- `cache-expiry-regression`：`f9d35ed5`。独立 grader 通过且修复/回归测试已提交，但 Agent 超时；核对其 diff 与结束状态。
-- `config-priority-investigation`：`1acd4694`。优先级修复通过 grader，但 Agent 超时；核对 diff 与结束状态。
+- `orders-discount-receipt`: `04268614`, `60549c61`, `51ffeed7`. Review the differences between the discount label, percentage, and minus sign format in the receipt and the grader's requirements.
+- `cache-expiry-regression`: `f9d35ed5`. The independent grader passed and the fix/regression test were submitted, but the Agent timed out; check its diff and end state.
+- `config-priority-investigation`: `1acd4694`. The priority fix passed the grader, but the Agent timed out; check the diff and end state.
 
-另一个超时样本 `cache-expiry-regression-f0f441ee` 没有改动文件，grader 失败；它不在自动复核队列中，仍作为失败原始证据保留。
+Another timed-out sample, `cache-expiry-regression-f0f441ee`, changed no files and failed the grader; it is not in the automatic review queue and is still kept as raw failure evidence.
 
-完整逐 trial 证据、suite ledger 和可重建报告位于 [`live-20260927/`](live-20260927/)。用 `PYTHONPATH=src python -m mini_agent.evaluation report-suite docs/evaluation/baselines/v0.51/live-20260927` 可重新生成报告视图。
+Full per-trial evidence, the suite ledger, and the rebuildable report are in [`live-20260927/`](live-20260927/). Run `PYTHONPATH=src python -m mini_agent.evaluation report-suite docs/evaluation/baselines/v0.51/live-20260927` to regenerate the report view.

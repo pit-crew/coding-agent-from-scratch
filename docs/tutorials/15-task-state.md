@@ -1,31 +1,31 @@
-# 第 15 课：把任务计划保存成可靠状态（Todo / Task State，v0.15）
+# Lesson 15: Saving the task plan as reliable state (Todo / Task State, v0.15)
 
-上一课：[项目级指令](14-project-instructions.md) · [教程总览](README.md) · 下一课：[计划驱动执行](16-plan-driven-execution.md)
+Previous: [Project instructions](14-project-instructions.md) · [Tutorial overview](README.md) · Next: [Plan-driven execution](16-plan-driven-execution.md)
 
-> 代码快照：`v0.15` · 相邻差异：`v0.14..v0.15` · 命令环境：Bash/zsh
+> Code snapshot: `v0.15` · Adjacent diff: `v0.14..v0.15` · Shell: Bash/zsh
 
-> 运行要求：Python 3.10+。运行时只使用标准库。
+> Requirements: Python 3.10+. The runtime uses only the standard library.
 
-## 上一版的问题
+## Problems in the Previous Version
 
-一个 Agent（能调用工具完成任务的模型程序）需要同时记住两类不同的东西：它打算做什么，以及已经实际做了什么。v0.14 只有消息历史可以承载这些信息。历史被裁剪或压缩后，计划可能消失；如果把工具结果也当成计划，模型的意图和执行事实又会混在一起。
+An Agent (a model program that can call tools to complete tasks) has to remember two different kinds of things at the same time: what it plans to do, and what it has actually done. In v0.14 only the message history can carry this information. After the history is trimmed or compacted, the plan may disappear; if tool results are also treated as the plan, the model's intent and the execution facts get mixed up.
 
-v0.15 只解决“计划存在哪里、怎样稳定地呈现给模型”。它不会替模型生成计划，也不会因为 Todo 未完成就自动判断任务失败或阻止最终回复。
+v0.15 only solves "where the plan is stored and how it is shown to the model reliably". It does not generate plans for the model, and it does not decide automatically that a task failed, or block the final reply, because a Todo is unfinished.
 
-## 本课目标
+## Lesson Goals
 
-本课把这两个概念分开：Todo（任务清单）记录模型的任务意图，工具记录实际执行结果。读完后，你应该能够：
+This lesson separates the two concepts: the Todo (task list) records the model's task intent, and tool records hold the actual execution results. After reading it, you should be able to:
 
-- 说明为什么 Todo 每次提交完整列表，而不是逐项增删；
-- 解释为什么一项非法时旧列表仍然保留；
-- 说明为什么不同运行实例不会互相覆盖 Todo；
-- 看懂 Todo 如何在每轮请求中重新出现在当前状态视图里。
+- Explain why each Todo update submits the full list instead of adding or deleting items one by one;
+- Explain why the old list is kept when one item is invalid;
+- Explain why different run instances do not overwrite each other's Todo;
+- Understand how the Todo reappears in the current state view in every round's request.
 
-本课主线是：**Todo 是可校验的计划，不是执行证据，也不是自动规划器。**
+The main thread of this lesson: **a Todo is a validated plan, not execution evidence and not an automatic planner.**
 
-## 前置条件与版本切换
+## Prerequisites and Version Checkout
 
-先阅读第 14 课，知道 `ContextManager`（上下文管理器）会为每轮请求准备消息，并知道受保护的 system prompt（系统提示）不会随普通历史一起丢失。下面的命令在 Bash/zsh 中执行；它先切到上一版，查看真实差异，再回到本课快照：
+Read Lesson 14 first: know that the `ContextManager` prepares messages for every round's request, and that the protected system prompt is not lost along with ordinary history. Run the commands below in Bash/zsh; they switch to the previous version, show the real diff, and then return to this lesson's snapshot:
 
 ```bash
 git checkout v0.14
@@ -34,96 +34,96 @@ git diff v0.14..v0.15 -- src/mini_agent/state.py src/mini_agent/tools/todo.py sr
 git checkout v0.15
 ```
 
-`git diff --stat` 先告诉你本版大致改了多少；第二条 `git diff` 只展开本课主线文件。最后的 `git checkout v0.15` 是为了让后续阅读与运行对应本课快照。
+`git diff --stat` first tells you roughly how much this version changed; the second `git diff` expands only this lesson's main files. The final `git checkout v0.15` makes later reading and running match this lesson's snapshot.
 
-## 新增与改动文件
+## New and Changed Files
 
-先用上面的差异确认范围，再把变化按“问题—位置”对应起来：
+First confirm the scope with the diff above, then map each change to "problem—location":
 
-| 文件 | 本版变化 | 解决的问题 |
+| File | Change in this version | Problem solved |
 |---|---|---|
-| `src/mini_agent/state.py` | 增加 `TodoItem`、`todos`、`update_todos()` 和快照字段 | 保存、校验并安全读取计划意图 |
-| `src/mini_agent/tools/todo.py` | 增加绑定状态的 `update_todo` 工具 | 让模型提交完整 Todo 列表 |
-| `src/mini_agent/tools/__init__.py` | 增加 `create_registry(state)` | 让每个运行实例拥有自己的工具 |
-| `src/mini_agent/context.py` | 每轮把 Todo 渲染为 Structured State | 裁剪或压缩后仍能看到最新计划 |
-| `src/mini_agent/agent.py`、`src/mini_agent/__main__.py` | 传递当前 registry 并复用同一份状态 | 保持 CLI、执行器和 LLM 使用同一实例 |
+| `src/mini_agent/state.py` | Adds `TodoItem`, `todos`, `update_todos()`, and snapshot fields | Stores, validates, and safely reads plan intent |
+| `src/mini_agent/tools/todo.py` | Adds the state-bound `update_todo` tool | Lets the model submit the full Todo list |
+| `src/mini_agent/tools/__init__.py` | Adds `create_registry(state)` | Gives each run instance its own tools |
+| `src/mini_agent/context.py` | Renders the Todo as Structured State every round | The latest plan stays visible after trimming or compaction |
+| `src/mini_agent/agent.py`, `src/mini_agent/__main__.py` | Pass the current registry and reuse the same state | Keep the CLI, executor, and LLM on the same instance |
 
-## 版本变更定位
+## Version Change Map
 
-下面先看 v0.14 的真实入口和收口方式，再看 v0.15 把 Todo 插入的位置。图例：`[旧]` v0.14 已有，`[+]` v0.15 新增，`[~]` v0.15 修改，`[C]` 主要消费者，`[B]` 本版边界。
+First look at the real entry and finish of v0.14, then at where v0.15 inserts the Todo. Legend: `[old]` already in v0.14, `[+]` new in v0.15, `[~]` changed in v0.15, `[C]` main consumer, `[B]` boundary of this version.
 
-v0.14 基线图：
+v0.14 baseline diagram:
 
 ```text
-[旧] CLI main()
-  -> [旧] AgentState + history + ContextManager
-  -> [旧] 全局 registry -> ToolExecutor
-  -> [旧] agent_loop -> call_llm
-       -> 工具 handler -> state.record_tool()
-       -> role=tool 结果回灌 history -> 下一轮 LLM
+[old] CLI main()
+  -> [old] AgentState + history + ContextManager
+  -> [old] global registry -> ToolExecutor
+  -> [old] agent_loop -> call_llm
+       -> tool handler -> state.record_tool()
+       -> role=tool result fed back to history -> next LLM round
 ```
 
-这条基线说明：上一版已有独立的执行状态和工具结果回灌，但没有保存 Todo 计划的字段，也没有给每个运行实例绑定 Todo 工具。
+This baseline shows that the previous version already had independent execution state and tool result feedback, but no field to store a Todo plan, and no Todo tool bound to each run instance.
 
-v0.15 变更图：
+v0.15 change diagram:
 
 ```text
-[旧] CLI main()
+[old] CLI main()
   -> [~] AgentState + history + ContextManager
   -> [+] create_registry(state) -> [~] ToolExecutor
-  -> [旧] agent_loop -> [~] call_llm(..., tool_registry=run_registry)
-       -> [+] update_todo(完整列表)
+  -> [old] agent_loop -> [~] call_llm(..., tool_registry=run_registry)
+       -> [+] update_todo(full list)
             -> [C] AgentState.update_todos()
-                 ├─ 合法：原子替换 todos，更新 current_goal
-                 └─ 非法：返回工具错误，旧状态不变
+                 ├─ valid: atomically replace todos, update current_goal
+                 └─ invalid: return a tool error, old state unchanged
        -> [~] prepare_messages()
-            -> snapshot() -> [C] Structured State（当前请求视图）
+            -> snapshot() -> [C] Structured State (current request view)
 
-[B] 不自动生成计划、不持久化 Todo、不用 Todo 自动判定完成
+[B] No automatic planning, no Todo persistence, no automatic completion decision from Todo
 ```
 
-关键不在于“多了一个列表”，而在于同一个 `AgentState` 实例同时被 Todo 工具、工具执行器和上下文管理器使用。这样，模型提交的计划和下一轮请求看到的计划来自同一份状态。
+The key is not "one more list", but that the same `AgentState` instance is used by the Todo tool, the tool executor, and the context manager. So the plan the model submits and the plan the next round's request sees come from the same state.
 
-## 核心概念与数据结构
+## Core Concepts and Data Structures
 
-### 1. 先分清计划和事实
+### 1. First tell plans from facts
 
-如果模型说“准备修改文件”，这句话不能证明文件已经修改。v0.15 让 `update_todo` 只提交计划；文件修改、shell 执行和错误仍由普通工具结果记录到 `tool_history`、`files_changed` 和 `errors`。`record_tool()` 特意跳过 Todo：
+If the model says "about to change the file", that sentence does not prove the file was changed. v0.15 lets `update_todo` only submit a plan; file changes, shell execution, and errors are still recorded by ordinary tool results into `tool_history`, `files_changed`, and `errors`. `record_tool()` deliberately skips the Todo:
 
 ```python
 if name == "update_todo":
     return
 ```
 
-这段判断的用途是保持两条记录分开：调用 Todo 后，执行日志不会多出一条“已经完成”的假事实。下一课会在这条边界上增加独立的验证证据。
+The purpose of this check is to keep the two records separate: after a Todo call, the execution log does not gain a false "already done" fact. The next lesson adds independent verification evidence on top of this boundary.
 
-### 2. 用完整列表做一次原子更新
+### 2. One atomic update with the full list
 
-逐项调用 `add_todo`、`remove_todo` 会让中间状态很难校验，也容易在重试时留下重复项目。因此 v0.15 规定每次 `update_todo` 都提交完整数组。运行时先把整份数组检查完，最后才替换旧列表：
+Calling `add_todo` and `remove_todo` item by item makes intermediate states hard to validate and can easily leave duplicate items on retry. So v0.15 requires every `update_todo` to submit the full array. The runtime first checks the whole array and only then replaces the old list:
 
 ```python
 if len(todos) > 50:
-    raise ValueError("Todo 数量不能超过 50")
+    raise ValueError("At most 50 Todos are allowed")
 
 parsed = []
 for item in todos:
     content = item.get("content")
     if not isinstance(content, str) or not content.strip():
-        raise ValueError("Todo content 必须是非空字符串")
+        raise ValueError("Todo content must be a non-empty string")
     status = item.get("status", "pending")
     if status not in ("pending", "in_progress", "completed"):
-        raise ValueError("Todo status 非法")
+        raise ValueError("Invalid Todo status")
     parsed.append(TodoItem(content.strip(), status))
 
 with self._lock:
     self.todos = parsed
 ```
 
-代码前半段只构造 `parsed`，没有触碰旧状态；最后的锁内赋值才是替换点。合法状态是 `pending`（待处理）、`in_progress`（进行中）和 `completed`（已完成），最多一个 Todo 可以是 `in_progress`；每项内容最多 240 个字符，列表最多 50 项。任何一项非法时，异常在替换前抛出，工具层把它变成可回灌的工具错误，旧列表保持不变。
+The first half of the code only builds `parsed` and does not touch the old state; the assignment inside the lock at the end is the replacement point. The valid statuses are `pending`, `in_progress`, and `completed`, and at most one Todo can be `in_progress`; each item is at most 240 characters, and the list has at most 50 items. When any item is invalid, the exception is raised before the replacement, the tool layer turns it into a tool error that can be fed back, and the old list stays unchanged.
 
-### 3. 让工具绑定当前运行实例
+### 3. Binding tools to the current run instance
 
-如果 Todo 工具使用全局可变状态，两个 Agent 运行实例可能互相覆盖计划。v0.15 让 `make_update_todo_tool(state)` 捕获一份明确的 `AgentState`；CLI 用 `create_registry(state)` 创建当前运行实例的 registry（工具注册表），再把同一个 registry 交给执行器和 LLM：
+If the Todo tool used global mutable state, two Agent run instances could overwrite each other's plans. v0.15 makes `make_update_todo_tool(state)` capture one explicit `AgentState`; the CLI creates the registry for the current run instance with `create_registry(state)` and hands the same registry to the executor and the LLM:
 
 ```python
 state = AgentState()
@@ -132,40 +132,40 @@ context = ContextManager(state, history)
 tool_executor = ToolExecutor(run_registry, on_result=state.record_tool)
 ```
 
-这段组装代码的关键是同一个 `state` 贯穿三处。于是两个运行实例各有自己的 Todo。`snapshot()` 在锁内复制列表并返回独立字典，读取方不会拿到正在被工具修改的内部对象。
+The key in this assembly code is that the same `state` runs through all three places. So two run instances each have their own Todo. `snapshot()` copies the list inside the lock and returns an independent dictionary, so readers never get the internal object a tool is changing.
 
-### 4. 每轮重建当前请求视图
+### 4. Rebuilding the current request view every round
 
-Structured State（结构化状态）是运行时根据状态快照临时生成的一条 system 消息；它不是追加到 `history` 的旧对话。每轮 `_render_state()` 会得到类似下面的视图：
+Structured State is a system message generated at runtime from a state snapshot; it is not an old conversation appended to `history`. Every round, `_render_state()` produces a view like this:
 
 ```text
 [Structured State]
-Task: 修复回归
-Current goal: 修改实现
-Todos: [pending] 定位失败测试; [in_progress] 修改实现
+Task: Fix the regression
+Current goal: Change the implementation
+Todos: [pending] Locate the failing test; [in_progress] Change the implementation
 Files changed: (none)
 Status: running
 ```
 
-这段输出的用途是说明“当前值从哪里来”：即使普通历史已经裁剪或压缩，模型仍应看到最新 Todo。输出中的 `Todos` 来自刚才的 `snapshot()`，所以成功更新后下一轮会看到新列表，非法更新不会留下半份计划。
+The purpose of this output is to show "where the current values come from": even if the ordinary history has been trimmed or compacted, the model should still see the latest Todo. The `Todos` in the output come from the `snapshot()` just taken, so after a successful update the next round sees the new list, and an invalid update leaves no half plan.
 
-## 为什么这样设计
+## Why This Design
 
-把计划只放在消息历史中，容易在裁剪或压缩时消失；把计划放在独立状态、每轮重新渲染，则能同时保留结构和最新值。完整替换比增量 API 更容易校验，也不会因重试产生重复项目；代价是每次更新都要提交完整列表。
+Keeping the plan only in the message history makes it easy to lose during trimming or compaction; keeping it in independent state and re-rendering it every round preserves both its structure and its latest value. Full replacement is easier to validate than an incremental API and does not create duplicate items on retry; the cost is that every update must submit the full list.
 
-工具绑定运行实例而不是使用全局可变 handler，可以隔离不同 Agent 的状态；代价是 registry 必须显式传递。`update_todo` 只改内存，因此默认允许调用；写文件和 shell 等有副作用工具仍由权限闸门控制。
+Binding tools to a run instance instead of using a global mutable handler isolates the state of different Agents; the cost is that the registry must be passed explicitly. `update_todo` only changes memory, so it is allowed by default; tools with side effects such as file writes and shell are still controlled by the permission gate.
 
-## 设计边界
+## Design Boundaries
 
-- 合法列表会被原子替换，并在下一轮请求中显示。
-- 非法类型、字段、长度或多个 `in_progress` 会返回错误，旧状态保持不变。
-- 状态锁保护更新和快照读取；本版不支持跨进程共享或磁盘持久化。
-- 每个工具调用仍必须回灌对应的 `role=tool` 结果。
-- 本版不自动生成、重排或验证 Todo，也不会因为 Todo 未完成而阻止最终文本。
+- A valid list is replaced atomically and shown in the next round's request.
+- An invalid type, field, length, or more than one `in_progress` returns an error, and the old state stays unchanged.
+- The state lock protects updates and snapshot reads; this version does not support cross-process sharing or disk persistence.
+- Every tool call must still get its matching `role=tool` result fed back.
+- This version does not generate, reorder, or verify Todos automatically, and does not block the final text because a Todo is unfinished.
 
-## 关键流程
+## Key Flow
 
-下面的流程把“提交计划”和“执行工具”分开。成功更新后，下一轮请求中的 Structured State 会带上新列表；非法更新只产生工具错误，旧列表仍在。
+The flow below separates "submitting a plan" from "running tools". After a successful update, the Structured State in the next round's request carries the new list; an invalid update only produces a tool error, and the old list remains.
 
 ```text
 main()
@@ -174,34 +174,34 @@ main()
   -> ToolExecutor(registry, on_result=state.record_tool)
   -> agent_loop
        -> prepare_messages(): snapshot -> Structured State
-       -> LLM 调用 update_todo(完整数组)
-          ├─ 成功：替换列表，返回更新摘要
-          └─ 失败：返回工具错误，旧列表不变
-       -> assistant + 对应 role=tool 结果回灌 history
-       -> 下一轮重新渲染 Structured State
+       -> LLM calls update_todo(full array)
+          ├─ success: replace the list, return an update summary
+          └─ failure: return a tool error, old list unchanged
+       -> assistant + matching role=tool result fed back to history
+       -> next round re-renders Structured State
 ```
 
-## 实现拆解
+## Implementation Breakdown
 
-`AgentState.update_todos()` 负责校验和原子替换；`make_update_todo_tool()` 把 `TypeError`/`ValueError` 转成模型可读的工具结果；`create_registry(state)` 注册绑定当前状态的工具；`ContextManager.prepare_messages()` 每轮读取快照。执行器负责工具异常边界，agent loop 负责按原顺序回灌所有工具结果；LLM 或 CLI 顶层异常仍不由核心 loop 吞掉。
+`AgentState.update_todos()` is responsible for validation and atomic replacement; `make_update_todo_tool()` turns `TypeError`/`ValueError` into a tool result the model can read; `create_registry(state)` registers the tools bound to the current state; `ContextManager.prepare_messages()` reads the snapshot every round. The executor owns the tool exception boundary, and the agent loop feeds back all tool results in their original order; top-level LLM or CLI exceptions are still not swallowed by the core loop.
 
-## 运行与观察（按需）
+## Run and Observe (If Needed)
 
-配置本地 LLM 后，在 Bash/zsh 中运行一条包含多个步骤的命令行首条任务：
+After you configure a local LLM, run a multi-step command-line first task in Bash/zsh:
 
 ```bash
-PYTHONPATH=src python -m mini_agent "实现一个包含多个步骤的任务，并维护 Todo"
+PYTHONPATH=src python -m mini_agent "implement a task with several steps and maintain a Todo"
 ```
 
-“命令行首条任务”是传给 CLI 的第一项任务参数；处理后程序仍进入交互循环。观察模型是否调用 `update_todo` 提交完整数组，以及后续行动是否继续围绕最新清单展开。`[Structured State]` 是发给模型的内部请求视图，CLI 默认不会把它直接打印到终端。后续任务继续使用同一个状态和 history，直到模型再次提交完整列表。
+The "command-line first task" is the first task argument passed to the CLI; after it is handled, the program still enters the interactive loop. Observe whether the model calls `update_todo` to submit the full array, and whether later actions keep following the latest list. `[Structured State]` is an internal request view sent to the model; by default the CLI does not print it to the terminal. Later tasks keep using the same state and history until the model submits a full list again.
 
-## 本版特性、下一课与代码索引
+## Version Features, Next Lesson, and Code Index
 
-v0.15 提供实例隔离、严格校验、原子替换和可重建的任务清单。它不自动规划、不持久化，也不因 Todo 未完成而阻止最终回复。下一课将在此基础上加入验证证据，并让模型根据观察结果或验证失败决定是否重排 Todo。
+v0.15 provides an instance-isolated, strictly validated, atomically replaced, and rebuildable task list. It does no automatic planning, no persistence, and does not block the final reply because a Todo is unfinished. The next lesson adds verification evidence on top of this and lets the model decide from observations or verification failures whether to reorder the Todo.
 
-- [状态与快照](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.15/src/mini_agent/state.py)
-- [Todo 工具](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.15/src/mini_agent/tools/todo.py)
-- [工具注册表](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.15/src/mini_agent/tools/__init__.py)
-- [上下文渲染](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.15/src/mini_agent/context.py)
+- [State and snapshot](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.15/src/mini_agent/state.py)
+- [Todo tool](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.15/src/mini_agent/tools/todo.py)
+- [Tool registry](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.15/src/mini_agent/tools/__init__.py)
+- [Context rendering](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.15/src/mini_agent/context.py)
 - [Agent loop](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.15/src/mini_agent/agent.py)
-- [CLI 入口](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.15/src/mini_agent/__main__.py)
+- [CLI entry](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.15/src/mini_agent/__main__.py)

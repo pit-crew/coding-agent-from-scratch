@@ -1,24 +1,24 @@
-# 第 47 课：给子代理设定角色
+# Lesson 47: Giving subagents roles
 
-上一课：[受限 HTTP MCP、文本 Resource 与 Prompt](46-mcp-http-resources-prompts.md) · [教程总览](README.md) · 下一课：[进程内后台子代理](48-background-subagents.md)
+Previous: [Restricted HTTP MCP, text Resources, and Prompts](46-mcp-http-resources-prompts.md) · [Tutorial overview](README.md) · Next: [In-process background subagents](48-background-subagents.md)
 
-代码快照：`v0.47` · 相邻差异：`v0.46..v0.47`
+Code snapshot: `v0.47` · Adjacent diff: `v0.46..v0.47`
 
-本课命令使用 Bash/zsh；命令、代码链接和示例都对应 `v0.47`。
+The commands in this lesson use Bash/zsh; the commands, code links, and examples all correspond to `v0.47`.
 
-## 本课目标
+## Lesson Goals
 
-Agent 是一种会向语言模型提问、按需调用工具来完成任务的程序。正在处理用户任务的 Agent 可以把一部分工作交给另一个独立的 Agent；前者叫“父 Agent”，受限执行调查的那个叫“子代理”。
+An Agent is a program that asks a language model questions and calls tools as needed to complete a task. The Agent working on the user's task can hand part of the work to another independent Agent; the former is called the "parent Agent", and the one doing the restricted investigation is called the "subagent".
 
-上一版的子代理都使用同一套通用指令和只读工具。父 Agent 虽然能在任务文字里说“请审查代码”，运行时却不能据此限制子代理的职责。本课给 `delegate_task` 增加 `agent_profile`：父 Agent 可以选择 `reviewer` 等内置角色，或从本地配置加载自定义角色。
+In the previous version, all subagents used the same general instructions and read-only tools. The parent Agent could say "please review the code" in the task text, but the runtime could not limit the subagent's responsibilities based on that. This lesson adds `agent_profile` to `delegate_task`: the parent Agent can choose a built-in role such as `reviewer`, or load a custom role from local configuration.
 
-读完后，你应能用自己的话说明：角色决定子代理怎样工作、可以用什么工具；`model_profile` 则选择它使用哪个已配置模型。没有选择角色的旧调用仍按原有方式运行。
+After reading, you should be able to explain in your own words: the role decides how the subagent works and which tools it may use; `model_profile` chooses which configured model it uses. Old calls that choose no role still run as before.
 
-## 前置条件与版本切换
+## Prerequisites and Version Checkout
 
-只需要基础 Python、终端和 Git。无需先理解 Agent 内部实现；先把“子代理”理解成一个权限更窄、专门做只读调查的独立助手即可。想看它最初怎样出现，可再读[第 34 课：最小委派](34-minimal-delegation.md)。
+You only need basic Python, a terminal, and Git. You do not need to understand the Agent's internals first; for now, think of a "subagent" as an independent helper with narrower permissions that does only read-only investigation. To see how it first appeared, read [Lesson 34: Minimal delegation](34-minimal-delegation.md).
 
-先查看上一版到本版的文件变化，再切到固定代码快照：
+First look at the file changes from the previous version to this one, then switch to the pinned code snapshot:
 
 ```bash
 git checkout v0.46
@@ -26,58 +26,58 @@ git diff --stat v0.46..v0.47
 git checkout v0.47
 ```
 
-读完后运行 `git checkout -` 回到切换前的分支。
+After reading, run `git checkout -` to return to the branch you were on before switching.
 
-## 上一版的问题
+## Problems in the Previous Version
 
-v0.46 的 `delegate_task` 是一次同步委派：父 Agent 发出调用后要等子代理完成，再收到结果。它把一份固定的只读工具清单交给每个子代理，因此无法通过一个明确的角色设置来区分“找实现入口”“审查缺陷”或“分析测试”。
+In v0.46, `delegate_task` is a synchronous delegation: after the parent Agent issues the call, it waits for the subagent to finish before receiving the result. It hands every subagent one fixed list of read-only tools, so there is no explicit role setting to distinguish "find the implementation entry", "review for defects", or "analyze the tests".
 
-如果把一整套父 Agent 的工具和授权直接交给子代理，它就可能做父任务没有委派的事。v0.47 让父侧配置明确列出每个角色的职责和工具，并在创建子代理前检查这些限制。
+Handing the parent Agent's whole set of tools and authorizations directly to a subagent could let it do things the parent task never delegated. v0.47 lets the parent-side configuration list each role's responsibilities and tools explicitly, and checks these limits before creating the subagent.
 
-## 新增与改动文件
+## New and Changed Files
 
-| 文件 | 变化 | 读者可从这里看到什么 |
+| File | Change | What you can see here |
 |---|---|---|
-| [agent_profiles.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/agent_profiles.py) | 新增 | 内置角色和本地角色如何校验、冻结。 |
-| [delegation.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/delegation.py) | 修改 | 怎样把角色、工具范围、模型和授权结果交给子代理。 |
-| [tools/delegation.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/tools/delegation.py) | 修改 | `delegate_task` 怎样接收可选角色。 |
-| [skills.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/skills.py) 与 [tools/skill.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/tools/skill.py) | 修改 | 子代理如何只看到获准的 Skill。Skill 是一份供 Agent 按需读取的本地操作说明。 |
-| [state.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/state.py)、[session.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/session.py)、[trace.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/trace.py) | 修改 | State（任务事实与进度）、session（保存任务的会话文件）和 Trace（只读回放用的事件记录）如何核对角色身份。 |
-| [config_example.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/config_example.py) | 修改 | 本地角色配置应采用什么形状。 |
+| [agent_profiles.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/agent_profiles.py) | New | How built-in and local roles are validated and frozen. |
+| [delegation.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/delegation.py) | Changed | How the role, tool scope, model, and authorization results are handed to the subagent. |
+| [tools/delegation.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/tools/delegation.py) | Changed | How `delegate_task` accepts an optional role. |
+| [skills.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/skills.py) and [tools/skill.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/tools/skill.py) | Changed | How a subagent sees only approved Skills. A Skill is a local operating instruction the Agent reads on demand. |
+| [state.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/state.py), [session.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/session.py), [trace.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/trace.py) | Changed | How State (task facts and progress), the session (the saved task file), and Trace (event records for read-only replay) check the role identity. |
+| [config_example.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/config_example.py) | Changed | What shape local role configuration should take. |
 
-## 版本变更定位
+## Version Change Map
 
-先看 v0.46 已有的同步调用路径。它说明本课是在原有委派入口上增加角色限制：
-
-```text
-[旧] 父 Agent
-  → delegate_task 参数检查与授权
-  → 子代理使用通用提示和固定只读工具
-  → 等待调查完成
-  → 把结果交回父 Agent
-```
-
-v0.47 在这条路径中加入角色选择、工具交集和 Skill 授权。图中的“工具交集”意思是：子代理最终可用的工具，必须同时出现在项目白名单、角色允许列表和这次请求的工具列表中。
+First look at the synchronous call path already in v0.46. It shows that this lesson adds role limits on top of the existing delegation entry:
 
 ```text
-[旧] 父 Agent
-  → [~] delegate_task（可选 agent_profile）
-  → [+] agent_profile：选择内置或本地角色
-  → [C] 父侧校验角色、模型和工具范围
-  → [C] 父侧逐个检查角色申请的 Skill
-  → [~] 建立受限子代理 → 调用独立子 Agent → 返回报告
-  → [B] 角色/模型无效或没有共同工具 → 在子模型请求前拒绝
+[old] parent Agent
+  → delegate_task argument check and authorization
+  → the subagent uses the general prompt and fixed read-only tools
+  → wait for the investigation to finish
+  → hand the result back to the parent Agent
 ```
 
-图例：`[旧]` 为 v0.46 已有，`[+]` 为 v0.47 新增，`[~]` 为修改，`[C]` 为主要校验或使用方，`[B]` 为本版边界。箭头表示调用或数据流。这里最重要的变化是角色在父侧先变成明确的限制，然后子代理才开始工作。
+v0.47 adds role selection, a tool intersection, and Skill authorization to this path. The "tool intersection" in the diagram means: the tools the subagent can finally use must appear in the project allowlist, the role's allowed list, and this request's tool list at the same time.
 
-## 核心概念与数据结构
+```text
+[old] parent Agent
+  → [~] delegate_task (optional agent_profile)
+  → [+] agent_profile: choose a built-in or local role
+  → [C] the parent side validates the role, model, and tool scope
+  → [C] the parent side checks each Skill the role requests
+  → [~] build a restricted subagent → call an independent child Agent → return the report
+  → [B] invalid role/model or no common tools → rejected before the child model request
+```
 
-### 1. 角色和模型回答不同的问题
+Legend: `[old]` already in v0.46, `[+]` new in v0.47, `[~]` changed, `[C]` main validator or user, `[B]` boundary of this version. Arrows show calls or data flow. The most important change here is that the role first becomes explicit limits on the parent side, and only then does the subagent start working.
 
-角色回答“这次调查要怎样做、能用哪些工具”；模型别名回答“由哪个本地配置的模型来执行”。例如，`reviewer` 是角色，`model_profile` 则从本地模型配置中选择一个别名。角色若指定模型就使用该模型；否则沿用原有子代理默认模型。调用者若另传模型别名，必须与这个最终选择一致，否则调用会在发出子模型请求前被拒绝。
+## Core Concepts and Data Structures
 
-内置角色有 `explorer`、`reviewer`、`tester` 和 `general`。它们都只能使用子代理只读白名单中的工具。下面是调用中的关键字段示意；真实调用还需要任务目标、范围和限制等信息：
+### 1. Roles and models answer different questions
+
+The role answers "how this investigation should be done and which tools can be used"; the model alias answers "which locally configured model runs it". For example, `reviewer` is a role, while `model_profile` chooses an alias from the local model configuration. If the role specifies a model, that model is used; otherwise the existing default subagent model is kept. If the caller also passes a model alias, it must match this final choice, otherwise the call is rejected before the child model request is sent.
+
+The built-in roles are `explorer`, `reviewer`, `tester`, and `general`. All of them can use only tools in the subagent read-only allowlist. Below is a sketch of the key fields in a call; a real call also needs the task goal, scope, constraints, and so on:
 
 ```json
 {
@@ -86,17 +86,17 @@ v0.47 在这条路径中加入角色选择、工具交集和 Skill 授权。图�
 }
 ```
 
-`requested_tools` 是父 Agent 为这一次调查提出的工具申请。运行时还会检查路径是否在任务范围内；把工具写进请求本身不会绕过这项检查。
+`requested_tools` is the tool request the parent Agent makes for this one investigation. The runtime also checks whether paths are within the task scope; writing a tool into the request does not by itself bypass that check.
 
-### 2. 自定义角色在任务开始时冻结
+### 2. Custom roles are frozen when the task starts
 
-自定义角色写在本机未跟踪的 `config_local.py` 中，不应把真实密钥或私人配置放进示例文件。每个角色至少需要职责说明、子代理指令和工具列表；模型、权限和 Skills 都是可选项：
+Custom roles are written in the local untracked `config_local.py`; real keys or private configuration should not be put into example files. Each role needs at least a responsibility description, subagent instructions, and a tool list; the model, permissions, and Skills are optional:
 
 ```python
 AGENT_PROFILES = {
     "api_reader": {
-        "description": "追踪 API 的只读实现路径",
-        "prompt": "指出入口、调用关系和支持结论的文件证据。",
+        "description": "Trace the read-only implementation path of an API",
+        "prompt": "Point out the entry, the call relationships, and the file evidence supporting the conclusions.",
         "tools": ["read_file", "grep"],
         "permissions": {"grep": "allow"},
         "skills": [],
@@ -104,19 +104,19 @@ AGENT_PROFILES = {
 }
 ```
 
-`permissions` 只能为角色自己的工具设置 `allow` 或 `deny`。`deny` 会从本次可用工具中移除对应工具；角色不能借配置扩大子代理的总白名单。Agent Runtime（负责安排模型请求、工具和结果的运行循环）创建时会检查并冻结本地角色定义，因此运行期间修改配置不会悄悄改变正在进行的任务。
+`permissions` can only set `allow` or `deny` on the role's own tools. `deny` removes the matching tool from the tools available this time; a role cannot use configuration to expand the subagent's overall allowlist. When the Agent Runtime (the run loop that arranges model requests, tools, and results) is created, it checks and freezes the local role definitions, so changing the configuration during a run does not quietly change the task in progress.
 
-只保存角色 ID 和配置指纹供 State、session 和 Trace 核对。指纹是用于识别配置是否改变的摘要；角色提示正文不会因此进入这些摘要。
+Only the role ID and a configuration fingerprint are saved for State, the session, and Trace to check. The fingerprint is a digest used to detect whether the configuration changed; the role's prompt text does not enter these summaries because of it.
 
-### 3. Skill 仍由父 Agent 逐项授权
+### 3. Skills are still authorized one by one by the parent Agent
 
-角色列出某个 Skill，只表示子代理“可以申请读取它”，不代表已经获得许可。父 Agent 会在子代理启动前，按每个准确的 Skill ID 询问当前权限策略。拒绝或被策略禁止的 Skill 不会出现在子代理的目录和工具中；配置引用了不存在的 Skill 时，此次委派会失败。
+A role listing a Skill only means the subagent "may request to read it", not that it has permission. Before the subagent starts, the parent Agent asks the current permission policy about each exact Skill ID. Skills that are denied or forbidden by policy do not appear in the subagent's catalog or tools; when the configuration references a nonexistent Skill, the delegation fails.
 
-如果获准，子代理通过 `skill(name)` 按需读取正文。Skill 正文只是普通工具返回的资料，不能授予 shell 等新工具权限，也不能覆盖受保护的系统指令。Skill 正文不会进入 State 或 Trace 摘要，也不能证明父任务已经通过验证；开启 `/save` 后，已加载正文仍可能作为普通工具历史保存在 session 中，所以会话文件应按任务资料妥善保护。
+If approved, the subagent reads the body on demand through `skill(name)`. A Skill body is only material returned by an ordinary tool; it cannot grant new tool permissions such as shell, and it cannot override protected system instructions. A Skill body does not enter State or Trace summaries and cannot prove that the parent task passed verification; with `/save` on, a loaded body may still be saved in the session as ordinary tool history, so session files should be protected like task material.
 
-没有传 `agent_profile` 的旧委派不会获得角色 Skill 能力。
+Old delegations that pass no `agent_profile` do not get the role Skill capability.
 
-例如，下面这个字段表示该角色可以申请读取名为 `api-contracts` 的 Skill；它本身还没有批准这次读取：
+For example, the field below means the role may request to read the Skill named `api-contracts`; it does not by itself approve that read:
 
 ```json
 {
@@ -124,9 +124,9 @@ AGENT_PROFILES = {
 }
 ```
 
-### 4. tester 只能分析测试，不能运行测试
+### 4. tester can only analyze tests, not run them
 
-下面是选择 `tester` 时的关键字段示意；真实调用还要包括目标和文件范围：
+Below is a sketch of the key fields when `tester` is chosen; a real call also includes the goal and file scope:
 
 ```json
 {
@@ -135,59 +135,59 @@ AGENT_PROFILES = {
 }
 ```
 
-`tester` 可以阅读实现与测试代码，建议要运行哪些命令或补充哪些用例；它没有运行测试的工具，不能把建议写成“测试已经通过”。是否执行测试仍由父 Agent 根据自己的任务流程决定。子代理的报告只是调查材料，不能代替父 Agent 执行验证。
+`tester` can read implementation and test code and suggest which commands to run or which cases to add; it has no tool to run tests and cannot write a suggestion as "the tests already passed". Whether tests are run is still decided by the parent Agent according to its own task flow. The subagent's report is only investigation material and cannot replace verification by the parent Agent.
 
-## 为什么这样设计
+## Why This Design
 
-把角色放在本地配置中，父 Agent 就能用一个简短 ID 选择一套固定职责和工具边界。把模型别名单独保留，则避免把“做什么”和“由哪个模型做”混成同一个设置。
+Putting roles in local configuration lets the parent Agent choose a fixed set of responsibilities and tool boundaries with one short ID. Keeping the model alias separate avoids merging "what to do" and "which model does it" into one setting.
 
-代价是配置更严格：错误的角色、模型或 Skill 不会自动猜测替代项；角色给出的工具清单也只能收窄既有权限。这样父侧授权仍是唯一入口，子代理不会继承父 Agent 的全部能力。
+The cost is stricter configuration: a wrong role, model, or Skill is not replaced by a guessed alternative; the tool list a role gives can only narrow existing permissions. This keeps parent-side authorization as the only entry, and the subagent does not inherit all of the parent Agent's capabilities.
 
-## 设计边界
+## Design Boundaries
 
-v0.47 的子代理仍然是同步、单层和只读的。父 Agent 必须等待本轮子代理完成；子代理不能改文件、运行 shell、访问外部工具服务、创建计划、做验证或决定父任务已经完成。`tester` 只能建议测试，父 Agent 仍须自己运行并检查验证结果。
+The subagent of v0.47 is still synchronous, single-level, and read-only. The parent Agent must wait for this round's subagent to finish; the subagent cannot change files, run shell, access external tool services, create plans, verify, or decide that the parent task is complete. `tester` can only suggest tests; the parent Agent must still run and check the verification results itself.
 
-本版还没有后台启动、稍后领取结果或跨进程继续同一子会话的能力。前者在下一课介绍，后者要到第 49 课。
+This version does not yet have background starts, collecting results later, or continuing the same child session across processes. The first is introduced in the next lesson, and the last waits until Lesson 49.
 
-## 关键流程
+## Key Flow
 
-读下面的步骤时，可以把它理解为一次“先检查权限，再开始委派”的过程：
+Read the steps below as a process of "check permissions first, then start the delegation":
 
 ```text
-父模型提出 delegate_task
-  → 父侧解析角色和模型
-  → 取项目白名单、角色工具和本次请求的交集
-  → 父侧逐个授权角色申请的 Skill
-  → 建立只有获准工具/Skill 的子代理
-  → 子代理调查并返回结构化报告
-  → 父侧记录角色摘要并接收报告
+the parent model proposes delegate_task
+  → the parent side resolves the role and model
+  → take the intersection of the project allowlist, the role's tools, and this request's tools
+  → the parent side authorizes each Skill the role requests
+  → build a subagent that has only the approved tools/Skills
+  → the subagent investigates and returns a structured report
+  → the parent side records the role summary and receives the report
 
-角色、模型或工具范围无效：子模型请求前拒绝
-Skill 被拒绝：该 Skill 不会交给子代理
+invalid role, model, or tool scope: rejected before the child model request
+Skill denied: that Skill is not handed to the subagent
 ```
 
-## 运行与观察
+## Run and Observe
 
-配置好本地模型后，用 Bash/zsh 启动一条只读审查任务：
+After configuring a local model, start a read-only review task with Bash/zsh:
 
 ```bash
-PYTHONPATH=src python -m mini_agent "只读审阅 src/mini_agent 中的 HTTP 重试边界"
+PYTHONPATH=src python -m mini_agent "review, read-only, the HTTP retry boundary in src/mini_agent"
 ```
 
-观察父模型是否调用 `delegate_task` 并选择 `reviewer`。如果调用成功，子代理仍会先完成调查，父 Agent 随后才继续；结构化结果中会出现角色 ID 和配置指纹。若使用了角色 Skill，授权提示会逐项显示 Skill ID；拒绝某个 ID 后，子代理就看不到它。这些现象分别说明角色身份已记录，Skill 访问仍由父侧控制。
+Observe whether the parent model calls `delegate_task` and chooses `reviewer`. If the call succeeds, the subagent still finishes its investigation first, and only then does the parent Agent continue; the role ID and configuration fingerprint appear in the structured result. If a role Skill was used, the authorization prompt shows the Skill IDs one by one; after you deny an ID, the subagent cannot see it. These observations show, respectively, that the role identity was recorded and that Skill access is still controlled by the parent side.
 
-## 实现拆解
+## Implementation Breakdown
 
-参数检查会从冻结的角色目录解析角色，并核对显式模型别名；委派合同（记录这次子任务的目标、范围和限制）再带上有效工具子集与角色指纹。没有角色的调用保留旧合同形状。
+Argument checking resolves the role from the frozen role catalog and checks any explicit model alias; the delegation contract (which records the goal, scope, and limits of this child task) then carries the effective tool subset and the role fingerprint. Calls without a role keep the old contract shape.
 
-在子任务启动前，委派管理器会通过父侧 PermissionGate（决定工具是否允许使用的权限检查）逐项检查 Skill。之后，子代理收到只含获准工具和 Skill 的独立视图，并运行项目共用的 Agent Runtime。子代理不会获得父 State、父权限或父验证证据。
+Before the child task starts, the delegation manager checks each Skill through the parent-side PermissionGate (the permission check that decides whether a tool may be used). The subagent then receives an independent view containing only the approved tools and Skills and runs the project's shared Agent Runtime. The subagent gets no parent State, parent permissions, or parent verification evidence.
 
-需要对照实现时，查看 [角色配置校验](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/agent_profiles.py)、[委派运行流程](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/delegation.py)和[角色工具注册](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/tools/delegation.py)。
+To compare with the implementation, see [role configuration validation](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/agent_profiles.py), [the delegation run flow](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/delegation.py), and [role tool registration](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/tools/delegation.py).
 
-## 本版特性、下一课与代码索引
+## Version Features, Next Lesson, and Code Index
 
-本版让父 Agent 能以固定内置角色或本地自定义角色开展同步只读调查，并由父侧逐项批准角色可申请的 Skill。未指定角色的旧调用继续使用原行为。
+This version lets the parent Agent carry out synchronous read-only investigations with fixed built-in roles or local custom roles, and the parent side approves, one by one, the Skills a role can request. Old calls that specify no role keep the original behavior.
 
-下一课会处理“父 Agent 不必等子代理完成”的问题：子代理先在当前进程里后台运行，父 Agent 之后查询状态并领取结果。
+The next lesson handles "the parent Agent does not have to wait for the subagent to finish": the subagent first runs in the background inside the current process, and the parent Agent later queries its status and collects the result.
 
-固定在 v0.47 的代码索引：[角色目录](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/agent_profiles.py)、[委派执行](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/delegation.py)、[Skills 目录](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/skills.py)、[父子工具视图](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/tools/base.py)、[持久结果校验](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/session.py)。
+Code index pinned at v0.47: [role catalog](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/agent_profiles.py), [delegation execution](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/delegation.py), [Skills catalog](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/skills.py), [parent/child tool views](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/tools/base.py), [durable result validation](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.47/src/mini_agent/session.py).

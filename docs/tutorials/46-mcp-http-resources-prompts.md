@@ -1,22 +1,22 @@
-# 第 46 课：受限 HTTP MCP、Resource 与 Prompt
+# Lesson 46: Restricted HTTP MCP, Resources, and Prompts
 
-上一课：[本地 Skills](45-local-skills.md) · [教程总览](README.md) · 下一课：阶段十二收口
+Previous: [Local Skills](45-local-skills.md) · [Tutorial overview](README.md) · Next: Stage 12 wrap-up
 
-代码快照：`v0.46` · 相邻差异：`v0.45..v0.46`
+Code snapshot: `v0.46` · Adjacent diff: `v0.45..v0.46`
 
-本课命令使用 Bash/zsh。下面的代码链接和示例都对应 `v0.46`。
+The commands in this lesson use Bash/zsh. The code links and examples below all correspond to `v0.46`.
 
-## 本课目标
+## Lesson Goals
 
-MCP Server 除了提供模型可以请求的工具，还可以提供资料和提示模板。控制权因此有三种不同情况：模型请求 Tool；用户在 CLI 里选 Resource；用户查看并确认 Prompt。本课会说明这三种入口各自怎样工作，以及为什么 Resource 和 Prompt 不直接交给模型自行调用。
+Besides tools the model can request, an MCP Server can also provide material and prompt templates. So control falls into three different cases: the model requests a Tool; the user picks a Resource in the CLI; the user reviews and confirms a Prompt. This lesson explains how each of these three entries works, and why Resources and Prompts are not handed to the model to call on its own.
 
-本版还让 MCP Client 可以通过 HTTP 连接 Server。HTTP 是通过网络发送请求和接收回复的方式；本课只支持每次请求返回一条 JSON 消息的受限形式。读完后，你应能判断什么时候内容会进入后续对话、什么时候需要用户确认，以及这种 HTTP 支持没有覆盖什么。
+This version also lets the MCP Client connect to a Server over HTTP. HTTP is a way to send requests and receive replies over the network; this lesson supports only the restricted form where each request returns one JSON message. After reading, you should be able to judge when content enters the later conversation, when user confirmation is needed, and what this HTTP support does not cover.
 
-## 前置条件
+## Prerequisites
 
-只需要基础 Python、终端和 Git。建议先读第 44、45 课，了解 Agent 的 Tool 授权、本地 Skill 与 Context。Context 是每轮发给模型的背景和对话；CLI 是用户和 Agent 交互的命令行界面。
+You only need basic Python, a terminal, and Git. Read Lessons 44 and 45 first to learn about Agent Tool authorization, local Skills, and the Context. The Context is the background and conversation sent to the model each round; the CLI is the command-line interface through which the user interacts with the Agent.
 
-查看相邻版本的变化并切换到本课代码：
+View the changes from the adjacent version and switch to this lesson's code:
 
 ```bash
 git checkout v0.45
@@ -24,135 +24,135 @@ git diff --stat v0.45..v0.46
 git checkout v0.46
 ```
 
-阅读完毕后，用 `git checkout -` 返回切换前所在的分支。
+After reading, use `git checkout -` to return to the branch you were on before switching.
 
-## 新增与改动文件
+## New and Changed Files
 
-本版有两类改动：增加一种 HTTP 传输方式；增加两个由应用和用户控制的内容入口。
+This version has two kinds of changes: one more HTTP transport, and two content entries controlled by the application and the user.
 
-| 文件 | 负责什么 |
+| File | Responsibility |
 |---|---|
-| [mcp/http.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.46/src/mini_agent/mcp/http.py) | 用标准库 `http.client` 发送和接收有界 JSON 请求。 |
-| [mcp/client.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.46/src/mini_agent/mcp/client.py) | 管理请求配对，并读取、冻结 Tools、Resources 和 Prompts 目录。 |
-| [mcp/adapter.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.46/src/mini_agent/mcp/adapter.py) | 管理连接；只把 Tools 接入 Agent 的模型工具目录。 |
-| [config.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.46/src/mini_agent/config.py) | 检查 stdio/HTTP 配置、HTTPS 默认值和回环 HTTP 开关。 |
-| [permission.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.46/src/mini_agent/permission.py) | 询问 Resource 读取与 Prompt 获取的权限。 |
-| [__main__.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.46/src/mini_agent/__main__.py) | 提供四个 CLI 命令、资料加入对话和 Prompt 预览确认。 |
-| [context.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.46/src/mini_agent/context.py) | 让 Resource 正文参与对话长度控制，并排除自动记忆检索。 |
+| [mcp/http.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.46/src/mini_agent/mcp/http.py) | Sends and receives bounded JSON requests with the standard library `http.client`. |
+| [mcp/client.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.46/src/mini_agent/mcp/client.py) | Manages request pairing and reads and freezes the Tools, Resources, and Prompts catalogs. |
+| [mcp/adapter.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.46/src/mini_agent/mcp/adapter.py) | Manages connections; connects only Tools to the Agent's model tool catalog. |
+| [config.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.46/src/mini_agent/config.py) | Checks stdio/HTTP configuration, the HTTPS default, and the loopback HTTP switch. |
+| [permission.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.46/src/mini_agent/permission.py) | Asks for permission to read Resources and get Prompts. |
+| [__main__.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.46/src/mini_agent/__main__.py) | Provides four CLI commands, adding material to the conversation, and Prompt preview confirmation. |
+| [context.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.46/src/mini_agent/context.py) | Makes Resource bodies take part in conversation length control and excludes them from automatic memory retrieval. |
 
-## 版本变更定位
+## Version Change Map
 
-上一版已有 stdio MCP Tool 路径。本版在同一个 Client 上增加 HTTP，同时提供两条不经过模型 Tool 目录的路径：
+The previous version already has the stdio MCP Tool path. This version adds HTTP to the same Client and provides two paths that do not go through the model's Tool catalog:
 
 ```text
-[旧] v0.45 已有：
-[旧] stdio Server → [旧] MCP Client → [旧] Adapter → [旧] Tool Registry
-                                                      → [旧] AgentRuntime → [旧] ToolExecutor
+[old] already in v0.45:
+[old] stdio Server → [old] MCP Client → [old] Adapter → [old] Tool Registry
+                                                         → [old] AgentRuntime → [old] ToolExecutor
 ```
 
 ```text
-[~] v0.46 修改并扩展：
-[~] stdio 或 HTTP Server → [~] MCP Client（目录读完后冻结）
-                               ├─ [旧] Tools → [C] Adapter → [旧] AgentRuntime → [旧] ToolExecutor
-                               ├─ [+] Resources → [C] 用户 CLI 选择 → 后续对话的资料
-                               │                    └─ [B] 只接受目录内的有界文本
-                               └─ [+] Prompts → [C] 用户预览确认 → 一次新的用户输入
-                                                    └─ [B] 取消时不进入对话
+[~] changed and extended in v0.46:
+[~] stdio or HTTP Server → [~] MCP Client (frozen after the catalog is fully read)
+                               ├─ [old] Tools → [C] Adapter → [old] AgentRuntime → [old] ToolExecutor
+                               ├─ [+] Resources → [C] user picks in the CLI → material for the later conversation
+                               │                    └─ [B] only bounded text from the catalog is accepted
+                               └─ [+] Prompts → [C] user previews and confirms → one new user input
+                                                    └─ [B] on cancel, nothing enters the conversation
 ```
 
-图例：`[旧]` v0.45 已有；`[+]` v0.46 新增；`[~]` v0.46 修改；`[C]` 主要消费者；`[B]` 本版边界。Tool、Resource 和 Prompt 的差别在于“谁决定使用它”。Tool 是模型提出的操作请求，仍经过 Agent 的权限检查；Resource 由用户在 CLI 选择，读入后作为不可信资料参与后续对话；Prompt 也由用户选择，完整预览并确认后才作为新的用户输入运行。
+Legend: `[old]` already in v0.45; `[+]` new in v0.46; `[~]` changed in v0.46; `[C]` main consumer; `[B]` boundary of this version. The difference between Tools, Resources, and Prompts is "who decides to use it". A Tool is an operation request proposed by the model and still goes through the Agent's permission check; a Resource is chosen by the user in the CLI and, once read, takes part in the later conversation as untrusted material; a Prompt is also chosen by the user and runs as a new user input only after a full preview and confirmation.
 
-## 关键流程
+## Key Flow
 
-### 1. HTTP 只更换连接方式，不改变 MCP 会话顺序
+### 1. HTTP only changes the connection method, not the MCP session order
 
-stdio Client 和 HTTP Client 都遵循同一顺序：初始化、通知初始化完成、读取能力目录、再按需要发出请求。HTTP 使用 Python 标准库的 `http.client` 发送 POST，并明确要求不压缩响应（`Accept-Encoding: identity`）；初始化后 Server 可能分配一个 session ID（会话标记，用来识别同一条连接），Client 只在当前内存连接中携带它。
+Both the stdio Client and the HTTP Client follow the same order: initialize, notify that initialization is complete, read the capability catalogs, then send requests as needed. HTTP uses the Python standard library `http.client` to send POST requests and explicitly asks for an uncompressed response (`Accept-Encoding: identity`); after initialization the Server may assign a session ID (a session marker that identifies the same connection), and the Client carries it only in the current in-memory connection.
 
-本版只接收逐请求的 `application/json` 回复。即使请求头声明可以接受其他传输形式，Server 返回 SSE、重定向、需要 OAuth，或请求发出后断开时，Client 都会失败关闭，不会改用另一种方式或重试可能已执行的调用。默认使用 HTTPS；只有显式允许时，回环地址才可用明文 HTTP。
+This version accepts only per-request `application/json` replies. Even if the request header declares that other transfer forms are acceptable, when the Server returns SSE, a redirect, requires OAuth, or disconnects after a request is sent, the Client fails closed; it does not switch to another method or retry a call that may already have run. HTTPS is used by default; only when explicitly allowed can a loopback address use plaintext HTTP.
 
-### 2. Resource 是用户加入对话的资料
+### 2. A Resource is material the user adds to the conversation
 
-主 CLI 用以下命令列出和读取 Resource：
+The main CLI lists and reads Resources with these commands:
 
 ```text
 /mcp-resources <alias>
 /mcp-resource <alias> <uri>
 ```
 
-读取前，Resource 必须已经出现在完整读取并冻结的目录中。列出 Resource 和 Prompt 默认允许；读取 Resource、获取 Prompt 默认询问；`always` 只记住对应的精确 `alias:uri` 或 `alias:name`。正文必须是有界 UTF-8 文本，并且返回 URI 必须与请求相同。图片、音频、二进制或超限内容都会被拒绝。
+Before reading, the Resource must already appear in the catalog that was fully read and frozen. Listing Resources and Prompts is allowed by default; reading a Resource and getting a Prompt ask by default; `always` remembers only the matching exact `alias:uri` or `alias:name`. The body must be bounded UTF-8 text, and the returned URI must equal the requested one. Images, audio, binary data, or oversized content are rejected.
 
-读取后，正文会成为当前对话中的普通用户侧资料消息。代码用 `name` 标出来源，避免把它误当作用户亲自输入的普通文本：
+After reading, the body becomes an ordinary user-side material message in the current conversation. The code marks the source with `name`, so it is not mistaken for ordinary text the user typed:
 
 ```python
 context.history.append({"role": "user", "name": "mcp_resource", "content": content})
 ```
 
-它不会立刻触发一次模型请求；你下一次提交任务时，模型才会在 Context 预算允许范围内看到它。正文不会复制进结构化 State 或 Trace 摘要，也不会作为验证证据；来源等摘要仍可被记录。
+It does not trigger a model request immediately; the model sees it, within the Context budget, the next time you submit a task. The body is not copied into the structured State or Trace summaries and does not serve as verification evidence; summaries such as its source can still be recorded.
 
-Resource 正文属于普通对话历史，启用 `/save` 后可能随会话一起保存。State 和 Trace 只保留来源摘要。
+A Resource body belongs to ordinary conversation history and may be saved with the session when `/save` is on. State and Trace keep only a source summary.
 
-### 3. Prompt 是用户审阅后提交的一次输入
+### 3. A Prompt is one input the user submits after review
 
-CLI 提供两个 Prompt 命令：
+The CLI provides two Prompt commands:
 
 ```text
 /mcp-prompts <alias>
-/mcp-prompt <alias> <name> <JSON参数对象>
+/mcp-prompt <alias> <name> <JSON argument object>
 ```
 
-获取前必须先列出并冻结 Prompt 目录。程序检查名称和字符串参数后，请求 Server 返回模板消息；返回内容只能是有界文本，角色标签只能是原始 `user` 或 `assistant`。`assistant` 在这里表示“模板原先标注的角色”，不表示 Agent 已经说过这段话。
+Before getting a Prompt, the Prompt catalog must have been listed and frozen. After the program checks the name and the string arguments, it asks the Server to return the template messages; the returned content can only be bounded text, and role labels can only be the raw `user` or `assistant`. `assistant` here means "the role the template originally labeled", not that the Agent has already said this text.
 
-程序会完整预览模板。取消时，内容不进入对话，也不请求模型；确认后，整个预览作为一次 `role=user` 输入交给现有任务流程。这样保留了模板结构，也避免 Server 把文字伪装成真正的助手历史。确认后的输入属于普通任务历史，启用 `/save` 后可能随会话保存。
+The program previews the full template. On cancel, the content does not enter the conversation, and no model request is made; on confirmation, the whole preview is handed to the existing task flow as one `role=user` input. This keeps the template structure and also keeps a Server from disguising text as real assistant history. The confirmed input belongs to ordinary task history and may be saved with the session when `/save` is on.
 
-一次获取的顺序可以概括为：
+The order of one get can be summarized as:
 
 ```text
-/mcp-prompt → 检查已冻结目录 → 检查权限 → 获取并验证文本
-            → 完整预览 → 用户取消（结束）
-                       → 用户确认 → 作为用户输入运行 Agent
+/mcp-prompt → check the frozen catalog → check permission → get and validate the text
+            → full preview → user cancels (end)
+                           → user confirms → run the Agent with it as user input
 ```
 
-## 实现拆解
+## Implementation Breakdown
 
-HTTP 响应、目录、单条文本和累计文本都有大小上限。Tools、Resources、Prompts 都要读取完所有分页才会冻结；后续 Resource URI 和 Prompt 名称只能从各自的冻结目录选择。运行中不会因 Server 通知而热刷新。
+HTTP responses, catalogs, single texts, and accumulated text all have size limits. Tools, Resources, and Prompts are frozen only after all their pages are read; later Resource URIs and Prompt names can only be chosen from their respective frozen catalogs. Nothing is hot-refreshed at runtime because of Server notifications.
 
-只有 Server 在初始化时声明了 `tools` 能力，它的工具才可能进入 Agent 工具目录。Resource 和 Prompt 专用的 Server 可以由连接管理器连接，但它们不会因此获得模型可调用的 Tool。MCP 连接在当前父 Runtime 中创建，任务切换、恢复和退出时有界关闭。
+Only when a Server declares the `tools` capability at initialization can its tools enter the Agent tool catalog. Servers dedicated to Resources and Prompts can be connected by the connection manager, but they do not gain model-callable Tools because of that. MCP connections are created in the current parent Runtime and closed within bounds on task switches, resume, and exit.
 
-Resource 会参与普通对话的 Context 长度裁剪，但不会扩展自动 Memory 检索的查询。Prompt 只有在用户确认后才进入任务 history。两者都不进入 Subagent，也不生成工具调用记录或验证证据。
+Resources take part in the Context length trimming of the ordinary conversation but do not extend the query of automatic Memory retrieval. Prompts enter the task history only after user confirmation. Neither enters Subagents, and neither produces tool call records or verification evidence.
 
-## 为什么这样设计
+## Why This Design
 
-Resource 与 Prompt 由应用侧选择，可以让用户决定何时把外部内容带入任务。代价是用户要先列出目录并选择条目，模型不能自行调用它们。把 Prompt 的原始角色保留为预览标签而非真实对话角色，可以防止外部 Server 伪造历史。
+Having Resources and Prompts chosen on the application side lets the user decide when to bring external content into a task. The cost is that the user has to list the catalog and choose an entry first, and the model cannot call them on its own. Keeping a Prompt's original roles as preview labels rather than real conversation roles prevents external Servers from forging history.
 
-HTTP 只实现逐请求 JSON，代码更容易有界地检查状态、内容类型和回复大小；它因此不兼容要求 SSE 的 Server。本版也不实现 OAuth、重定向、资源模板、订阅、Prompt completion、二进制内容或 Server 主动请求。
+HTTP implements only per-request JSON, which makes it easier for the code to check status, content type, and reply size within bounds; as a result it is not compatible with Servers that require SSE. This version also does not implement OAuth, redirects, resource templates, subscriptions, Prompt completion, binary content, or Server-initiated requests.
 
-## 运行与观察
+## Run and Observe
 
-如果已在本机配置一个 alias 为 `demo` 的 MCP Server，并且目录里有 Resource 和 Prompt，可以先查看可选项：
+If you have configured a local MCP Server with the alias `demo` whose catalog contains Resources and Prompts, first look at the options:
 
 ```text
 /mcp-resources demo
 /mcp-prompts demo
 ```
 
-再把示例 URI 和名称替换成列表中实际出现的值：
+Then replace the example URI and name with values actually shown in the lists:
 
 ```text
-/mcp-resource demo <列表中的 URI>
-/mcp-prompt demo <列表中的名称> {"topic":"example"}
+/mcp-resource demo <a URI from the list>
+/mcp-prompt demo <a name from the list> {"topic":"example"}
 ```
 
-读取 Resource 时，应看到权限询问；获准后它进入对话，但当前时刻不会立刻请求模型。获取 Prompt 时，应先看到完整预览；取消后对话不变，确认后才会启动一次任务。后一种操作需要本机已配置模型。
+When reading a Resource, you should see a permission prompt; once approved, it enters the conversation, but no model request is made at that moment. When getting a Prompt, you should first see the full preview; after cancelling, the conversation is unchanged, and only after confirming does one task start. The latter needs a locally configured model.
 
-## 设计边界
+## Design Boundaries
 
-- HTTP 默认要求 HTTPS；明文 HTTP 仅可对显式允许的回环地址使用。URL、认证 Header 和 session ID 不进入 State、Trace 或 session。
-- 只接受 JSON 回复，不接受 SSE、重定向或 OAuth；请求超时和断开后不自动重试。
-- Resource 和 Prompt 必须来自已冻结目录，只支持有界文本，不支持模板目录、二进制内容或热刷新。
-- 外部正文按不可信资料处理，不会覆盖项目指令、授权、计划或验证规则，也不会传给 Subagent。
+- HTTP requires HTTPS by default; plaintext HTTP is available only for explicitly allowed loopback addresses. URLs, auth headers, and session IDs do not enter State, Trace, or the session.
+- Only JSON replies are accepted; no SSE, redirects, or OAuth; requests are not retried automatically after a timeout or disconnect.
+- Resources and Prompts must come from frozen catalogs, and only bounded text is supported; no template catalogs, binary content, or hot refresh.
+- External bodies are handled as untrusted material; they do not override project instructions, authorization, plans, or verification rules, and are not passed to Subagents.
 
-## 本版特性、下一课与代码索引
+## Version Features, Next Lesson, and Code Index
 
-v0.46 为 MCP 增加了受限 HTTP Client，并让用户能从 CLI 选择文本 Resource、预览并确认 Prompt。三种能力各自有控制入口：Tool 由模型提出、Resource 由用户读取、Prompt 由用户审阅后提交。
+v0.46 adds a restricted HTTP Client to MCP and lets the user choose text Resources from the CLI and preview and confirm Prompts. Each of the three capabilities has its own control entry: Tools are proposed by the model, Resources are read by the user, and Prompts are submitted by the user after review.
 
-固定代码索引：[client.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.46/src/mini_agent/mcp/client.py)、[http.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.46/src/mini_agent/mcp/http.py)、[adapter.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.46/src/mini_agent/mcp/adapter.py)、[CLI](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.46/src/mini_agent/__main__.py)、[context.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.46/src/mini_agent/context.py)。
+Pinned code index: [client.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.46/src/mini_agent/mcp/client.py), [http.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.46/src/mini_agent/mcp/http.py), [adapter.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.46/src/mini_agent/mcp/adapter.py), [CLI](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.46/src/mini_agent/__main__.py), [context.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.46/src/mini_agent/context.py).

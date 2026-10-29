@@ -1,112 +1,112 @@
-# 第 7 课：系统提示词工程化
+# Lesson 7: System prompt engineering
 
-> 版本 v0.07 | [上一课](06-concurrent-tool-calls.md) | [下一课](08-file-operations.md)
+> Version v0.07 | [Previous lesson](06-concurrent-tool-calls.md) | [Next lesson](08-file-operations.md)
 
-> 代码快照：`v0.07` · 相邻差异：`v0.06.1..v0.07` · 命令环境：Bash/zsh
+> Code snapshot: `v0.07` · Adjacent diff: `v0.06.1..v0.07` · Shell: Bash/zsh
 >
-> 运行要求：Python 3.10+。该 tag 的 `pyproject.toml` 仍标 3.9，但源码已使用 3.10 语法。
+> Requirements: Python 3.10+. The `pyproject.toml` at this tag still says 3.9, but the source already uses 3.10 syntax.
 
-## 本课目标
+## Lesson Goals
 
-上一版只用一行 system prompt（系统提示词，给模型的固定工作说明）。模型因此可能不知道当前目录、平台和应遵守的工作方式。
-这一版把提示词放进 `prompt.py`，分层组装身份、规则和环境信息，让模型知道该做什么以及在何处执行。
+The previous version used a one-line system prompt (the fixed working instructions given to the model). So the model might not know the current directory, the platform, or how it should work.
+This version moves the prompt into `prompt.py` and assembles identity, rules, and environment information in layers, so the model knows what to do and where it runs.
 
-## 前置
+## Prerequisites
 
-- 已读 [第 6 课](06-concurrent-tool-calls.md)，理解并发 tool_calls
-- `git checkout v0.07` 切到本版代码
+- Read [Lesson 6](06-concurrent-tool-calls.md) and understand concurrent tool_calls
+- `git checkout v0.07` to switch to this version's code
 
-## 新增/改动了什么
+## What Was Added or Changed
 
 ```
  src/mini_agent/
- ├── prompt.py          # 新增：build_system_prompt + header + environment + _CORE_RULES
- └── __main__.py        # 改：messages[0] 改为调用 build_system_prompt()
+ ├── prompt.py          # New: build_system_prompt + header + environment + _CORE_RULES
+ └── __main__.py        # Changed: messages[0] now calls build_system_prompt()
 tests/
- └── test_prompt.py     # 新增：smoke test
+ └── test_prompt.py     # New: smoke test
 ```
 
-> 本版新增一个模块 + 改入口一处。`agent.py` 不动——核心 loop 仍然只认 `messages` 列表，不感知 prompt 构造。
+> This version adds one module and changes one place in the entry point. `agent.py` is untouched — the core loop still only knows the `messages` list and is unaware of how the prompt is built.
 
-## 核心概念
+## Core Concepts
 
-### 为什么一行 system prompt 不够
+### Why a one-line system prompt is not enough
 
-v0.06 的 system prompt 是这样的（`__main__.py:11`）：
+The v0.06 system prompt looks like this (`__main__.py:11`):
 
 ```python
-messages = [{"role": "system", "content": "你是一个助手，通过调用工具完成任务。"}]
+messages = [{"role": "system", "content": "You are an assistant that completes tasks by calling tools."}]
 ```
 
-这段提示词能运行，但遇到实际任务时有三个问题：
+This prompt works, but it has three problems on real tasks:
 
-1. **模型不知道环境**：它只能猜工作目录、平台和日期，因此相对路径或平台命令可能选错。
-2. **行为不稳定**：模型可能啰嗦、加 emoji、反复复述工具结果，或主动总结“我做了什么”。多轮对话中，这些内容会占用上下文。
-3. **无法区分 agent 身份**：以后有多个 agent / sub-agent 时，它们职责不同；一行字符串无法说清“你是 build 还是 explore”。
+1. **The model does not know the environment**: it can only guess the working directory, platform, and date, so it may choose the wrong relative path or platform command.
+2. **Unstable behavior**: the model may be verbose, add emoji, repeat tool results, or summarize "what I did" unprompted. In multi-round conversations, this content takes up context.
+3. **No way to tell agent identities apart**: later, multiple agents / sub-agents have different responsibilities; one string cannot say "you are build or explore".
 
-### 分层组装：借鉴 OpenCode 做减法
+### Layered assembly: borrowing from OpenCode and trimming
 
-要解决这些问题，不需要把提示词堆成一大段。这里参考 OpenCode 的分层方式，再按教学需要删减。
-OpenCode 分为 `header`（身份）、`provider`（按模型适配）、`environment`（环境）和 `custom`（用户规则）四层。mini_agent 暂时保留其中最需要的三层：
+Solving these problems does not mean piling everything into one big prompt. This version follows OpenCode's layered approach and trims it for teaching.
+OpenCode has four layers: `header` (identity), `provider` (per-model adaptation), `environment`, and `custom` (user rules). mini_agent keeps the three most needed for now:
 
-| OpenCode 层 | mini_agent 对应 | 是否做 | 理由 |
+| OpenCode layer | mini_agent equivalent | Done? | Reason |
 |---|---|---|---|
-| `header()` 身份层 | `header(agent_name)` | ✅ | 为多 agent 预留参数，当前只有 `build` |
-| `provider()` 行为层 | `_CORE_RULES` 静态文本 | ✅ | 单模型不需要按 provider 分模板 |
-| `environment()` 环境层 | `environment()` 动态生成 | ✅ | 纯标准库即可，投入产出比最高 |
-| `custom()` 用户规则 | — | ❌ | 留 v0.08 文件工具补全后 |
+| `header()` identity layer | `header(agent_name)` | ✅ | Reserves a parameter for multiple agents; only `build` for now |
+| `provider()` behavior layer | `_CORE_RULES` static text | ✅ | A single model does not need per-provider templates |
+| `environment()` environment layer | `environment()` generated dynamically | ✅ | Pure standard library, best return on effort |
+| `custom()` user rules | — | ❌ | Left until after v0.08 completes the file tools |
 
-### 三层结构（`src/mini_agent/prompt.py`）
+### The three-layer structure (`src/mini_agent/prompt.py`)
 
-`build_system_prompt(agent_name="build")` 返回一个字符串。它用 `\n\n` 把三段内容隔开，使每段只负责一类信息：
+`build_system_prompt(agent_name="build")` returns a string. It separates the three parts with `\n\n`, so each part is responsible for one kind of information:
 
 ```python
 def build_system_prompt(agent_name: str = "build") -> str:
     return "\n\n".join([
-        header(agent_name),      # 身份：你是 build / explore / plan ...
-        _CORE_RULES,              # 行为规范（所有 agent 共享）
-        environment(),            # 动态环境信息
+        header(agent_name),      # Identity: you are build / explore / plan ...
+        _CORE_RULES,              # Behavior rules (shared by all agents)
+        environment(),            # Dynamic environment information
     ])
 ```
 
-#### 第一层：`header(agent_name)` — 身份
+#### Layer 1: `header(agent_name)` — identity
 
 ```python
 def header(agent_name: str = "build") -> str:
     agents = {
         "build": (
-            "你是 mini_agent，一个编程 agent。"
-            "你通过调用工具完成编程任务：当前能读写改文件、做数学计算，"
-            "后续会扩展到跑命令、跑测试。"
-            "你的目标是独立完成基础的编程任务，不只是聊天。"
+            "You are mini_agent, a coding agent. "
+            "You complete programming tasks by calling tools: for now you can read, write, and edit files and do math, "
+            "and later you will be able to run commands and tests. "
+            "Your goal is to complete basic programming tasks on your own, not just to chat."
         ),
-        # 预留，v0.07 不实现：
-        # "explore": "你是 mini_agent 的 explore 子 agent，只负责只读探索代码库...",
-        # "plan": "你是 mini_agent 的 plan agent，只负责规划不执行...",
+        # Reserved, not implemented in v0.07:
+        # "explore": "You are mini_agent's explore sub-agent and only explore the codebase read-only...",
+        # "plan": "You are mini_agent's plan agent and only plan, never execute...",
     }
     return agents.get(agent_name, agents["build"])
 ```
 
-这一层先解决“模型是谁、能做什么”的问题：
+This layer first answers "who the model is and what it can do":
 
-- **dict + fallback**：传入未知 `agent_name` 时一定回退到 `build`。
-- **身份描述具体**：明确当前只能读、写、修改文件和计算，而不是笼统地说“你是助手”。
-- **为多 agent 预留**：以后增加 explore/plan 时，只需在 dict 加一项，并传入对应的 `agent_name`。
+- **dict + fallback**: an unknown `agent_name` always falls back to `build`.
+- **A specific identity**: it states clearly that the agent can currently only read, write, and edit files and calculate, instead of saying vaguely "you are an assistant".
+- **Reserved for multiple agents**: to add explore/plan later, add one entry to the dict and pass the matching `agent_name`.
 
-#### 第二层：`_CORE_RULES` — 行为规范
+#### Layer 2: `_CORE_RULES` — behavior rules
 
-身份明确后，还需要所有 agent 都遵守同一组规则。`_CORE_RULES` 是静态文本，分为四段：
+Once the identity is clear, all agents also need to follow the same set of rules. `_CORE_RULES` is static text in four sections:
 
-| 段 | 规则要点 |
+| Section | Key rules |
 |---|---|
-| `# Tone and style` | 简洁、无 emoji、不复述工具输出、不主动总结修改 |
-| `# Professional objectivity` | 优先技术准确性、不迎合假设、不确定先调查、如实纠正 |
-| `# Tool usage` | 优先用工具、参数完整合法、可并发 tool_calls |
-| `# Safety` | 权限闸门是预期行为、不猜 URL、工具失败直接抛异常 |
+| `# Tone and style` | Concise, no emoji, do not repeat tool output, do not summarize changes unprompted |
+| `# Professional objectivity` | Technical accuracy first, do not cater to assumptions, investigate when unsure, correct honestly |
+| `# Tool usage` | Prefer tools, complete and valid arguments, tool_calls may run concurrently |
+| `# Safety` | The permission gate is expected behavior, do not guess URLs, tool failures raise exceptions directly |
 
-> 这里用 `<rules>...</rules>` 包住规则。对 GLM 系列模型，这种显式标签比只有 Markdown 标题更容易表达“这是必须遵守的规则”。
+> The rules are wrapped in `<rules>...</rules>`. For GLM-series models, an explicit tag like this says "these are rules you must follow" more clearly than Markdown headings alone.
 
-#### 第三层：`environment()` — 动态环境
+#### Layer 3: `environment()` — dynamic environment
 
 ```python
 def environment() -> str:
@@ -122,16 +122,16 @@ def environment() -> str:
     ])
 ```
 
-模型还需要了解当前运行位置。`environment()` 用标准库读取四项信息：
+The model also needs to know where it is running. `environment()` reads four items with the standard library:
 
-| 字段 | 获取方式 | 作用 |
+| Field | How it is obtained | Purpose |
 |---|---|---|
-| `Working directory` | `os.getcwd()` | 解析相对路径的基础 |
-| `Is directory a git repo` | `_detect_git(cwd)` | 判断能否用 git 操作 |
-| `Platform` | `sys.platform` | 选对平台命令（`ls` vs `dir`） |
-| `Today's date` | `date.today().isoformat()` | 理解时间敏感上下文 |
+| `Working directory` | `os.getcwd()` | Base for resolving relative paths |
+| `Is directory a git repo` | `_detect_git(cwd)` | Whether git operations are possible |
+| `Platform` | `sys.platform` | Choose the right platform command (`ls` vs `dir`) |
+| `Today's date` | `date.today().isoformat()` | Understand time-sensitive context |
 
-实际输出示例：
+Sample output:
 ```
 <env>
   Working directory: E:\claude\agent_projects\mini_agent
@@ -141,7 +141,7 @@ def environment() -> str:
 </env>
 ```
 
-### `_detect_git` 的实现选择
+### Implementation choice for `_detect_git`
 
 ```python
 def _detect_git(cwd: str) -> bool:
@@ -155,113 +155,113 @@ def _detect_git(cwd: str) -> bool:
         p = parent
 ```
 
-这里只需要判断当前目录或其父目录是否有 `.git`。因此使用目录遍历，不调用 `subprocess.run(["git", ...])`：
+It only needs to know whether the current directory or one of its parents has `.git`. So it walks the directories instead of calling `subprocess.run(["git", ...])`:
 
-- **零外部依赖**：不必依赖 git 可执行文件，符合 mini_agent 自包含的约定。
-- **无需启动子进程**：目录遍历足以完成当前判断。
-- **限制**：worktree 和 submodule 可能被漏判；当前教学场景不处理，后续有需求再升级。
+- **No external dependency**: it does not need the git executable, which follows mini_agent's self-contained convention.
+- **No subprocess**: walking the directories is enough for this check.
+- **Limitation**: worktrees and submodules may be missed; the current teaching scenario does not handle them, and they can be upgraded later if needed.
 
-## 为什么这样设计
+## Why This Design
 
-### 为什么不动 `agent.py`
+### Why `agent.py` is untouched
 
-提示词变复杂后，核心循环不应因此承担组装工作。`call_llm` / `agent_loop` 仍然只接收 `messages` 列表，不知道 system prompt 是如何生成的。
-组装提示词是入口层（`__main__.py`）的职责，所以 `agent.py` 不需要改动。
+When the prompt gets more complex, the core loop should not take on the assembly work. `call_llm` / `agent_loop` still only receive the `messages` list and do not know how the system prompt was generated.
+Assembling the prompt is the job of the entry layer (`__main__.py`), so `agent.py` does not need to change.
 
-### 为什么在入口调一次而非每轮调
+### Why it is called once at the entry instead of every round
 
-一次会话里，工作目录、平台和日期通常不会改变。因此 `__main__.py` 启动时调用一次 `build_system_prompt()`，写入 `messages[0]`，之后每轮直接复用。
+Within one session, the working directory, platform, and date usually do not change. So `__main__.py` calls `build_system_prompt()` once at startup, writes it into `messages[0]`, and reuses it every round.
 
 ```python
 # __main__.py
 messages = [{"role": "system", "content": build_system_prompt()}]
 ```
 
-### 为什么不照搬 OpenCode 的 `header()` 身份伪装
+### Why not copy OpenCode's `header()` identity disguise
 
-OpenCode 的 `header()` 会对 Anthropic 模型做身份伪装，让 Claude 以为自己不是 Claude。这是针对特定模型的绕过方式。
-mini_agent 对接 GLM 系列，并不需要它，所以这里不照搬。
+OpenCode's `header()` disguises the identity for Anthropic models so that Claude believes it is not Claude. This is a workaround for a specific model.
+mini_agent connects to the GLM series and does not need it, so it is not copied here.
 
-### 为什么 `core_rules` 用中文
+### Why `core_rules` were written in Chinese at this tag
 
-- 对接的 `EB-GLM-5.2` 是中文模型，所以中文指令通常更容易被遵循。
-- 教学仓库面向中文学习者，提示词也应便于直接阅读。
-- `environment()` 的字段名保留英文，如 `Working directory`。结构化标签用英文更稳定，模型也更容易一致识别。
+- The connected `EB-GLM-5.2` is a Chinese model, so Chinese instructions were usually easier for it to follow.
+- The teaching repository was then aimed at Chinese learners, so the prompt was meant to be read directly.
+- The field names in `environment()` stay in English, such as `Working directory`. Structured labels are more stable in English, and the model recognizes them more consistently.
 
-## 使用指导
+## Usage Guide
 
-### 本版可用的命令
+### Commands available in this version
 
 ```bash
-# 看 system prompt 完整内容
+# Show the full system prompt
 PYTHONPATH=src python -c "from mini_agent.prompt import build_system_prompt; print(build_system_prompt())"
 
-# 跑 smoke test
+# Run the smoke test
 PYTHONPATH=src python tests/test_prompt.py
 
-# 实跑 agent，观察行为变化
-PYTHONPATH=src python -m mini_agent "你好，简单介绍下你自己"
+# Run the agent for real and observe the behavior change
+PYTHONPATH=src python -m mini_agent "Hello, briefly introduce yourself"
 ```
 
-### 本版典型示例
+### Typical examples for this version
 
-**示例 1：查看组装后的 system prompt**
+**Example 1: view the assembled system prompt**
 ```bash
 PYTHONPATH=src python -c "from mini_agent.prompt import build_system_prompt; print(build_system_prompt())"
 ```
-预期输出：按顺序包含身份描述、`<rules>` 行为规范和 `<env>` 环境信息三段。
+Expected output: three parts in order — the identity description, the `<rules>` behavior rules, and the `<env>` environment information.
 
-**示例 2：对比 v0.06 vs v0.07 的模型自我介绍**
+**Example 2: compare the model's self-introduction in v0.06 vs v0.07**
 ```bash
-# v0.06：一行 prompt，模型可能啰嗦或加 emoji
+# v0.06: one-line prompt; the model may be verbose or add emoji
 git checkout v0.06
-PYTHONPATH=src python -m mini_agent "你好，简单介绍下自己"
+PYTHONPATH=src python -m mini_agent "Hello, briefly introduce yourself"
 
-# v0.07：规范 prompt，模型简洁、无 emoji、Markdown 格式
+# v0.07: structured prompt; the model is concise, without emoji, in Markdown
 git checkout v0.07
-PYTHONPATH=src python -m mini_agent "你好，简单介绍下自己"
+PYTHONPATH=src python -m mini_agent "Hello, briefly introduce yourself"
 ```
-预期：v0.07 的回复通常更简洁、更有结构、不带 emoji，并会说明自己是 mini_agent。模型输出仍可能有差异。
+Expected: the v0.07 reply is usually more concise and structured, has no emoji, and says it is mini_agent. Model output can still vary.
 
-**示例 3：环境信息帮助路径解析**
+**Example 3: environment information helps resolve paths**
 ```bash
-PYTHONPATH=src python -m mini_agent "读取 examples/input.txt 并告诉我内容"
+PYTHONPATH=src python -m mini_agent "read examples/input.txt and tell me its contents"
 ```
-预期：模型能从 `<env>` 取得工作目录，因此可以正确解析相对路径，而不必猜测。
+Expected: the model gets the working directory from `<env>`, so it can resolve the relative path correctly instead of guessing.
 
-### 本版独有特性
+### Features unique to this version
 
-- **环境感知**：模型会收到工作目录、平台、日期和 git 状态，不必猜测。
-- **行为约束**：规则要求回复简洁、不带 emoji、不复述工具输出，也不主动总结。
-- **多 agent 预留**：`header(agent_name)` 已提供参数；以后加 explore/plan 只需扩充 dict。
+- **Environment awareness**: the model receives the working directory, platform, date, and git status and does not need to guess.
+- **Behavior constraints**: the rules require concise replies without emoji, no repeating of tool output, and no unprompted summaries.
+- **Reserved for multiple agents**: `header(agent_name)` already takes a parameter; adding explore/plan later only extends the dict.
 
-## 动手验证
+## Hands-On Verification
 
-1. **跑 smoke test**：
+1. **Run the smoke test**:
    ```bash
    PYTHONPATH=src python tests/test_prompt.py
    ```
-   预期：4 个 PASS（组装成功 / header build / 未知回退 / 环境字段）。
+   Expected: 4 PASS lines (assembly succeeds / header build / unknown falls back / environment fields).
 
-2. **查看 system prompt 内容**：
+2. **View the system prompt**:
    ```bash
    PYTHONPATH=src python -c "from mini_agent.prompt import build_system_prompt; print(build_system_prompt())"
    ```
-   预期：输出含 `mini_agent`、`<rules>`、`<env>` 三段。
+   Expected: the output contains the three parts `mini_agent`, `<rules>`, and `<env>`.
 
-3. **对比 v0.06 vs v0.07 行为**：
+3. **Compare v0.06 vs v0.07 behavior**:
    ```bash
    git checkout v0.06
-   PYTHONPATH=src python -m mini_agent "你好"
-   # v0.06：可能啰嗦、加 emoji、不报身份
+   PYTHONPATH=src python -m mini_agent "Hello"
+   # v0.06: may be verbose, add emoji, and not state its identity
 
    git checkout v0.07
-   PYTHONPATH=src python -m mini_agent "你好"
-   # v0.07：简洁、Markdown、自报 mini_agent 身份
+   PYTHONPATH=src python -m mini_agent "Hello"
+   # v0.07: concise, Markdown, states its mini_agent identity
    ```
 
-## 本版完整代码
+## Full Code for This Version
 
-- [`src/mini_agent/prompt.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.07/src/mini_agent/prompt.py) — 分层组装 system prompt
-- [`src/mini_agent/__main__.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.07/src/mini_agent/__main__.py) — 入口调用 `build_system_prompt()`
+- [`src/mini_agent/prompt.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.07/src/mini_agent/prompt.py) — layered system prompt assembly
+- [`src/mini_agent/__main__.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.07/src/mini_agent/__main__.py) — the entry calls `build_system_prompt()`
 - [`tests/test_prompt.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.07/tests/test_prompt.py) — smoke test

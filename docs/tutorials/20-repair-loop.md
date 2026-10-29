@@ -1,36 +1,36 @@
-# 第 20 课：修复循环（Repair Loop，v0.20）
+# Lesson 20: Repair loop (Repair Loop, v0.20)
 
-上一课：[单文件检查点与回滚](19-checkpoint-rollback.md) · [教程总览](README.md) · 下一课：[任务轨迹回放](21-trace-replay.md)
+Previous: [Single-file checkpoint and rollback](19-checkpoint-rollback.md) · [Tutorial overview](README.md) · Next: [Task trace replay](21-trace-replay.md)
 
-> 代码快照：`v0.20` · 相邻差异：`v0.19..v0.20` · 命令环境：Bash/zsh
+> Code snapshot: `v0.20` · Adjacent diff: `v0.19..v0.20` · Shell: Bash/zsh
 
-> 运行要求：Python 3.10+；核心运行时只使用标准库。
+> Requirements: Python 3.10+; the core runtime uses only the standard library.
 
-## 本课目标
+## Lesson Goals
 
-前几课已经能记录失败、选择 `retry`/`adjust`/`rollback`，也能为新的 generation（验证边界）运行检查。但如果模型在失败后直接继续写文件，或者把恢复动作的“执行成功”当成任务已经修好，运行时就无法保证验证证据属于当前环境。v0.20 把这条异常路径固定成一个有上限的 Repair Loop（修复循环）：
+The earlier lessons can already record failures, choose `retry`/`adjust`/`rollback`, and run checks for a new generation (verification boundary). But if the model keeps writing files right after a failure, or treats "the recovery action executed successfully" as "the task is fixed", the runtime cannot guarantee that verification evidence belongs to the current environment. v0.20 fixes this exception path into a bounded Repair Loop:
 
 ```text
-失败 → 诊断 → 受限恢复 → 新 generation → 独立 verification
-                         ↘ 继续 / 再次修复 / blocked / failed
+failure → diagnosis → bounded recovery → new generation → independent verification
+                         ↘ continue / repair again / blocked / failed
 ```
 
-读完本课，你应能解释：
+After this lesson, you should be able to explain:
 
-- `idle`、`diagnosis_required`、`verification_required` 三个阶段各自允许什么；
-- 为什么初始失败不消耗 repair cycle，而真正激活的 `retry`、`adjust` 或 `rollback` 才消耗一个周期；
-- 为什么恢复成功后下一工具回合必须是单个 `run_shell(purpose="verification")`；
-- 为什么 executor 和 agent loop 都做准入检查，同时仍为每个模型 tool call 回灌结果。
+- What each of the three phases `idle`, `diagnosis_required`, and `verification_required` allows;
+- Why the initial failure does not consume a repair cycle, while an actually activated `retry`, `adjust`, or `rollback` consumes one;
+- Why, after a successful recovery, the next tool round must be a single `run_shell(purpose="verification")`;
+- Why both the executor and the agent loop do admission checks, while still feeding back a result for every model tool call.
 
-## 为什么需要本版
+## Why This Version Is Needed
 
-v0.19 已经能把文件回滚到检查点，但“恢复动作完成”仍不是“任务正确”。此前 State 只有一个 `verification_required` 布尔信号：它无法表达“先诊断再恢复”的中间阶段，也无法阻止模型在待修复时直接执行新的副作用。另一个边界问题是 repair cycle 被错误地按验证失败次数增加，权限拒绝或恢复参数无效也可能混淆预算含义。
+v0.19 can already roll a file back to a checkpoint, but "the recovery action finished" still does not mean "the task is correct". Before this version, State had only one boolean signal, `verification_required`: it could not express the intermediate phase "diagnose first, then recover", and it could not stop the model from running new side effects while a repair was pending. Another boundary problem: repair cycles were wrongly incremented by the number of verification failures, and permission denials or invalid recovery arguments could also blur the meaning of the budget.
 
-本版把阶段、活动 failure、活动 recovery 和周期预算放入 State。运行时仍不替模型选择业务修复方案；模型通过既有 `recover` 工具提供诊断理由和动作，运行时只保证顺序、引用、权限、generation 和上限。
+This version puts the phase, the active failure, the active recovery, and the cycle budget into State. The runtime still does not choose business repair strategies for the model; the model gives a diagnostic reason and action through the existing `recover` tool, and the runtime only guarantees order, references, permissions, generations, and limits.
 
-## 前置条件
+## Prerequisites
 
-建议先阅读第 17、18、19 课。先查看版本差异，再切到本课快照：
+Read Lessons 17, 18, and 19 first. View the version diff first, then switch to this lesson's snapshot:
 
 ```bash
 git checkout v0.19
@@ -39,85 +39,85 @@ git diff v0.19..v0.20 -- src/mini_agent/state.py src/mini_agent/tools/base.py sr
 git checkout v0.20
 ```
 
-本课的 `v0.20` tag 由发布者在实现验收后手动创建；如果本地还没有该 tag，源码链接和差异命令应保留为发布说明，而不是把当前工作树误当作历史快照。
+The `v0.20` tag for this lesson is created manually by the publisher after the implementation passes acceptance; if the tag does not exist locally yet, keep the source links and diff commands as release notes instead of treating the current working tree as the historical snapshot.
 
-## 新增与改动文件
+## New and Changed Files
 
-| 文件 | 变化 | 作用 |
+| File | Change | Purpose |
 |---|---|---|
-| [`state.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.20/src/mini_agent/state.py) | 新增 repair loop 状态与活动因果引用 | 保存阶段、failure/recovery、周期预算和完成条件 |
-| [`tools/base.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.20/src/mini_agent/tools/base.py) | 增加执行前阶段准入 | 在 PermissionGate 和 handler 前拒绝不合规调用 |
-| [`agent.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.20/src/mini_agent/agent.py) | 增加回合级准入 | diagnosis 下 recover 必须独占；verification 下只接受单调用 |
-| [`context.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.20/src/mini_agent/context.py) | 渲染 Repair Loop critical state | 压缩后仍显示阶段、活动引用和预算 |
-| [`prompt.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.20/src/mini_agent/prompt.py) | 补充协议规则 | 让模型知道失败后先诊断，恢复后先独立验证 |
+| [`state.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.20/src/mini_agent/state.py) | Adds repair loop state and active causal references | Stores the phase, failure/recovery, cycle budget, and completion conditions |
+| [`tools/base.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.20/src/mini_agent/tools/base.py) | Adds phase admission before execution | Refuses non-compliant calls before the PermissionGate and handler |
+| [`agent.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.20/src/mini_agent/agent.py) | Adds round-level admission | In diagnosis, recover must be alone; in verification, only a single call is accepted |
+| [`context.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.20/src/mini_agent/context.py) | Renders the Repair Loop critical state | Phase, active references, and budget stay visible after compaction |
+| [`prompt.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.20/src/mini_agent/prompt.py) | Adds protocol rules | Tells the model to diagnose first after a failure and to verify independently first after recovery |
 
-## 关键流程
+## Key Flow
 
 ```text
 normal execution
-  ├─ possible effect 成功 → phase 保持 idle，但使完成证据失效
-  └─ 任意需处理的失败 → FailureEvent + diagnosis_required
+  ├─ possible effect succeeds → phase stays idle, but completion evidence is invalidated
+  └─ any failure that needs handling → FailureEvent + diagnosis_required
 
 diagnosis_required
-  ├─ read-only / update_todo → 留在诊断阶段
-  ├─ recover（独占回合）→ 校验活动 failure、权限和预算
-  └─ possible effect / verification → 协议错误，不执行 handler
+  ├─ read-only / update_todo → stay in the diagnosis phase
+  ├─ recover (alone in its round) → validate the active failure, permission, and budget
+  └─ possible effect / verification → protocol error, handler not run
 
 accepted retry / adjust / rollback
   ├─ cycles_used += 1
-  ├─ 开启 successor generation
-  └─ recovery attempt 结束 → verification_required
+  ├─ open a successor generation
+  └─ recovery attempt finishes → verification_required
 
 verification_required
-  ├─ 单个独立 verification 通过 → idle，清除活动引用
-  └─ verification 失败 → 新 FailureEvent + diagnosis_required
+  ├─ a single independent verification passes → idle, clear active references
+  └─ verification fails → new FailureEvent + diagnosis_required
 ```
 
-`ask` 和 `block` 仍然是保守终态 `blocked`。周期预算默认是 `MAX_REPAIR_CYCLES = 3`：初始失败、无效恢复、权限拒绝和 `ask`/`block` 不消耗；恢复动作只有在目标获得授权并激活新 generation 后才计入。达到上限后不能静默开始第四次恢复，运行时以明确的 `failed` 原因收口。
+`ask` and `block` are still the conservative terminal state `blocked`. The cycle budget defaults to `MAX_REPAIR_CYCLES = 3`: the initial failure, invalid recoveries, permission denials, and `ask`/`block` consume nothing; a recovery action counts only after its target is authorized and a new generation is activated. Once the limit is reached, a fourth recovery cannot start silently; the runtime finishes with an explicit `failed` reason.
 
-## 实现拆解
+## Implementation Breakdown
 
-### 1. State 是阶段的唯一事实源
+### 1. State is the single source of truth for the phase
 
-`AgentState.snapshot()` 新增 `repair_loop`：
+`AgentState.snapshot()` adds `repair_loop`:
 
 ```text
 phase                 idle | diagnosis_required | verification_required
-active_failure_id     当前必须处理的 FailureEvent
-active_recovery_id    当前 generation 对应的 RecoveryAction
-cycles_used           已激活的恢复周期
-cycles_remaining      剩余额度
-required_next_action  运行时要求的下一步
+active_failure_id     the FailureEvent that must be handled now
+active_recovery_id    the RecoveryAction for the current generation
+cycles_used           recovery cycles activated so far
+cycles_remaining      remaining budget
+required_next_action  the next step the runtime requires
 ```
 
-验证失败不会直接增加 `cycles_used`。只有 `reserve_recovery()` 经过目标校验、PermissionGate 放行并调用 `activate_recovery()` 时，`retry`、`adjust` 或 `rollback` 才会打开新 generation 并计数。活动 failure 引用也会防止模型恢复一个已经被更新失败取代的旧事件。
+A verification failure does not increase `cycles_used` directly. Only when `reserve_recovery()` passes target validation, the PermissionGate allows it, and `activate_recovery()` is called does a `retry`, `adjust`, or `rollback` open a new generation and get counted. The active failure reference also stops the model from recovering an old event that a newer failure has already replaced.
 
-### 2. 两层准入保证顺序
+### 2. Two layers of admission guarantee order
 
-agent loop 能看到一整批 tool calls，因此负责回合级约束：diagnosis 中 `recover` 必须独占；verification 中只能有一个正确用途的 shell 调用。ToolExecutor 仍做第二层检查，保护直接调用、嵌入式使用和并发入口。准入失败会返回结构化协议结果，handler、PermissionGate 和 generation 都不会被调用；agent loop 仍按原始顺序为每个 call 添加 `role=tool`。
+The agent loop can see a whole batch of tool calls, so it enforces round-level constraints: in diagnosis, `recover` must be alone; in verification, there can be only one shell call with the correct purpose. The ToolExecutor still does a second check, protecting direct calls, embedded use, and concurrent entries. An admission failure returns a structured protocol result, and the handler, PermissionGate, and generation are never called; the agent loop still adds a `role=tool` for every call in the original order.
 
-恢复目标带着受 State 锁保护的 reservation 执行，是 verification 阶段中唯一的受控例外。它结束后不能绕过独立 verification。
+The recovery target runs with a reservation protected by the State lock; it is the only controlled exception in the verification phase. After it finishes, it cannot bypass independent verification.
 
-### 3. 上下文与完成提醒
+### 3. Context and the completion reminder
 
-Structured State 和压缩后的 critical state 都保留 repair loop。失败后 Runtime Notice 会要求只读调查、更新 Todo 或独占 recover；恢复后要求下一回合独立 verification。相同 `progress_marker` 下继续输出纯文本仍会进入既有 `blocked` 规则，因此模型不能用文字跳过阶段。
+Both the Structured State and the compacted critical state keep the repair loop. After a failure, the Runtime Notice asks for read-only investigation, a Todo update, or a standalone recover; after recovery, it asks for independent verification in the next round. Continuing to output plain text under the same `progress_marker` still enters the existing `blocked` rule, so the model cannot skip a phase with words.
 
-## 为什么这样设计
+## Why This Design
 
-- 阶段机把“失败事实”“模型诊断”和“验证证据”分开，避免一条自然语言成功消息改变执行状态。
-- 活动 failure 是显式引用，不靠最近时间猜测因果关系；旧 failure 不能在新 failure 出现后继续驱动恢复。
-- 两层准入分别覆盖批量协议和直接执行边界，但都只做安全约束，不引入第二个 planner。
-- 以实际激活的恢复动作计周期，拒绝不会消耗修复机会；恢复 attempt 失败仍算已使用，因为副作用已经获准执行。
+- The phase machine separates "failure facts", "model diagnosis", and "verification evidence", so a natural language success message cannot change execution state.
+- The active failure is an explicit reference; causality is not guessed from recency, and an old failure cannot keep driving recovery after a new failure appears.
+- The two admission layers cover the batch protocol and the direct execution boundary respectively, but both only enforce safety constraints and do not introduce a second planner.
+- Cycles are counted by actually activated recovery actions, so rejections do not consume repair chances; a failed recovery attempt still counts as used, because its side effects were already approved to run.
 
-## 本版特性、下一课与代码索引
+## Version Features, Next Lesson, and Code Index
 
-本版包含：阶段化 Repair Loop、活动 failure/recovery、恢复周期预算、恢复后独立 verification、agent loop 与 executor 双层准入、Structured State/Runtime Notice 同步，以及 `ask`/`block`/预算耗尽的明确终态。
+This version includes: a phased Repair Loop, active failure/recovery, a recovery cycle budget, independent verification after recovery, two-layer admission in the agent loop and executor, Structured State/Runtime Notice sync, and explicit terminal states for `ask`/`block`/budget exhaustion.
 
-本版不包含自动推断修复方案、自动重试、外部等待恢复、通用事务回滚或 Trace & Replay；下一课会只读消费 v0.17–v0.21 已记录的事实，不应重新执行工具。
+This version does not include automatic inference of repair strategies, automatic retries, recovery from external waits, general transactional rollback, or Trace & Replay; the next lesson consumes, read-only, the facts already recorded by v0.17–v0.21 and must not re-run tools.
 
-代码索引：
+Code index:
 
-- [`state.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.20/src/mini_agent/state.py)：RepairPhase、活动引用、generation 与预算；
-- [`recovery.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.20/src/mini_agent/recovery.py)：recover schema 和动作调度；
-- [`tools/base.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.20/src/mini_agent/tools/base.py)：结构化执行与第二层准入；
-- [`agent.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.20/src/mini_agent/agent.py)：回合调度和完整 tool result 回灌；
+- [`state.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.20/src/mini_agent/state.py): RepairPhase, active references, generation, and budget;
+- [`recovery.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.20/src/mini_agent/recovery.py): the recover schema and action dispatch;
+- [`tools/base.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.20/src/mini_agent/tools/base.py): structured execution and the second admission layer;
+- [`agent.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.20/src/mini_agent/agent.py): round scheduling and complete tool result feedback;

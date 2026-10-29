@@ -1,24 +1,24 @@
-# 第 45 课：给 Agent 一份本地 Skill
+# Lesson 45: Giving the Agent a local Skill
 
-上一课：[让 Agent 调用 MCP Tool](44-mcp-tools-runtime.md) · [教程总览](README.md) · 下一课：[MCP HTTP、Resource 与 Prompt](46-mcp-http-resources-prompts.md)
+Previous: [Letting the Agent call MCP Tools](44-mcp-tools-runtime.md) · [Tutorial overview](README.md) · Next: [MCP HTTP, Resources, and Prompts](46-mcp-http-resources-prompts.md)
 
-代码快照：`v0.45` · 相邻差异：`v0.44..v0.45`
+Code snapshot: `v0.45` · Adjacent diff: `v0.44..v0.45`
 
-本课命令使用 Bash/zsh。下面的代码链接和示例都对应 `v0.45`。
+The commands in this lesson use Bash/zsh. The code links and examples below all correspond to `v0.45`.
 
-## 本课目标
+## Lesson Goals
 
-有时我们希望 Agent 遵循一套做事步骤，例如“先读文件，再修改，最后验证”。把步骤写进可执行脚本会让脚本越过 Agent 的工具授权；每次都把所有说明塞进模型提示，也会让无关内容占用上下文。
+Sometimes we want the Agent to follow a set of working steps, such as "read the files first, then change them, then verify". Writing the steps into an executable script would let the script bypass the Agent's tool authorization; stuffing all instructions into the model prompt every time would also let irrelevant content take up context.
 
-本课用 Skill 解决这个问题。Skill 是一份本地工作说明，不是可执行代码，也不会增加新的操作权限。Agent 先看到它的名称和简短介绍；需要正文时，再通过 `skill(name)` 请求读取，并经过权限检查。读完后，你应能说明 Skill 怎样进入模型的工作上下文，以及为什么它不能替 Agent 授权运行命令。
+This lesson solves the problem with a Skill. A Skill is a local working instruction, not executable code, and it adds no new operation permissions. The Agent first sees its name and a short description; when it needs the body, it requests it through `skill(name)` and goes through a permission check. After reading, you should be able to explain how a Skill enters the model's working context, and why it cannot authorize the Agent to run commands.
 
-## 前置条件
+## Prerequisites
 
-只需要基础 Python、终端和 Git。建议先读第 44 课，了解 Agent 怎样接收模型的工具请求并检查授权。
+You only need basic Python, a terminal, and Git. Read Lesson 44 first to learn how the Agent receives the model's tool requests and checks authorization.
 
-这里会用到两个概念：Context 是 Agent 为当前一次模型请求准备的背景信息和对话内容；Context 有长度上限，超出时会裁剪。PermissionGate 是执行工具前的授权检查；Skill 默认也要经过这项检查，不能因为它只是文字就绕过去。
+Two concepts are used here: the Context is the background information and conversation content the Agent prepares for the current model request; the Context has a length limit and is trimmed when exceeded. The PermissionGate is the authorization check before a tool runs; Skills also go through this check by default and cannot bypass it just because they are text.
 
-查看相邻版本变化并切换到本课代码：
+View the changes from the adjacent version and switch to this lesson's code:
 
 ```bash
 git checkout v0.44
@@ -26,112 +26,112 @@ git diff --stat v0.44..v0.45
 git checkout v0.45
 ```
 
-阅读完毕后，用 `git checkout -` 返回切换前所在的分支。
+After reading, use `git checkout -` to return to the branch you were on before switching.
 
-## 新增与改动文件
+## New and Changed Files
 
-Skill 的流程分为发现、展示说明和按需读取正文：
+The Skill flow has three parts: discovery, showing the description, and reading the body on demand:
 
-| 文件 | 负责什么 |
+| File | Responsibility |
 |---|---|
-| [skills.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.45/src/mini_agent/skills.py) | 从两个固定本地目录发现 Skill，并安全读取文件。 |
-| [tools/skill.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.45/src/mini_agent/tools/skill.py) | 注册 `skill(name)` 读取入口。 |
-| [context.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.45/src/mini_agent/context.py) | 在模型请求中加入符合当前权限规则的 Skill 简介。 |
-| [permission.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.45/src/mini_agent/permission.py) | 对每个 Skill 的正文读取单独询问授权。 |
-| [tools/base.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.45/src/mini_agent/tools/base.py) | 把正文交给模型，同时限制 State 和 Trace 中记录的摘要。 |
+| [skills.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.45/src/mini_agent/skills.py) | Discovers Skills from two fixed local directories and reads files safely. |
+| [tools/skill.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.45/src/mini_agent/tools/skill.py) | Registers the `skill(name)` read entry. |
+| [context.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.45/src/mini_agent/context.py) | Adds the Skill descriptions that satisfy the current permission rules to the model request. |
+| [permission.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.45/src/mini_agent/permission.py) | Asks for authorization separately for each Skill body read. |
+| [tools/base.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.45/src/mini_agent/tools/base.py) | Hands the body to the model while limiting the summary recorded in State and Trace. |
 
-## 版本变更定位
+## Version Change Map
 
-v0.44 已有的 Agent 循环会把可用 Tool 告诉模型，并在模型请求后执行工具。本版保留这条执行路径，再增加一份供 Context 展示的 Skill 简介，以及一个按需读取正文的工具。
+The Agent loop already in v0.44 tells the model which Tools are available and runs tools after the model requests them. This version keeps that execution path and adds a Skill description list for the Context to show, plus a tool that reads the body on demand.
 
 ```text
-[旧] v0.44 已有：
-[旧] Registry 中的 Tool → [旧] Context 准备模型请求 → [旧] AgentRuntime
-                                                  → [旧] ToolExecutor → [旧] role=tool 结果
+[old] already in v0.44:
+[old] Tools in the Registry → [old] Context prepares the model request → [old] AgentRuntime
+                                                                → [old] ToolExecutor → [old] role=tool result
 
-[+] v0.45 新增：
+[+] new in v0.45:
 [+] skills/<name>/SKILL.md
-  → [+] SkillCatalog 发现并检查文件
-  → [~] Context 加入 Skill 简介（只放名称、来源、说明）
-  → [C] 模型请求 skill(name)
-  → [C] PermissionGate 授权后读取正文
-  → [旧] ToolExecutor 把正文作为 role=tool 资料交给模型
-       ├─ [B] 拒绝授权或文件变化：不提供正文
-       └─ [B] 正文不授权后续工具，也不进入 Subagent
+  → [+] SkillCatalog discovers and checks the files
+  → [~] Context adds Skill descriptions (name, source, description only)
+  → [C] the model requests skill(name)
+  → [C] the PermissionGate authorizes, then the body is read
+  → [old] ToolExecutor hands the body to the model as role=tool material
+       ├─ [B] authorization denied or file changed: no body provided
+       └─ [B] the body does not authorize later tools and does not enter Subagents
 ```
 
-图例：`[旧]` v0.44 已有；`[+]` v0.45 新增；`[~]` v0.45 修改；`[C]` 主要消费者；`[B]` 本版边界。`SkillCatalog` 可以理解为当前 Runtime 的 Skill 名录。它启动时读取固定目录并冻结发现结果；正文不会因为“被发现”就自动读入模型请求。
+Legend: `[old]` already in v0.44; `[+]` new in v0.45; `[~]` changed in v0.45; `[C]` main consumer; `[B]` boundary of this version. `SkillCatalog` can be understood as the current Runtime's Skill directory. It reads the fixed directories at startup and freezes the discovery result; a body is not read into the model request automatically just because it was "discovered".
 
-## 关键流程
+## Key Flow
 
-### 1. 发现时只读取简介
+### 1. Discovery reads only the description
 
-Skill 放在工作区根目录的 `skills/<名称>/SKILL.md`，或用户目录下的 `~/.mini_agent/skills/<名称>/SKILL.md`。文件开头需要有如下格式的简单说明区，称为 frontmatter：
+Skills live in `skills/<name>/SKILL.md` at the workspace root, or in `~/.mini_agent/skills/<name>/SKILL.md` in the user directory. The start of the file needs a simple description block in the format below, called frontmatter:
 
 ```markdown
 ---
 name: verify-change
-description: 先阅读，再修改，最后验证
+description: Read first, then change, then verify
 ---
-# 正文从这里开始
-1. 阅读相关文件。
-2. 完成修改。
-3. 说明如何独立验证。
+# The body starts here
+1. Read the relevant files.
+2. Make the change.
+3. Explain how to verify it independently.
 ```
 
-`name` 必须和文件夹名一致。v0.45 只接受 `name`、`description` 两个单行字段，不解析完整 YAML，也不会执行正文里的代码。
+`name` must match the folder name. v0.45 accepts only the two single-line fields `name` and `description`, does not parse full YAML, and never runs code in the body.
 
-Agent 准备模型请求时，Context 会把允许展示的 Skill 名称、来源（项目级或用户级）和简介放进普通资料消息。这样模型能判断某个 Skill 可能有用，但不必每轮都接收所有正文。被权限规则禁止的 Skill 不会出现在简介中。
+When the Agent prepares a model request, the Context puts the names, sources (project or user level), and descriptions of the Skills allowed to be shown into an ordinary information message. This way the model can judge that a Skill might be useful without receiving every body in every round. Skills forbidden by the permission rules do not appear in the descriptions.
 
-### 2. 读取正文时再询问
+### 2. Asking again when the body is read
 
-如果模型决定使用 `verify-change`，它会提交类似这样的工具请求：
+If the model decides to use `verify-change`, it submits a tool request like this:
 
 ```json
 {"name":"skill","arguments":{"name":"verify-change"}}
 ```
 
-PermissionGate 默认询问是否允许读取这个 Skill。选择 `always` 也只记住这个 Skill 的确切名称，不会替其他 Skill 授权。通过检查后，程序会重新安全打开对应的 `SKILL.md`，确认文件仍是发现时看到的那个文件，再把正文作为普通 `role=tool` 结果交给模型。
+The PermissionGate asks by default whether to allow reading this Skill. Choosing `always` remembers only this Skill's exact name and does not authorize other Skills. After the check passes, the program safely reopens the matching `SKILL.md`, confirms the file is still the one seen at discovery, and hands the body to the model as an ordinary `role=tool` result.
 
-模型能看到正文，是因为它需要根据说明安排工作。Agent 的结构化任务记录和执行事件只保存 Skill 名称、来源和长度等摘要，不把整段正文复制进去。若启用了 `/save`（保存当前会话的命令），正文作为普通工具历史的一部分仍可能随会话保存。
+The model can see the body because it needs to arrange its work according to the instructions. The Agent's structured task record and execution events store only summaries such as the Skill name, source, and length, without copying the whole body. If `/save` (the command that saves the current session) is on, the body may still be saved with the session as part of ordinary tool history.
 
-### 3. 说明步骤不等于批准步骤
+### 3. Describing a step is not approving it
 
-Skill 可以建议“完成修改后运行检查”，但这句话不等于运行命令的授权。真正的命令仍是一个独立工具请求，要经过自己的参数、计划和权限检查。Skill 也不能直接修改文件、替用户推进计划、产生验证证据，或让子代理继承它的内容。
+A Skill can suggest "run the checks after making the change", but that sentence is not authorization to run a command. The actual command is still a separate tool request and must pass its own argument, plan, and permission checks. A Skill also cannot change files directly, advance the plan for the user, produce verification evidence, or have its content inherited by subagents.
 
-## 实现拆解
+## Implementation Breakdown
 
-项目级目录优先于用户级目录。同名项目 Skill 有效时会覆盖用户级版本；如果项目级同名项格式无效，程序会阻止回退到用户级的同名项，避免读者以为正在用项目里的说明，实际却读到了另一份。
+The project-level directory takes priority over the user-level directory. A valid project Skill with the same name overrides the user-level version; if a project-level item with the same name has an invalid format, the program blocks falling back to the user-level item with that name, so you never believe you are using the project's instructions while actually reading another one.
 
-目录、名称和说明都有格式与大小上限。发现时保存目录和文件身份；读取时会拒绝符号链接、文件替换、编码错误和大小变化。Skill 只在创建 Runtime 时发现，因此编辑文件后需开始新任务才能获得新的目录。
+Directories, names, and descriptions all have format and size limits. Discovery saves the directory and file identity; reading refuses symlinks, file replacement, encoding errors, and size changes. Skills are discovered only when the Runtime is created, so after editing a file you must start a new task to get the new catalog.
 
-Subagent（父 Agent 派出的只读调查实例）没有 Skill 工具、目录提示或正文。父 Agent 的工具、权限和对话也不会传给它。
+Subagents (read-only investigation instances sent out by the parent Agent) have no Skill tool, catalog hints, or bodies. The parent Agent's tools, permissions, and conversation are not passed to them either.
 
-## 为什么这样设计
+## Why This Design
 
-Skill 与 Tool 分开，能把“建议怎么做”和“允许做什么”保留为两件事。把正文放在受保护的 system prompt 中会模糊信任边界；把说明写成自动执行脚本，则可能越过现有工具授权。按需加载也减少了模型每轮都要处理的背景内容。
+Keeping Skills separate from Tools keeps "suggesting how to do it" and "allowing what can be done" as two different things. Putting the body in the protected system prompt would blur the trust boundary; writing the instructions as an automatically run script might bypass existing tool authorization. Loading on demand also reduces the background content the model has to process every round.
 
-固定目录、受限格式和 Runtime 启动时冻结目录，牺牲了热更新与复杂的 Skill 格式，换来稳定、容易检查的读取行为。本版不扫描附属文件，不执行脚本，不支持远程 Skill 或完整 YAML。
+Fixed directories, a restricted format, and freezing the catalog when the Runtime starts give up hot updates and complex Skill formats in exchange for stable, easily checked read behavior. This version does not scan accessory files, does not run scripts, and does not support remote Skills or full YAML.
 
-## 运行与观察
+## Run and Observe
 
-本课版本仓库自带示例 `skills/verify-change/SKILL.md`。先看文件内容：
+The repository at this lesson's version includes the example `skills/verify-change/SKILL.md`. First look at the file content:
 
 ```bash
 sed -n '1,80p' skills/verify-change/SKILL.md
 ```
 
-如果已经配置好本地模型，可以在父 CLI 中明确要求 Agent 读取 `verify-change`。预期现象是：Agent 先请求读取该 Skill，终端出现 `skill` 权限提示；授权后，模型才收到正文。随后若 Agent 请求 `run_shell` 或写文件，仍会出现对应工具自己的授权流程。前后两次授权正说明 Skill 提供的是工作说明，不是操作许可。
+If you have configured a local model, you can explicitly ask the Agent in the parent CLI to read `verify-change`. The expected behavior: the Agent first requests to read the Skill, and the terminal shows a `skill` permission prompt; only after authorization does the model receive the body. If the Agent then requests `run_shell` or a file write, the matching tool's own authorization flow still appears. The two separate authorizations show that a Skill provides working instructions, not operation permission.
 
-## 设计边界
+## Design Boundaries
 
-- 只扫描工作区和用户目录下指定的 `skills` 直属目录，不递归搜索，也不读取 Skill 的附属文件。
-- Skill 简介和正文都是不可信资料：模型可以把它们当作参考信息，但它们不能覆盖用户要求、项目指令、计划或权限规则。
-- Skill 正文进入普通工具历史；开启 `/save` 后它可能保存在会话中。
-- Skill 只提供给父 Agent，不成为验证证据，也不传给 Subagent。
+- Only the direct subdirectories of the designated `skills` directories in the workspace and user directory are scanned; there is no recursive search, and a Skill's accessory files are not read.
+- Skill descriptions and bodies are untrusted material: the model can use them as reference information, but they cannot override user requests, project instructions, the plan, or permission rules.
+- Skill bodies enter ordinary tool history; with `/save` on, they may be saved in the session.
+- Skills are provided only to the parent Agent; they do not become verification evidence and are not passed to Subagents.
 
-## 本版特性、下一课与代码索引
+## Version Features, Next Lesson, and Code Index
 
-v0.45 加入本地 Skill 的发现、简介展示和经授权后的安全读取。下一课会区分 MCP 的三种用途：模型可以请求的 Tool、由应用选择的 Resource，以及由用户预览后提交的 Prompt。
+v0.45 adds discovery of local Skills, display of their descriptions, and safe reading after authorization. The next lesson distinguishes three uses of MCP: Tools the model can request, Resources chosen by the application, and Prompts the user previews and then submits.
 
-固定代码索引：[skills.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.45/src/mini_agent/skills.py)、[tools/skill.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.45/src/mini_agent/tools/skill.py)、[context.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.45/src/mini_agent/context.py)、[permission.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.45/src/mini_agent/permission.py)。
+Pinned code index: [skills.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.45/src/mini_agent/skills.py), [tools/skill.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.45/src/mini_agent/tools/skill.py), [context.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.45/src/mini_agent/context.py), [permission.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.45/src/mini_agent/permission.py).

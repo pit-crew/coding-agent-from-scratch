@@ -1,23 +1,23 @@
-# 主 README 编写规范
+# Main README Authoring Rules
 
-本文件定义中文主 README（`README.md`）的职责；英文说明维护在 `README_EN.md`，两者须保持入口、课程链接、阶段和版本状态一致。
+This file defines the role of the main README (`README.md`). The project keeps one README, in English.
 
-## 角色与边界
+## Role and Boundaries
 
-- `README.md` 是项目总入口：说明项目、当前状态、运行入口、完整学习路径、主要目录、设计约束和文档入口。
-- `docs/tutorials/README.md` 是学习指南：说明前置条件、学习路线、课程阅读方法和版本工作流；课程细节留在各课。
-- `docs/operation/` 是最新版运行手册；`docs/plans/` 记录路线和意图；治理文档记录写作与决策规范。README 只链接它们，不复制其正文。
+- `README.md` is the project entry point: it describes the project, current status, how to run it, the full learning path, main directories, design constraints, and documentation entry points.
+- `docs/tutorials/README.md` is the learning guide: it describes prerequisites, the learning route, how to read lessons, and the version workflow; lesson details stay in each lesson.
+- `docs/operation/` is the manual for the latest version; `docs/plans/` records the roadmap and intent; governance documents record writing and decision rules. The README only links to them and does not copy their content.
 
-## 结构与命名
+## Structure and Naming
 
-- 首屏说明项目是什么、适合谁、当前版本和阅读方式；主体保持快速开始、学习路径、项目结构、设计约束和文档入口。
-- 学习路径按“大阶段 → 版本课程”组织，课程表、教程索引、计划和 CHANGELOG 的版本与链接保持一致。
-- 阶段名和版本主题默认必须使用通俗中文；协议字段、代码标识和公认技术名词可保留英文。若使用不含中文的其他英文主题，必须有明确理由。标题短而具体，避免营销口号和同义重复。
-- 命令必须可复制；配置示例不得包含真实 `BASE_URL`、`API_KEY` 或 `MODEL`。
+- The first screen says what the project is, who it is for, the current version, and how to read it; the body keeps Quick Start, Learning Path, Project Structure, Design Constraints, and Documentation.
+- The learning path is organized as "stage → version lessons"; versions and links in the lesson table, tutorial index, plans, and CHANGELOG must agree.
+- Stage names and version topics must use plain English. Protocol fields, code identifiers, and well-known technical terms may keep their original form. Titles are short and specific; avoid marketing slogans and repeated synonyms.
+- Commands must be copyable; configuration examples must not contain a real `BASE_URL`, `API_KEY`, or `MODEL`.
 
-## 更新与验收
+## Updates and Acceptance
 
-新增版本或调整入口时，检查 `README.md`、`README_EN.md`、`docs/tutorials/README.md`、操作手册和 CHANGELOG 的版本、链接与状态，并运行：
+When you add a version or change an entry point, check versions, links, and status in `README.md`, `docs/tutorials/README.md`, the operation manual, and CHANGELOG, then run:
 
 ```bash
 PYTHONPATH=src python scripts/check_readme.py

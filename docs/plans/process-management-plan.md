@@ -1,106 +1,106 @@
-# 阶段八：进程管理（Process Management）实施计划
+# Stage 8: Process Management Implementation Plan
 
-> 状态：`v0.26`–`v0.29` 已完成（后台启动、观察、控制、管道 stdin 与任务收口）
-> 前置阶段：阶段六可靠执行（`v0.17`–`v0.21`）与阶段七结构化计划（`v0.22`–`v0.25`）
-> 建议版本范围：`v0.26`–`v0.29`；PTY 仍是后续独立评估项
+> Status: `v0.26`–`v0.29` complete (background start, observation, control, pipe stdin, and task finishing)
+> Prerequisite stages: Stage 6 reliable execution (`v0.17`–`v0.21`) and Stage 7 structured planning (`v0.22`–`v0.25`)
+> Suggested version range: `v0.26`–`v0.29`; PTY remains a separate later evaluation item
 
-## 1. 目标与定位
+## 1. Goal and Positioning
 
-当前 `run_shell` 用 `subprocess.run` 等待命令结束，30 秒超时后返回，适合一次性命令。开发服务器、文件监听器和长时间构建无法按这个模型跨 Agent 轮次运行。阶段八要回答一个问题：**Agent 启动的程序没有立即结束时，能否在当前任务中继续工作，并在后续轮次观察和控制它？**
+The current `run_shell` uses `subprocess.run` to wait for a command to finish and returns after a 30-second timeout, which suits one-off commands. Development servers, file watchers, and long builds cannot run across Agent rounds with this model. Stage 8 answers one question: **when a program the Agent started does not finish immediately, can the Agent keep working within the current task and observe and control it in later rounds?**
 
-目标流程：
+Target flow:
 
 ```text
-start_process → 返回任务内 process_id → Agent 继续执行
+start_process → returns an in-task process_id → the Agent keeps working
                     ↓
-             get/read_process → 状态、增量输出、退出码
+             get/read_process → status, incremental output, exit code
                     ↓
-             write_process → read/wait → terminate/kill → 确认退出 → 独立验证或任务收口
+             write_process → read/wait → terminate/kill → confirm exit → independent verification or task finish
 ```
 
-保留 `run_shell` 处理有限时间命令；后台进程使用独立工具和 `ProcessManager`。核心运行时只用 Python 标准库。
+`run_shell` is kept for bounded commands; background processes use separate tools and a `ProcessManager`. The core runtime uses only the Python standard library.
 
-## 2. 范围与非目标
+## 2. Scope and Non-Goals
 
-### 2.1 本阶段范围
+### 2.1 Scope of this stage
 
-- 在当前 CLI 进程、当前任务内启动和管理后台进程；`run_shell` 的同步行为保持不变。
-- 持续排空并有界保存 stdout/stderr；后续轮次按游标读取新增输出、查询状态和最终退出码。
-- 仅对本任务登记的进程执行 terminate、kill 和任务边界清理；在平台支持的范围内清理 shell 派生子进程。
-- 把进程元数据、生命周期事件及其因果引用接入 State、Failure Model、Trace 和完成判定。
-- 为没有新输出的长时间等待提供有界等待与非终态交接，避免反复轮询触发停滞护栏或耗尽轮次。
-- `v0.29` 增加显式启用的管道 stdin 输入；PTY 单独评估后暂不纳入当前核心能力。
+- Start and manage background processes within the current CLI process and current task; the synchronous behavior of `run_shell` stays unchanged.
+- Keep draining stdout/stderr and storing them within bounds; in later rounds, read new output by cursor and query status and the final exit code.
+- Run terminate, kill, and task boundary cleanup only on processes registered by this task; clean up shell-spawned child processes to the extent the platform supports.
+- Connect process metadata, lifecycle events, and their causal references to State, the Failure Model, Trace, and the completion decision.
+- Provide a bounded wait and a non-terminal handoff for long waits with no new output, so repeated polling neither trips the stagnation guard nor exhausts rounds.
+- `v0.29` adds explicitly enabled pipe stdin input; PTY was evaluated separately and is not part of the current core capabilities for now.
 
-### 2.2 本阶段不做
+### 2.2 Not in this stage
 
-- 不做跨进程持久化或重连；CLI 退出后不提供 session resume。
-- 不做定时任务、Docker/通用沙箱、远程进程管理或多 Agent 共享进程。
-- 不提供任意 PID 操作、shell 副作用回滚或“终止进程即可撤销它做过的修改”的承诺。
-- 不做 PTY、交互式 shell、tmux 或持续自动调度；管道 stdin 不提供终端回显、控制字符或终端尺寸语义。
-- 不引入第三方核心运行时依赖，也不让进程声明改变现有工具的授权语义。
+- No cross-process persistence or reconnection; no session resume after the CLI exits.
+- No scheduled tasks, Docker/general sandbox, remote process management, or processes shared by multiple Agents.
+- No arbitrary PID operations, shell side-effect rollback, or promise that "terminating a process undoes the changes it made".
+- No PTY, interactive shell, tmux, or continuous automatic scheduling; pipe stdin provides no terminal echo, control characters, or terminal size semantics.
+- No third-party core runtime dependencies, and process declarations do not change the authorization semantics of existing tools.
 
-## 3. 先确定的设计边界
+## 3. Design Boundaries Fixed First
 
-### D1：进程归 `ProcessManager` 管，State 保存可解释的事实
+### D1: Processes are managed by `ProcessManager`; State stores explainable facts
 
-建议增加 `src/mini_agent/processes.py`：`ProcessManager` 持有 `Popen` 句柄、输出缓冲区、读取位置和 stdin 写入线程；工具层只负责参数、权限和结果转换。Runtime 在 `begin_task` 分配不复用的任务标识，不能只用可能相同的任务文本区分归属。State 保存任务内 `process_id`、所属任务、启动 attempt、generation、状态、启动/结束时间、退出码、有界命令摘要和 stdin 能力/状态；不把 `Popen`、文件描述符、线程或输入正文放进可快照 State。History 仍只承载工具调用协议，裁剪后进程事实依然可见。
+Add `src/mini_agent/processes.py`: `ProcessManager` holds `Popen` handles, output buffers, read positions, and stdin writer threads; the tool layer is only responsible for arguments, permissions, and result conversion. The Runtime assigns a never-reused task identifier in `begin_task`; ownership cannot be distinguished only by task text, which may be identical. State stores the in-task `process_id`, owning task, start attempt, generation, status, start/end time, exit code, a bounded command summary, and stdin capability/status; it never puts `Popen`, file descriptors, threads, or input bodies into the snapshottable State. History still carries only the tool call protocol, so process facts stay visible after trimming.
 
-`process_id` 由 Runtime 分配，不能让模型传入系统 PID 控制任意进程。只接受当前任务注册且仍有效的 ID；未知、过期或跨任务 ID 返回结构化工具错误。状态先保持 `running`、`exited`、`terminated`、`failed` 四类：自然零退出为 `exited`，非预期非零退出为 `failed`，确认主动停止后为 `terminated`。启动失败没有可运行进程，必须记录为启动尝试失败；进程 ID 不复用。
+`process_id` is assigned by the Runtime; the model cannot pass a system PID to control arbitrary processes. Only IDs registered by the current task and still valid are accepted; unknown, expired, or cross-task IDs return a structured tool error. Status first keeps four kinds, `running`, `exited`, `terminated`, and `failed`: a natural zero exit is `exited`, an unexpected nonzero exit is `failed`, and after an active stop is confirmed it is `terminated`. A failed start has no runnable process and must be recorded as a failed start attempt; process IDs are never reused.
 
-### D2：启动时就建立有界输出收集
+### D2: Bounded output collection is set up at start
 
-`Popen` 使用管道时，哪怕模型尚未调用 `read_process`，也必须持续排空 stdout/stderr，否则子进程可能因管道写满而卡住。收集器只维护有界缓冲区，不在后台线程直接改写 State。按流保存单调递增的字节位置；`read_process(process_id, max_chars)` 返回上次成功读取后的新增内容和新位置。缓冲区淘汰旧内容时分别报告 stdout/stderr 的 `output_gap` 与丢失字节数，不假装日志完整。stdout/stderr 分开保留，结果和错误摘要同样有长度上限。
+When `Popen` uses pipes, stdout/stderr must be drained continuously even before the model calls `read_process`; otherwise the child may get stuck on a full pipe. The collectors keep only bounded buffers and do not change State directly from background threads. Monotonically increasing byte positions are kept per stream; `read_process(process_id, max_chars)` returns the new content since the last successful read and the new position. When the buffer evicts old content, `output_gap` and the lost byte count are reported separately for stdout/stderr, without pretending the log is complete. stdout/stderr are kept separately, and results and error summaries also have length limits.
 
-初始资源上限建议为：同一任务最多 4 个活动进程，每个进程每条输出流最多保留 64 KiB，单次工具回复正文最多 8000 字符。按字节读取并增量解码 UTF-8，非法字节以替代字符表示；解码边界不能造成输出重复或吞字。额度应集中配置并进入操作手册，具体值在 `v0.26` 实现时以真实测试冻结。日志是未经信任的工具数据，不能提升为系统指令；State 与 Trace 只保留有界摘要和位置，不复制完整日志。
+The suggested initial resource limits: at most 4 active processes per task, at most 64 KiB kept per output stream per process, and at most 8000 characters of body per tool reply. Read by bytes and decode UTF-8 incrementally, representing invalid bytes with replacement characters; decoding boundaries must not cause repeated or swallowed output. The limits should be configured in one place and documented in the operation manual, with specific values frozen through real tests when `v0.26` is implemented. Logs are untrusted tool data and cannot be promoted to system instructions; State and Trace keep only bounded summaries and positions, not complete logs.
 
-### D3：进程生命周期有独立事实，不能借启动结果宣称完成
+### D3: The process lifecycle has independent facts, and the start result cannot claim completion
 
-`start_process` 经过 PermissionGate 后、调用 handler 前按 `effect_class=possible` 预留 generation。启动成功只证明进程已创建，不证明命令成功；随后观察到的退出码必须作为引用启动 attempt 的独立生命周期事实，且同一次退出只记录一次。非预期的非零退出生成 FailureEvent；失败归属观察时的当前 generation，同时引用启动 attempt，不追溯修改已关闭 generation 的状态。进程随后退出的事实不能伪装成原 `start_process` 工具调用的第二个返回值或第二次 `role=tool` 消息。日志里的 traceback 或 `read_process` 本身不自动构成失败。主动终止与异常退出应区分，进程控制失败不能假装已经清理。启用管道的进程才接受 `write_process`；每次只编码一次 UTF-8 文本且最多 4096 字节，关闭 stdin 使用同一次可能副作用授权。写入最多等待 2 秒，`write_pending` 不能当作已投递，也不能自动重试。
+After `start_process` passes the PermissionGate and before the handler is called, a generation is reserved as `effect_class=possible`. A successful start only proves the process was created, not that the command succeeded; the exit code observed later must be an independent lifecycle fact that references the start attempt, and the same exit is recorded only once. An unexpected nonzero exit produces a FailureEvent; the failure belongs to the current generation at observation time while referencing the start attempt, without retroactively changing the state of closed generations. The fact that the process later exited cannot pose as a second return value or a second `role=tool` message of the original `start_process` tool call. A traceback in the log or `read_process` itself does not automatically constitute a failure. Active termination and abnormal exit should be distinguished, and a failed process control action cannot pretend that cleanup happened. Only processes with pipes enabled accept `write_process`; each write encodes UTF-8 text once with at most 4096 bytes, and closing stdin uses the same possible-side-effect authorization. A write waits at most 2 seconds; `write_pending` cannot be treated as delivered and cannot be retried automatically.
 
-运行中的进程仍可能改变环境。启动时使旧验证失效；从 `v0.26` 起，仍有活动后台进程时不能凭现有证据判定任务完成。进程退出或被终止后，不能复用启动前或运行期间的验证证据完成任务。开发服务器运行期间可以做连通性检查，但检查结果不能单独证明最终环境稳定。观察到最终退出时，Runtime 为退出前仍可能发生的写入开启后继 generation；若先调用 terminate/kill，这些获准的控制动作本身也按 `possible` 预留 generation，不能合并或回退已预留的代。随后需在稳定边界上独立验证。进程状态或日志不充当 verification。
+A running process may still change the environment. Starting it invalidates old verification; from `v0.26` on, while there are active background processes, the task cannot be judged complete on existing evidence. After a process exits or is terminated, verification evidence from before the start or during the run cannot be reused to complete the task. Connectivity checks can be done while a development server runs, but the check results alone cannot prove the final environment is stable. When the final exit is observed, the Runtime opens a successor generation for writes that may have happened before the exit; if terminate/kill was called first, these approved control actions also reserve a generation as `possible`, and already reserved generations cannot be merged or rolled back. Independent verification is then required at a stable boundary. Process status or logs do not serve as verification.
 
-`v0.26` 就实行活动进程的保守完成护栏，并在自然退出被同步时开启后继 generation；`v0.27` 补齐可查询的退出事件和失败记录；`v0.28` 补齐控制动作与最终完成准入；`v0.29` 增加 stdin 写入收束与脱敏边界。开启 generation 的是已登记进程的异步生命周期事实，不是把 `get/read_process` 的 `effect_class=none` 偷偷改成 `possible`。已有的 `run_shell(purpose="verification")` 仍是验证入口，不能与副作用工具同轮，也不能借“进程已启动”或“写入成功”绕过 Repair Loop。已观察到的退出事件若与另一活动失败或 `verification_required` 发生冲突，不替换其 active failure、不悄悄清除验证义务；先保留两个来源并有界阻塞，等待用户决定新的任务路径。这里采用保守规则，不尝试自动合并两个修复流程。
+`v0.26` already enforces the conservative completion guard for active processes and opens a successor generation when a natural exit is synced; `v0.27` completes queryable exit events and failure records; `v0.28` completes control actions and final completion admission; `v0.29` adds the finishing of stdin writes and the redaction boundary. What opens the generation is the asynchronous lifecycle fact of a registered process, not quietly changing the `effect_class=none` of `get/read_process` to `possible`. The existing `run_shell(purpose="verification")` is still the verification entry; it cannot be in the same round as side-effect tools, nor bypass the Repair Loop by "the process has started" or "the write succeeded". If an observed exit event conflicts with another active failure or `verification_required`, it does not replace its active failure or quietly clear the verification obligation; it first keeps both sources and blocks within bounds, waiting for the user to decide the new task path. This uses a conservative rule and does not try to merge two repair flows automatically.
 
-### D4：权限与只读规划边界贯穿所有版本
+### D4: Permission and read-only planning boundaries run through all versions
 
-`start_process` 按命令模式独立授权，不能因为同一命令获准用于 `run_shell` 就自动获准后台运行；终止、强制杀死和写入 stdin 各有工具准入。`get/read/list` 只观察本任务已登记进程；`start/terminate/kill/write` 均为可能有副作用的动作，经过现有计划阶段与执行器双层准入。`exploring` 和 `--plan` 的只读边界不能被后台启动或 stdin 写入绕过；计划批准也不代替工具授权。写入授权提示只显示进程 ID、字节数和关闭标志，不显示正文。
+`start_process` is authorized separately by command pattern; it is not automatically approved for background running just because the same command was approved for `run_shell`; termination, forced kill, and stdin writes each have their own tool admission. `get/read/list` only observe processes registered by this task; `start/terminate/kill/write` are all actions that may have side effects and go through the existing two-layer admission of the plan phase and the executor. The read-only boundaries of `exploring` and `--plan` cannot be bypassed by background starts or stdin writes; plan approval does not replace tool authorization either. The write authorization prompt shows only the process ID, the byte count, and the close flag, never the body.
 
-现有 PermissionGate 只对 `run_shell` 提取命令模式，新增 `start_process` 时必须显式提取其 `command` 并配置独立规则；遗漏规则会退回默认 `ask`，不能继承 `run_shell` 的 `allow`。`cwd` 在启动前解析和校验；它只是工作目录，不提供文件系统隔离。内部 `cleanup()` 是已授权启动动作的资源收尾，只能作用于本任务登记的进程，不是模型可用的权限捷径。任何被拒绝的 tool call 仍需收到对应结果，且不启动进程、不预留 generation。
+The existing PermissionGate extracts a command pattern only for `run_shell`; when `start_process` is added, its `command` must be extracted explicitly and given separate rules; a missing rule falls back to the default `ask` and cannot inherit `run_shell`'s `allow`. `cwd` is resolved and validated before start; it is only a working directory and provides no file system isolation. The internal `cleanup()` is resource cleanup for authorized start actions; it can act only on processes registered by this task and is not a permission shortcut the model can use. Every refused tool call must still receive its matching result, without starting a process or reserving a generation.
 
-### D5：任务和 CLI 边界都要清理
+### D5: Both task and CLI boundaries must clean up
 
-从 `v0.26` 起就提供内部 `cleanup()`：退出 CLI、`/new`、`/reset` 或异常离开任务时，对本任务仍运行的进程先请求正常终止，有界等待后强制结束，并记录清理结果。正常工具调用只控制 `ProcessManager` 登记的进程；POSIX 平台优先使用进程组清理 shell 子进程。Windows 标准库对任意子进程树的控制能力有限，应明确实际支持的清理范围；无法确认子进程已结束时报告清理不完整，不能宣称完全清理。进程崩溃或断电后的自动清理不在本阶段保证内。
+From `v0.26`, an internal `cleanup()` is provided: when exiting the CLI, on `/new` or `/reset`, or when leaving a task abnormally, it first requests normal termination of this task's still-running processes, waits within bounds, then forces them to end, and records the cleanup result. Normal tool calls control only processes registered in `ProcessManager`; POSIX platforms prefer process group cleanup of shell children. The Windows standard library has limited control over arbitrary child process trees, so the actually supported cleanup scope should be stated explicitly; when it cannot be confirmed that children have ended, report incomplete cleanup and never claim full cleanup. Automatic cleanup after a process crash or power loss is not guaranteed in this stage.
 
-清理必须先于 `AgentState.begin_task/reset_task` 清空旧任务事实；否则会丢失 process ID 与任务归属。清理失败应在旧任务留下可见结果，CLI 也应提示用户，不能静默宣称无遗留。输出收集线程、stdin 写入线程、管道与 `Popen` 句柄都要在退出后有界回收；写入仍在途且无法确认回收时保留旧任务和登记信息。
+Cleanup must happen before `AgentState.begin_task/reset_task` clears the old task facts; otherwise the process IDs and task ownership are lost. A cleanup failure should leave a visible result in the old task, and the CLI should also prompt the user; it must never silently claim nothing was left behind. Output collector threads, stdin writer threads, pipes, and `Popen` handles must all be reclaimed within bounds after exit; when a write is still in flight and its reclamation cannot be confirmed, keep the old task and registration information.
 
-### D6：长时间无输出是等待，不是进展
+### D6: A long time without output is waiting, not progress
 
-`get_process` 和 `read_process` 反复得到相同状态或空日志，不产生新的调查事实，也不能靠时间流逝清零阶段七的停滞计数。`v0.26` 起，当模型在有活动进程的任务中暂停并输出无工具调用文本时，Runtime 可用 `awaiting_process` 非终态交回 CLI，显示进程 ID 和继续方式，不把它判成 `done` 或立刻耗尽完成提醒。其他未满足的计划/修复义务仍需在交接中说明，不能由这个状态消除。`v0.27` 增加有上限的 `wait_process(process_id, timeout_ms)`，在退出或出现新输出时返回；达到等待上限而进程仍运行时，也进入同一交接。`v0.29` 中写入仍在途时同样不能完成任务，必须先用状态查询观察写入最终收束。下一次用户输入可恢复原任务并再次观察；这不算 `blocked` 或 `FailureEvent`，也不自动调用 LLM。等待时长有单次上限，不能无限占住一轮工具调用。
+When `get_process` and `read_process` repeatedly get the same status or an empty log, no new investigation facts are produced, and the stagnation count of Stage 7 cannot be reset by the passage of time. From `v0.26`, when the model pauses and outputs text without tool calls in a task with active processes, the Runtime can hand back to the CLI with the non-terminal state `awaiting_process`, showing the process ID and how to continue, without judging it `done` or exhausting the completion reminder immediately. Other unmet plan/repair obligations must still be stated in the handoff and cannot be cleared by this state. `v0.27` adds a bounded `wait_process(process_id, timeout_ms)` that returns on exit or new output; when the wait limit is reached and the process is still running, it enters the same handoff. In `v0.29`, a write that is still in flight also blocks completion, and its final finishing must first be observed with a status query. The next user input can resume the original task and observe again; this is not `blocked` or a `FailureEvent`, and the LLM is not called automatically. Waits have a per-call limit and cannot hold a tool call round forever.
 
-等待交接必须是显式 Runtime 状态，而非模型凭一段“还在运行”文本绕过 completion reminder。进程运行期间不自动重启 LLM；如果进程在用户回来前退出，下一次进入任务时先同步其状态并记录一次退出事实。`MAX_ITERATIONS` 继续保护单次 agent loop，不作为后台进程的运行时长上限。
+The waiting handoff must be an explicit Runtime state, not something the model gets around the completion reminder with by writing "still running". The LLM is not restarted automatically while the process runs; if the process exits before the user comes back, its status is synced first the next time the task is entered, and one exit fact is recorded. `MAX_ITERATIONS` keeps protecting a single agent loop and is not used as a runtime limit for background processes.
 
-### D7：状态读取是只读，状态转移由 Runtime 提交
+### D7: Status reads are read-only; state transitions are committed by the Runtime
 
-后台收集器只维护原始进程句柄和有界输出缓冲；进程退出、日志游标提交、FailureEvent 和 generation 更新由前台 Runtime 在 `get/read/list/wait`、用户继续任务和完成判定前的安全点统一提交。`poll()` 不能因两次查询给同一进程创建两个退出事件。只读观察工具可获取已登记进程的事实，但不能靠 `read_process` 清除失败、推进计划步骤或产出验证证据。
+Background collectors maintain only the raw process handles and bounded output buffers; process exits, log cursor commits, FailureEvents, and generation updates are committed together by the foreground Runtime at safe points: `get/read/list/wait`, the user continuing the task, and before the completion decision. `poll()` must not create two exit events for the same process from two queries. Read-only observation tools can obtain facts about registered processes, but `read_process` cannot clear failures, advance plan steps, or produce verification evidence.
 
-前台同步时要先提交进程生命周期变化，再向模型组装可见状态。若一次 assistant 回复同时包含多个只读观察工具，仍遵守现有“每个 call 一个结果、全部回灌后再下一轮”的协议；对同一进程的游标读取要串行化，避免并发读取重复或跳过输出。可以把读取游标改为调用方提供的显式位置，或由 Manager 锁保证同一任务的顺序，实施时选一种并写测试。
+During foreground sync, process lifecycle changes are committed first, then the visible state is assembled for the model. If one assistant reply contains several read-only observation tools, it still follows the existing protocol "one result per call, the next round only after all are fed back"; cursor reads on the same process must be serialized, to avoid duplicated or skipped output. Either make the read cursor an explicit position provided by the caller, or have the Manager lock guarantee order within the same task; pick one at implementation and write tests.
 
-## 4. 工具协议与状态模型
+## 4. Tool Protocol and State Model
 
-### 4.1 模型可见工具
+### 4.1 Model-visible tools
 
-| 工具 | 首次版本 | 关键参数 | 结果与副作用 |
+| Tool | First version | Key arguments | Result and side effects |
 |---|---|---|---|
-| `start_process` | `v0.26`（`stdin_mode` 于 `v0.29` 增加） | `command: str`, `cwd?: str`, `stdin_mode?: "closed" / "pipe"` | 通过授权后启动；返回 `process_id`、诊断用 PID、状态、stdin 能力和启动 attempt；`possible`。 |
-| `get_process` | `v0.27` | `process_id: str` | 返回当前状态、退出码和输出位置，不消费日志；`none`。 |
-| `read_process` | `v0.27` | `process_id: str`, `max_chars?: int` | 分别返回 stdout/stderr 新增片段、下一位置及缺口；`none`。 |
-| `list_processes` | `v0.27` | 无 | 仅列当前任务登记的有界元数据，不含日志正文；`none`。 |
-| `wait_process` | `v0.27` | `process_id: str`, `timeout_ms?: int` | 有界等待新输出或退出；超时返回 `still_running`，可交回 CLI；`none`。 |
-| `terminate_process` | `v0.28` | `process_id: str` | 请求正常退出并有界确认；未退出则明确报告仍在运行；`possible`。 |
-| `kill_process` | `v0.28` | `process_id: str` | 强制结束并确认结果；`possible`。 |
-| `write_process` | `v0.29` | `process_id: str`, `input: str`, `close_stdin?: bool` | 向显式开启管道的进程写入最多 4096 字节 UTF-8 文本；可单独发送 EOF；`possible`，默认 `ask`，不得用来提交 verification。 |
+| `start_process` | `v0.26` (`stdin_mode` added in `v0.29`) | `command: str`, `cwd?: str`, `stdin_mode?: "closed" / "pipe"` | Starts after authorization; returns `process_id`, the diagnostic PID, status, stdin capability, and the start attempt; `possible`. |
+| `get_process` | `v0.27` | `process_id: str` | Returns the current status, exit code, and output positions without consuming logs; `none`. |
+| `read_process` | `v0.27` | `process_id: str`, `max_chars?: int` | Returns new stdout/stderr fragments separately, the next positions, and gaps; `none`. |
+| `list_processes` | `v0.27` | None | Lists only bounded metadata registered by the current task, without log bodies; `none`. |
+| `wait_process` | `v0.27` | `process_id: str`, `timeout_ms?: int` | Waits within bounds for new output or exit; on timeout returns `still_running` and can hand back to the CLI; `none`. |
+| `terminate_process` | `v0.28` | `process_id: str` | Requests a normal exit and confirms within bounds; reports explicitly if it is still running; `possible`. |
+| `kill_process` | `v0.28` | `process_id: str` | Forces an end and confirms the result; `possible`. |
+| `write_process` | `v0.29` | `process_id: str`, `input: str`, `close_stdin?: bool` | Writes at most 4096 bytes of UTF-8 text to a process with an explicitly opened pipe; can send EOF alone; `possible`, default `ask`, must not be used to submit verification. |
 
-模型只获得已发布版本的工具 schema。工具结果使用结构化、长度受限的 JSON；非零进程退出不能靠解析日志文字或沿用 `run_shell` 的 `[exit=N]` 字符串规则判断。示例：
+The model gets only the tool schemas of released versions. Tool results use structured, length-limited JSON; a nonzero process exit cannot be judged by parsing log text or by reusing `run_shell`'s `[exit=N]` string rule. Examples:
 
 ```json
 {"process_id":"proc-1","pid":12345,"status":"running","start_attempt_id":"a-3"}
@@ -110,166 +110,166 @@ start_process → 返回任务内 process_id → Agent 继续执行
 {"process_id":"proc-1","status":"running","stdout":"ready\n","stderr":"","next_stdout_offset":6,"next_stderr_offset":0,"output_gap":false}
 ```
 
-`pid` 仅供诊断显示，不作为任何控制工具的参数。启动使用与当前 `run_shell` 一致的命令字符串语义；`stdin_mode` 默认是 `closed`，只有显式设为 `pipe` 的进程可写入。`write_process` 的单次文本先编码为 UTF-8，再检查 4096 字节上限；空输入只在 `close_stdin=true` 时允许，写入线程最多在工具回合等待 2 秒，`write_pending` 必须通过后续 `get_process` 或 `wait_process` 观察。管道只提供文本字节流，不提供 PTY 的回显、控制字符或终端尺寸语义。`wait_process` 只报告有新输出可读或进程已退出，不消费读取游标；单次等待建议不超过 30 秒，超时不是工具失败或进程失败。
+`pid` is only for diagnostic display and is not an argument of any control tool. Starting uses the same command string semantics as the current `run_shell`; `stdin_mode` defaults to `closed`, and only processes explicitly set to `pipe` can be written to. A single `write_process` text is first encoded as UTF-8 and then checked against the 4096-byte limit; empty input is allowed only with `close_stdin=true`, the writer thread waits at most 2 seconds in the tool round, and `write_pending` must be observed through a later `get_process` or `wait_process`. A pipe provides only a text byte stream, without PTY echo, control characters, or terminal size semantics. `wait_process` only reports that new output is readable or the process has exited and does not consume the read cursor; a single wait should not exceed 30 seconds, and a timeout is neither a tool failure nor a process failure.
 
-### 4.2 Runtime 记录
+### 4.2 Runtime records
 
 ```text
-ProcessRecord                         # State 中可快照的当前投影
+ProcessRecord                         # snapshottable current projection in State
 - process_id, task_id
 - start_attempt_id, start_generation_id
 - command_summary, cwd_summary, pid
 - status: running | exited | terminated | failed
 - started_at, ended_at?, exit_code?
-- stdout_offset, stderr_offset        # 只保存位置，不保存日志全文
+- stdout_offset, stderr_offset        # only positions, never the full log
 - stdin_mode, stdin_state, write_pending, stdin_error
 - terminal_event_id?
 
-ProcessEvent                          # append-only 生命周期事实
+ProcessEvent                          # append-only lifecycle facts
 - event_id, process_id, kind: started | exited | terminated | killed | cleanup_failed
 - generation_id, start_attempt_id
 - caused_by_control_attempt_id?, exit_code?, reason?
 
-ProcessWaitState                      # 仅在等待交接期间存在
+ProcessWaitState                      # exists only during the waiting handoff
 - process_id, reason: no_new_output | still_running
 - last_observed_event_id?, last_stdout_offset, last_stderr_offset
 
-ProcessManager 私有运行态
-- process_id -> Popen / 进程组标识 / 收集器
-- stdout/stderr 有界缓冲、总字节位置、读取游标和同步锁
-- stdin 状态、串行写入锁、至多一个在途写入和有界回收线程
+ProcessManager private runtime state
+- process_id -> Popen / process group identifier / collectors
+- bounded stdout/stderr buffers, total byte positions, read cursors, and sync locks
+- stdin state, a serial write lock, at most one in-flight write, and a bounded reclaim thread
 ```
 
-State 只允许 Runtime 写入 `ProcessRecord`、`ProcessEvent` 和等待状态；模型不能提供状态、退出码、FailureEvent 或 generation。启动 attempt 继续由 Executor 记录；进程退出是新的 Runtime 事实，不创建伪造的工具调用。Trace 只消费 State 的 append-only 事件和公开快照，不能在回放时重新 `poll()`、读管道、发信号或调用 PermissionGate。
+Only the Runtime can write `ProcessRecord`, `ProcessEvent`, and the waiting state to State; the model cannot provide a status, exit code, FailureEvent, or generation. Start attempts are still recorded by the Executor; a process exit is a new Runtime fact and creates no forged tool call. Trace consumes only State's append-only events and the public snapshot, and cannot `poll()` again, read pipes, send signals, or call the PermissionGate during replay.
 
-不变量：同一任务的 `process_id` 唯一；每个成功启动恰有一个 `started` 事件，每个进程至多一个最终退出事件；最终退出必须引用存在的启动 attempt；只有 `stdin_mode=pipe` 且进程仍可写时才接受 stdin；只有确认退出后才能标记 `terminated`；读游标单调递增，日志缺口不能隐去；旧任务 ID 不可用于新任务；有活动进程、在途 stdin 写入或待验证 generation 时不得判定 `done`。输入正文不进入 State、Trace、工具结果、授权提示或终端输出。
+Invariants: `process_id` is unique within a task; each successful start has exactly one `started` event, and each process has at most one final exit event; the final exit must reference an existing start attempt; stdin is accepted only when `stdin_mode=pipe` and the process is still writable; `terminated` can be marked only after the exit is confirmed; read cursors increase monotonically, and log gaps cannot be hidden; old task IDs cannot be used for new tasks; `done` must not be decided while there are active processes, in-flight stdin writes, or a generation awaiting verification. Input bodies never enter State, Trace, tool results, authorization prompts, or terminal output.
 
-## 5. 版本切片
+## 5. Version Slices
 
-### 5.1 `v0.26` Background Process（已完成）
+### 5.1 `v0.26` Background Process (complete)
 
-目标：建立最小的非阻塞进程生命周期。此版允许 Agent 启动后继续执行其他工具；观察和显式控制留给后续版本。
+Goal: establish a minimal non-blocking process lifecycle. This version lets the Agent keep running other tools after a start; observation and explicit control are left to later versions.
 
-已完成工作：
+Completed work:
 
-1. 新增 `ProcessManager`、任务内 ID 分配、`Popen` 启动与当前任务注册；设置独立进程组或平台对应的最小控制边界。
-2. 新增 `start_process` 工具和独立命令模式权限；在 handler 前按 `possible` 预留 generation。启动失败保留原失败结果与 generation，不生成成功 ProcessRecord。
-3. 从启动时就分别排空 stdout/stderr，维持固定内存上限；stdin 暂时关闭。
-4. 在 State 加入最小 `ProcessRecord` 投影；上下文注入当前任务的 ID、状态和有界摘要，让历史裁剪不丢失进程事实。
-5. 在工具回合和完成判断前同步自然退出，记录最小最终事件，开启后继 generation 并要求重新验证；活动进程阻止错误 `done`，模型暂停时可用 `awaiting_process` 交回 CLI。
-6. CLI 主循环用 `finally` 清理进程；`/new`、`/reset` 在 State 重置前清理旧任务。清理先 terminate、有限等待后 kill，并报告失败。
+1. Added `ProcessManager`, in-task ID allocation, `Popen` start, and current-task registration; set up a separate process group or the platform's equivalent minimal control boundary.
+2. Added the `start_process` tool with separate command pattern permissions; a generation is reserved as `possible` before the handler. A failed start keeps the original failure result and generation and produces no successful ProcessRecord.
+3. stdout/stderr are drained separately from the start, keeping a fixed memory limit; stdin is closed for now.
+4. Added a minimal `ProcessRecord` projection to State; the context injects the current task's IDs, status, and bounded summaries, so history trimming does not lose process facts.
+5. Natural exits are synced in tool rounds and before the completion decision, recording a minimal final event, opening a successor generation, and requiring verification again; active processes block a wrong `done`, and when the model pauses, `awaiting_process` can hand back to the CLI.
+6. The CLI main loop cleans up processes in `finally`; `/new` and `/reset` clean up the old task before State is reset. Cleanup terminates first, waits a bounded time, then kills, and reports failures.
 
-验收重点已覆盖：启动服务立即返回，下一工具回合可以继续；日志再多也不会堵住管道；退出和切换任务执行有界清理并报告遗留风险；简单 `run_shell` 仍按原有超时与返回协议工作。观察工具、主动控制和自然非零退出对应的 `FailureEvent` 留给后续版本。
+Covered acceptance focus: starting a service returns immediately, and the next tool round can continue; no amount of logging blocks the pipe; exits and task switches run bounded cleanup and report leftover risk; a simple `run_shell` still works with its original timeout and return protocol. Observation tools, active control, and the `FailureEvent` for natural nonzero exits are left to later versions.
 
-### 5.2 `v0.27` Process Observation（已完成）
+### 5.2 `v0.27` Process Observation (complete)
 
-目标：跨轮次获得进程的真实状态、增量输出和最终退出码，不让轮询消耗无意义的 Agent 回合。
+Goal: get the real status, incremental output, and final exit code of a process across rounds, without polling consuming meaningless Agent rounds.
 
-主要工作：
+Main work:
 
-1. 新增 `get_process`、`read_process`、`list_processes` 和有界 `wait_process`；同一进程的游标读取按调用顺序提交。
-2. 输出位置按字节计数，分别保留 stdout/stderr；处理 UTF-8 跨块、输出截断、空输出、已退出后仍有尾部输出和缓冲淘汰造成的缺口。
-3. 扩充 `ProcessEvent` 的可查询元数据和幂等退出同步；自然非零退出生成引用启动 attempt 的 FailureEvent，且不把观察工具本身判为失败。
-4. 将新状态、新日志与重复空结果交给阶段七停滞护栏区分；无变化的轮询不算新事实。`wait_process` 超时进入 `awaiting_process` 交接，下一次用户输入先同步进程再继续原任务。
-5. 将可读的进程事实加入 Structured State 和 Trace；日志正文仅随本次工具结果有界回灌，不放入长期 State。
+1. Add `get_process`, `read_process`, `list_processes`, and a bounded `wait_process`; cursor reads on the same process are committed in call order.
+2. Output positions count bytes and keep stdout/stderr separately; handle UTF-8 split across chunks, output truncation, empty output, trailing output after exit, and gaps caused by buffer eviction.
+3. Extend the queryable metadata of `ProcessEvent` and idempotent exit sync; a natural nonzero exit produces a FailureEvent that references the start attempt, and observation tools themselves are never judged as failures.
+4. Hand new status, new logs, and repeated empty results to the Stage 7 stagnation guard to tell apart; unchanged polling does not count as new facts. A `wait_process` timeout enters the `awaiting_process` handoff, and the next user input syncs the process first and then continues the original task.
+5. Add readable process facts to Structured State and Trace; log bodies are fed back within bounds only with this tool result and are not put into long-term State.
 
-验收重点：两次读取无重复、日志丢失有缺口标记、自然退出仅记一次；长时间无输出能等待并交回 CLI，不被误判为任务完成或异常失败。
+Acceptance focus: two reads have no duplicates, lost logs have gap markers, and a natural exit is recorded only once; a long time without output can wait and hand back to the CLI without being misjudged as task completion or an abnormal failure.
 
 ### 5.3 `v0.28` Process Control
 
-目标：让 Agent 可以有授权地结束自己启动的程序，并使整个任务按现有执行与验证合同收口。
+Goal: let the Agent end programs it started, with authorization, so that the whole task finishes under the existing execution and verification contracts.
 
-主要工作：
+Main work:
 
-1. 新增 `terminate_process` 与 `kill_process`；两者先按 ID 确认当前任务所有权，再经各自 PermissionGate 准入，获准时按 `possible` 预留 generation。
-2. `terminate` 发送正常终止请求并有界等待，超过等待期返回 `still_running`；`kill` 强制结束并确认。确认前不得把状态写成 `terminated`。
-3. 对 shell 派生子进程实现平台可保证的清理；无法确认清理完整时报告限制或失败，终止失败和权限拒绝不得影响其他进程。
-4. 显式控制、自然退出和内部 cleanup 各留独立原因；内部 cleanup 在任务边界执行，不伪造模型 tool call。
-5. 完成活动进程、退出后新 generation、独立 verification、Repair Loop、Plan Mode 和最终 `done` 的组合规则；Trace 可回放启动—观察—控制—验证链及损坏引用。
+1. Add `terminate_process` and `kill_process`; both first confirm current task ownership by ID, then go through their own PermissionGate admission, and reserve a generation as `possible` when approved.
+2. `terminate` sends a normal termination request and waits within bounds, returning `still_running` after the waiting period; `kill` forces an end and confirms. Status must not be written as `terminated` before confirmation.
+3. Implement the cleanup of shell-spawned children the platform can guarantee; when complete cleanup cannot be confirmed, report the limitation or failure, and termination failures and permission denials must not affect other processes.
+4. Explicit control, natural exit, and internal cleanup each keep their own reason; internal cleanup runs at task boundaries and does not forge model tool calls.
+5. Complete the combination rules of active processes, the new generation after exit, independent verification, the Repair Loop, Plan Mode, and the final `done`; Trace can replay the start—observe—control—verify chain and corrupted references.
 
-验收重点：正常退出、拒绝终止、终止后仍运行、强制结束和控制失败都有可区分结果；清理后再独立验证才能完成，旧证据不会跨代复用。
+Acceptance focus: normal exit, refused termination, still running after termination, forced kill, and control failure all have distinguishable results; only independent verification after cleanup can complete the task, and old evidence is never reused across generations.
 
-### 5.4 `v0.29` Interactive Process（已完成）
+### 5.4 `v0.29` Interactive Process (complete)
 
-目标：支持需要少量 stdin 的命令，同时保持阶段八的任务归属、授权、脱敏、清理和独立验证边界。
+Goal: support commands that need a small amount of stdin while keeping Stage 8's task ownership, authorization, redaction, cleanup, and independent verification boundaries.
 
-主要工作：
+Main work:
 
-1. `start_process(command, cwd?, stdin_mode?)` 默认使用 `closed`；只有显式选择 `pipe` 的进程才保留可写 stdin。新增 `write_process(process_id, input, close_stdin?)`，输入只接受 UTF-8 文本，单次编码后最多 4096 字节；空输入只能配合 `close_stdin=true` 发送 EOF。
-2. 写入与关闭共用默认 `ask` 的 `possible` 权限检查。每个进程有串行写入锁和至多一个在途写入，专用线程最多等待 2 秒；`written`、`closed`、`write_pending` 和管道错误均返回结构化状态，输入正文不进入 State、Trace、工具结果、授权提示或终端输出。
-3. 写入后继续用 `read_process` 或 `wait_process` 观察输出；写入不构成 verification。进程退出、控制和任务边界清理都会有界回收写入线程；无法确认回收时保留旧任务登记，且活动或在途写入阻止 `done`。
-4. 评估 PTY 后暂不实现。管道不能表达终端回显、控制字符、终端尺寸、交互式 shell 语义，也不承诺跨平台终端行为；这些能力需要独立协议、清理和测试后再决定。
+1. `start_process(command, cwd?, stdin_mode?)` defaults to `closed`; only processes that explicitly choose `pipe` keep a writable stdin. Add `write_process(process_id, input, close_stdin?)`, where input accepts only UTF-8 text with at most 4096 bytes after encoding; empty input can only send EOF together with `close_stdin=true`.
+2. Writing and closing share the `possible` permission check with default `ask`. Each process has a serial write lock and at most one in-flight write, with a dedicated thread waiting at most 2 seconds; `written`, `closed`, `write_pending`, and pipe errors all return structured status, and input bodies never enter State, Trace, tool results, authorization prompts, or terminal output.
+3. After writing, keep observing output with `read_process` or `wait_process`; a write does not constitute verification. Process exit, control, and task boundary cleanup all reclaim writer threads within bounds; when reclamation cannot be confirmed, the old task registration is kept, and active processes or in-flight writes block `done`.
+4. PTY was evaluated and is not implemented for now. Pipes cannot express terminal echo, control characters, terminal size, or interactive shell semantics, and make no promise of cross-platform terminal behavior; these capabilities need a separate protocol, cleanup, and tests before a decision.
 
-验收重点：等待一行文本的简单子进程可被驱动并在 EOF 后正常退出；输入不会出现在审计摘要；不支持的 PTY 场景有明确能力边界。
+Acceptance focus: a simple child process waiting for one line of text can be driven and exits normally after EOF; input never appears in audit summaries; unsupported PTY scenarios have explicit capability boundaries.
 
-## 6. 与现有状态机的组合
+## 6. Composition with the Existing State Machine
 
-进程生命周期与 Planning State、Repair Loop 正交，不新增独立 Planner 或取代原有任务状态。准入按现有规则取更严格的一侧：
+The process lifecycle is orthogonal to Planning State and the Repair Loop; it adds no separate Planner and does not replace the existing task state. Admission takes the stricter side under the existing rules:
 
-| 当前状态 | 允许的进程动作 | 关键限制 |
+| Current state | Allowed process actions | Key limits |
 |---|---|---|
-| `direct/executing` + `idle` | 按权限启动、观察、控制；可单独验证 | 活动进程阻止最终完成，退出后需要新验证。 |
-| `exploring` | 仅观察已登记进程的状态和输出 | 不允许启动、终止、强制结束、写入 stdin 或 verification。 |
-| `awaiting_approval` | CLI 等待用户决定；内部可同步事实和清理 | 模型工具调用继续被拒绝；批准计划不自动授权启动。 |
-| `diagnosis_required` | 只读观察用于诊断 | 控制动作必须走现有受限恢复入口或由用户明确决定；不能以终止工具绕过 Repair Loop。 |
-| `verification_required` | 下一模型工具回合仍为独占 `run_shell(purpose="verification")` | 若期间出现新的进程退出冲突事实，保守阻塞并保留原失败和验证义务。 |
-| `awaiting_process` | CLI 等待用户下一次输入 | 保持原任务与计划，恢复前先同步进程；不自动调用 LLM。 |
+| `direct/executing` + `idle` | Start, observe, and control per permissions; verify separately | Active processes block final completion; new verification is needed after exit. |
+| `exploring` | Only observe the status and output of registered processes | No start, terminate, forced kill, stdin write, or verification. |
+| `awaiting_approval` | The CLI waits for the user's decision; internally facts can be synced and cleaned up | Model tool calls keep being refused; approving the plan does not authorize starts automatically. |
+| `diagnosis_required` | Read-only observation for diagnosis | Control actions must go through the existing restricted recovery entries or an explicit user decision; termination tools cannot bypass the Repair Loop. |
+| `verification_required` | The next model tool round is still an exclusive `run_shell(purpose="verification")` | If a new conflicting process exit fact appears in the meantime, block conservatively and keep the original failure and verification obligation. |
+| `awaiting_process` | The CLI waits for the user's next input | Keep the original task and plan; sync processes before resuming; no automatic LLM call. |
 
-控制工具与 RecoveryAction 的关系在 `v0.28` 必须明确：诊断中的进程终止若是修复的一部分，先通过现有 `recover` 或 `request_replan` 建立合法因果入口；不能直接放开新的 `possible` 工具。它不取消单轮全工具结果回灌、独立 verification 或 PermissionGate。
+The relationship between control tools and RecoveryActions must be explicit in `v0.28`: if terminating a process during diagnosis is part of a repair, a legal causal entry must first be established through the existing `recover` or `request_replan`; new `possible` tools cannot simply be opened. It does not cancel feeding back every tool result per round, independent verification, or the PermissionGate.
 
-## 7. 测试与验收
+## 7. Tests and Acceptance
 
-### 7.1 单元与集成测试
+### 7.1 Unit and integration tests
 
-- **启动与授权**：启动返回快而非等到退出；权限拒绝、非法参数、无效 cwd 和超过并发上限时不创建进程；获准启动才预留 generation。
-- **输出**：高频 stdout/stderr 不阻塞；多字节字符跨块、空输出、超长日志、缺口标记和重复读取均按字节位置正确；日志不进入 State 全量快照。
-- **状态**：自然零退出、非零退出、退出码与启动 attempt 关联；多次查询不重复记录退出或 FailureEvent；多个进程互不串游标。
-- **等待**：有新输出、进程退出、等待超时分别返回明确结果；超时交接不计作成功进展、失败或终态，下一次用户输入恢复原任务。
-- **控制**：仅能控制当前任务 ID；TERM、KILL、超时未退出、进程已退出、拒绝与控制失败都不伪造状态；清理管道和收集线程。
-- **状态机**：Explore、待批准计划与诊断/验证阶段均执行正确准入；启动与控制后 generation、验证隔离、完成提醒和停滞护栏保持原约束。
-- **协议与回放**：同轮多个工具调用各有一个 `role=tool` 结果；Trace 只读、引用完整，损坏或跨任务进程事件标记不完整。
+- **Start and authorization**: starts return quickly instead of waiting for exit; permission denials, invalid arguments, invalid cwd, and exceeding the concurrency limit create no process; only approved starts reserve a generation.
+- **Output**: high-frequency stdout/stderr does not block; multi-byte characters split across chunks, empty output, very long logs, gap markers, and repeated reads are all correct by byte position; logs do not enter the full State snapshot.
+- **Status**: natural zero exit, nonzero exit, and the link between exit code and start attempt; repeated queries never record an exit or FailureEvent twice; cursors of several processes do not mix.
+- **Waiting**: new output, process exit, and wait timeout each return an explicit result; a timeout handoff counts as neither successful progress, failure, nor a terminal state, and the next user input resumes the original task.
+- **Control**: only IDs of the current task can be controlled; TERM, KILL, still running after timeout, already exited, refusal, and control failure never forge states; pipes and collector threads are cleaned up.
+- **State machine**: Explore, plans awaiting approval, and diagnosis/verification phases all enforce correct admission; after start and control, generations, verification isolation, the completion reminder, and the stagnation guard keep their original constraints.
+- **Protocol and replay**: several tool calls in one round each get one `role=tool` result; Trace is read-only with complete references, and corrupted or cross-task process events are marked incomplete.
 
-测试用标准库启动短生命周期脚本与本地 HTTP 服务，避免依赖外部包或固定端口。平台差异用能力检测与显式跳过处理，不能把“当前机器能杀外层 shell”当作对子进程清理的证明。
+Tests use the standard library to start short-lived scripts and a local HTTP service, avoiding external packages or fixed ports. Platform differences are handled with capability detection and explicit skips; "the current machine can kill the outer shell" must not be taken as proof that child processes are cleaned up.
 
-### 7.2 阶段级 E2E
+### 7.2 Stage-level E2E
 
-1. 启动本地 HTTP 服务，立即拿到 `process_id`；Agent 执行其他工具，后续读取就绪输出并检查响应，终止服务，确认退出，再完成独立验证。
-2. 启动两秒后非零退出的进程；后续查询得到退出码、唯一 FailureEvent 和完整启动因果引用，模型按现有诊断或重规划路径处理。
-3. 启动持续输出的进程；多次增量读取不重复、不无限涨内存；缓冲淘汰后返回明确 `output_gap`。
-4. 启动长时间无输出的进程；有界等待后交回 CLI，用户继续时仍可观察原进程，不因为空轮询被标记 `done` 或耗尽 Agent 轮次。
-5. 进程仍运行时尝试最终回复；Runtime 不接受完成。停止进程后旧验证仍无效，新的独立验证才允许收口。
-6. `/new`、`/reset`、EOF/正常退出及异常路径均清理当前任务可控制的进程；旧 ID 对新任务无效，且不误伤外部 PID。平台无法确认子进程清理时明确报告。
+1. Start a local HTTP service and get a `process_id` immediately; the Agent runs other tools, later reads the ready output and checks a response, terminates the service, confirms the exit, and then completes independent verification.
+2. Start a process that exits nonzero after two seconds; later queries get the exit code, a single FailureEvent, and the complete start causal reference, and the model handles it along the existing diagnosis or replanning path.
+3. Start a process with continuous output; repeated incremental reads have no duplicates and do not grow memory without bound; after buffer eviction, an explicit `output_gap` is returned.
+4. Start a process with no output for a long time; after a bounded wait it hands back to the CLI, and when the user continues, the original process can still be observed, without being marked `done` or exhausting Agent rounds because of empty polling.
+5. Try a final reply while a process is still running; the Runtime does not accept completion. After the process is stopped, old verification is still invalid, and only new independent verification allows finishing.
+6. `/new`, `/reset`, EOF/normal exit, and abnormal paths all clean up the processes the current task can control; old IDs are invalid for new tasks, and external PIDs are never harmed. When the platform cannot confirm child process cleanup, it reports this explicitly.
 
-### 7.3 阶段完成定义
+### 7.3 Stage definition of done
 
-- [x] `v0.26`–`v0.29` 有独立教程、变更记录和可运行测试；v0.29 管道 stdin 已完成验收，PTY 保持后续评估。
-- [ ] 保留现有 `run_shell` 短命令行为，后台命令可跨 Agent 轮次启动、观察、控制。
-- [ ] 所有后台进程受任务归属、资源上限、独立权限和任务边界清理约束。
-- [ ] 进程退出、失败、控制和最终验证有可回放的因果关系；运行中和退出后的旧证据不能错误完成任务。
-- [ ] 默认测试套件、教程检查、README 检查和阶段级 E2E 全部通过；核心仍仅依赖标准库。
-- [ ] 各版本 tag 由用户手动创建后，完成相应的教程事实检查和发布验收。
+- [x] `v0.26`–`v0.29` have their own tutorials, change records, and runnable tests; v0.29 pipe stdin passed acceptance, and PTY remains a later evaluation.
+- [ ] The existing short-command behavior of `run_shell` is kept, and background commands can be started, observed, and controlled across Agent rounds.
+- [ ] All background processes are bound by task ownership, resource limits, separate permissions, and task boundary cleanup.
+- [ ] Process exits, failures, control, and final verification have replayable causal relationships; old evidence from during the run and after exit cannot complete a task by mistake.
+- [ ] The default test suite, the tutorial check, the README check, and the stage-level E2E all pass; the core still depends only on the standard library.
+- [ ] After the user manually creates each version's tag, the matching tutorial facts check and release acceptance are completed.
 
-## 8. 版本依赖关系
+## 8. Version Dependencies
 
 ```text
-v0.25 计划轨迹回放与验收
+v0.25 plan trace replay and acceptance
   ↓
-v0.26 后台启动、任务归属、输出排空与基础清理
+v0.26 background start, task ownership, output draining, and basic cleanup
   ↓
-v0.27 增量观察、退出事实、等待交接
+v0.27 incremental observation, exit facts, waiting handoff
   ↓
-v0.28 显式控制、完整清理、验证与 Trace 闭环
+v0.28 explicit control, complete cleanup, verification and Trace loop
   ↓
-v0.29 管道 stdin；PTY 评估后暂不实现
+v0.29 pipe stdin; PTY evaluated and not implemented for now
 ```
 
-`v0.26` 不要求实现完整观察 UI，但不能推迟输出排空、清理和完成护栏；`v0.27` 不开放任意 PID 控制；`v0.28` 不把信号发送成功当作进程已退出；`v0.29` 不把写入确认或 EOF 发送当作进程退出，且不把管道输入当作 PTY。每版保留一个可教学的主题和可独立验收的行为。
+`v0.26` does not require a complete observation UI, but output draining, cleanup, and the completion guard cannot be postponed; `v0.27` does not open arbitrary PID control; `v0.28` does not treat a successfully sent signal as an exited process; `v0.29` does not treat a write confirmation or sent EOF as a process exit, and does not treat pipe input as a PTY. Each version keeps one teachable topic and independently acceptable behavior.
 
-## 9. 文档与发布同步
+## 9. Documentation and Release Sync
 
-实现各版时同步对应教程、`docs/tutorials/README.md`、`docs/operation/manual.md`、`CHANGELOG.md`、`README.md` 学习路径、`pyproject.toml` 版本信息和本计划状态；仅在运行时硬约束确实变化时更新 `AGENTS.md`。教程面对刚接触 Agent 的读者，先说明长命令为什么会阻塞，再介绍工具、进程事实和验证规则。主 README 的阶段名与版本主题遵守治理写作规范。
+When implementing each version, sync the matching tutorial, `docs/tutorials/README.md`, `docs/operation/manual.md`, `CHANGELOG.md`, the learning path in `README.md`, the version information in `pyproject.toml`, and the status of this plan; update `AGENTS.md` only when runtime hard constraints really change. The tutorial is for readers new to Agents: it first explains why long commands block, then introduces the tools, process facts, and verification rules. The main README's stage names and version topics follow the governance writing rules.
 
-每版交付前运行：
+Before delivering each version, run:
 
 ```bash
 PYTHONPATH=src python -m pytest -q
@@ -277,8 +277,8 @@ PYTHONPATH=src python scripts/check_tutorials.py
 PYTHONPATH=src python scripts/check_readme.py
 ```
 
-教程完成且用户手动创建对应 tag 后，再运行依赖本地 Git 对象的事实检查。助手不得创建、移动、覆盖、删除或推送 tag。
+After the tutorial is complete and the user manually creates the matching tag, run the facts check that depends on local Git objects. The assistant must not create, move, overwrite, delete, or push tags.
 
-## 10. 阶段完成后的能力边界
+## 10. Capability Boundaries After the Stage
 
-阶段八核心完成后，mini_agent 可以让长期运行程序留在当前任务中：启动后继续工作，随后读取新增输出和最终状态，有授权地结束进程，并以退出后的独立验证收口。它仍只管理当前 CLI 进程内登记的任务进程，不提供崩溃恢复、通用沙箱、自动守护服务或完整终端模拟。
+After the Stage 8 core is complete, mini_agent can keep long-running programs within the current task: keep working after a start, then read new output and the final status, end processes with authorization, and finish with independent verification after the exit. It still manages only task processes registered within the current CLI process and provides no crash recovery, general sandbox, automatic daemon services, or complete terminal emulation.

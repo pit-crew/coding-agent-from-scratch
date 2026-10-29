@@ -1,40 +1,40 @@
-# 第 3 课：文件读写工具
+# Lesson 3: File read/write tools
 
-> 版本 v0.03 | [上一课](02-first-tool.md) | [下一课](04-permission-gate.md)
+> Version v0.03 | [Previous lesson](02-first-tool.md) | [Next lesson](04-permission-gate.md)
 
-> 代码快照：`v0.03` · 相邻差异：`v0.02..v0.03` · 命令环境：Bash/zsh
+> Code snapshot: `v0.03` · Adjacent diff: `v0.02..v0.03` · Shell: Bash/zsh
 >
-> 运行要求：Python 3.9+。
+> Requirements: Python 3.9+.
 
-## 本课目标
+## Lesson Goals
 
-上一课的 agent 只能计算，仍然无法查看或修改项目文件，因此不能完成实际的编程任务。
+The agent in the previous lesson could only calculate. It still could not view or change project files, so it could not do real programming tasks.
 
-这一课加入 `read_file` 和 `write_file`。前者读取文本，后者覆盖写入文本。重点不只是新增两个函数，还要看模型如何把“读取 → 处理 → 写入”拆成连续的工具调用。
+This lesson adds `read_file` and `write_file`. The first reads text; the second overwrites a file with text. The point is not only two new functions, but also how the model splits "read → process → write" into consecutive tool calls.
 
-## 前置
+## Prerequisites
 
-- 已读 [第 2 课](02-first-tool.md)，理解 Tool 三件套和 function calling 协议
-- `git checkout v0.03` 切到本版代码
+- Read [Lesson 2](02-first-tool.md) and understand the tool trio and the function calling protocol
+- `git checkout v0.03` to switch to this version's code
 
-## 新增/改动了什么
+## What Was Added or Changed
 
 ```
  src/mini_agent/tools/
-+├── file.py             # 新增：read_file / write_file 工具
- ├── __init__.py         # 改：注册 read_file / write_file
- ├── base.py             # 不变
- └── calc.py             # 不变
++├── file.py             # New: read_file / write_file tools
+ ├── __init__.py         # Changed: registers read_file / write_file
+ ├── base.py             # Unchanged
+ └── calc.py             # Unchanged
 +examples/
-+├── input.txt            # 示例文件（内容：3 + 5 * 2）
-+└── input2.txt           # 示例文件（内容：3 + 5 * 3）
++├── input.txt            # Example file (content: 3 + 5 * 2)
++└── input2.txt           # Example file (content: 3 + 5 * 3)
  tests/
- └── test_tools.py       # 改：加 read_file / write_file 测试
+ └── test_tools.py       # Changed: adds read_file / write_file tests
 ```
 
-## 核心概念
+## Core Concepts
 
-### read_file / write_file（`src/mini_agent/tools/file.py`）
+### read_file / write_file (`src/mini_agent/tools/file.py`)
 
 ```python
 def read_file(path: str):
@@ -44,19 +44,19 @@ def read_file(path: str):
 def write_file(path: str, content: str):
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
-    return f"已写入文件: {path}"
+    return f"Wrote file: {path}"
 ```
 
-两个 handler 都只使用 Python 的 `open`。真正需要解释的是 Tool 定义中的 schema，因为 LLM 根据它判断参数应该怎样填写：
+Both handlers only use Python's `open`. What really needs explaining is the schema in the Tool definition, because the LLM uses it to decide how to fill in the arguments:
 
 ```python
 read_file_tool = Tool(
     name="read_file",
-    description="读取一个文本文件的内容",
+    description="Read the contents of a text file",
     parameters={
         "type": "object",
         "properties": {
-            "path": {"type": "string", "description": "要读取的文件路径"}
+            "path": {"type": "string", "description": "Path of the file to read"}
         },
         "required": ["path"],
     },
@@ -64,118 +64,118 @@ read_file_tool = Tool(
 )
 ```
 
-`description` 说明工具做什么，`parameters` 说明参数名称、类型和必填项。schema 写得越明确，模型越不容易传错参数。
+`description` says what the tool does, and `parameters` gives the argument names, types, and required fields. The clearer the schema, the less likely the model passes wrong arguments.
 
-### 注册新工具（`src/mini_agent/tools/__init__.py`）
+### Registering new tools (`src/mini_agent/tools/__init__.py`)
 
 ```python
 registry = ToolRegistry()
 registry.register(calculate_tool)
-registry.register(read_file_tool)    # ← 新增
-registry.register(write_file_tool)   # ← 新增
+registry.register(read_file_tool)    # ← New
+registry.register(write_file_tool)   # ← New
 ```
 
-新增工具只要完成三个动作：编写 handler、创建 `Tool`、放入注册表。`agent.py` 和 loop 不需要知道文件工具的细节，因为它们只依赖统一的工具协议。
+Adding a tool takes three steps: write the handler, create the `Tool`, and put it in the registry. `agent.py` and the loop do not need to know the details of file tools, because they depend only on the uniform tool protocol.
 
-### 多步工具串联
+### Chaining tools over several steps
 
-一个任务可能需要多个步骤。例如“读取 `examples/input.txt` 并计算”必须先取得文件内容，才能把其中的表达式交给计算工具。LLM 可以根据每次回灌的结果决定下一步：
+A task may need several steps. For example, "read `examples/input.txt` and calculate" must first get the file content before it can pass the expression to the calculation tool. The LLM can decide the next step from each fed-back result:
 
 ```
-=== [1] LLM 回复 ===
-  决策调用: read_file({'path': 'examples/input.txt'})
-  执行结果: 3 + 5 * 2
+=== [1] LLM reply ===
+  Decided call: read_file({'path': 'examples/input.txt'})
+  Result: 3 + 5 * 2
 
-=== [2] LLM 回复 ===
-  决策调用: calculate({'expression': '3 + 5 * 2'})
-  执行结果: 13
+=== [2] LLM reply ===
+  Decided call: calculate({'expression': '3 + 5 * 2'})
+  Result: 13
 
-=== [3] LLM 回复 ===
-文件内容为 3 + 5 * 2，计算结果为 13。
+=== [3] LLM reply ===
+The file content is 3 + 5 * 2, and the result is 13.
 ```
 
-示例经过 3 轮：先读文件，再计算，最后回答。这个顺序由 LLM 选择；agent loop 只负责执行请求并回灌结果，不会替模型规划步骤。
+The example takes 3 rounds: read the file, calculate, then answer. The LLM chooses this order; the agent loop only runs requests and feeds back results, and does not plan steps for the model.
 
-## 为什么这样设计
+## Why This Design
 
-### 为什么 write_file 直接执行不问人
+### Why write_file runs without asking
 
-v0.03 收到 `write_file` 请求后会直接执行，不会询问用户。因为它使用覆盖写，所以错误路径或错误内容可能破坏原文件。
+When v0.03 receives a `write_file` request, it runs it directly without asking the user. Because it overwrites, a wrong path or wrong content can destroy the original file.
 
-这一版先单独展示文件能力，暂时不处理授权问题。v0.04 会引入 `permission.py`，把 `write_file` 设为 ASK，也就是每次执行前询问用户。
+This version shows the file capability on its own and does not handle authorization yet. v0.04 introduces `permission.py` and sets `write_file` to ASK, which asks the user before every execution.
 
-### 为什么用 `"w"` 模式而非 `"a"`
+### Why `"w"` mode instead of `"a"`
 
-`"w"` 表示覆盖写入，因此调用后的文件内容就是本次传入的 `content`。`"a"` 会在旧内容末尾追加，多次调用会不断累积。为了让本课的结果更容易预测，这一版选择 `"w"`。
+`"w"` means overwrite, so after the call the file content is exactly the `content` passed in. `"a"` appends to the end of the old content, so repeated calls keep accumulating. To make the results of this lesson easier to predict, this version chooses `"w"`.
 
-### 为什么工具签名是单参数/双参数字符串
+### Why the tool signatures use one or two string arguments
 
-`read_file(path: str)` 单参数，`write_file(path: str, content: str)` 双参数。
-这一版只需要路径和文本，因此参数都使用字符串。结构越简单，模型越容易按 schema 生成正确参数；嵌套字典或列表则会增加格式错误的可能。
+`read_file(path: str)` takes one argument, and `write_file(path: str, content: str)` takes two.
+This version only needs a path and text, so all arguments are strings. The simpler the structure, the easier it is for the model to produce correct arguments from the schema; nested dictionaries or lists increase the chance of format errors.
 
-## 使用指导
+## Usage Guide
 
-### 本版可用的命令
+### Commands available in this version
 
 ```bash
-# 命令行首条任务
-PYTHONPATH=src python -m mini_agent "读取 examples/input.txt 并计算"
+# Command-line first task
+PYTHONPATH=src python -m mini_agent "read examples/input.txt and calculate"
 
-# 交互模式
+# Interactive mode
 PYTHONPATH=src python -m mini_agent
 
-# 跑 smoke test
+# Run the smoke test
 PYTHONPATH=src python tests/test_tools.py
 ```
 
-### 本版典型示例
+### Typical examples for this version
 
-**示例 1：读文件 + 计算（多步串联）**
+**Example 1: read a file + calculate (multi-step chain)**
 ```bash
-PYTHONPATH=src python -m mini_agent "读取 examples/input.txt 的内容并计算"
+PYTHONPATH=src python -m mini_agent "read the contents of examples/input.txt and calculate"
 ```
-预期：3 轮循环，read_file → calculate → 最终回复"13"。
+Expected: 3 rounds, read_file → calculate → final reply "13".
 
-**示例 2：写文件**
+**Example 2: write a file**
 ```bash
-PYTHONPATH=src python -m mini_agent "把'Hello World'写入 examples/output.txt"
+PYTHONPATH=src python -m mini_agent "write 'Hello World' to examples/output.txt"
 ```
-预期：LLM 调 `write_file({'path': 'examples/output.txt', 'content': 'Hello World'})`，回复"已写入"。
+Expected: the LLM calls `write_file({'path': 'examples/output.txt', 'content': 'Hello World'})` and replies that the file was written.
 
-**示例 3：读后写（复制文件）**
+**Example 3: read then write (copy a file)**
 ```bash
-PYTHONPATH=src python -m mini_agent "读取 examples/input.txt，把内容写入 examples/copy.txt"
+PYTHONPATH=src python -m mini_agent "read examples/input.txt and write its contents to examples/copy.txt"
 ```
-预期：read_file 拿到内容，write_file 写入 copy.txt。
+Expected: read_file gets the content, and write_file writes copy.txt.
 
-### 本版独有特性
+### Features unique to this version
 
-- **多步工具串联**：LLM 能在一轮对话里串联多个工具（读 → 算 → 答），每步结果回灌后 LLM 自行决定下一步。
-- **副作用工具**：`write_file` 会改变文件系统，这类会影响外部环境的操作称为“副作用”。v0.03 没有权限保护，收到调用后一定会尝试写入。
-- **相对路径约定**：工具的相对路径从项目根目录 `mini_agent/` 起算。必须在 `mini_agent/` 目录下运行。
+- **Chaining tools over several steps**: the LLM can chain several tools in one conversation (read → calculate → answer); after each result is fed back, the LLM decides the next step itself.
+- **Tools with side effects**: `write_file` changes the file system; operations that affect the outside environment like this are called "side effects". v0.03 has no permission protection, so it always tries to write when called.
+- **Relative path convention**: relative paths in tools start from the project root `mini_agent/`. You must run from the `mini_agent/` directory.
 
-## 动手验证
+## Hands-On Verification
 
-1. **跑 smoke test**：
+1. **Run the smoke test**:
    ```bash
    PYTHONPATH=src python tests/test_tools.py
    ```
-   预期：7 个 PASS + "全部 smoke test 通过"。
+   Expected: 7 PASS lines and a message that all smoke tests passed.
 
-2. **读文件 + 计算**：
+2. **Read a file + calculate**:
    ```bash
-   PYTHONPATH=src python -m mini_agent "读取 examples/input.txt 并计算"
+   PYTHONPATH=src python -m mini_agent "read examples/input.txt and calculate"
    ```
-   预期：3 轮循环，最终结果 13。
+   Expected: 3 rounds, with a final result of 13.
 
-3. **写文件验证**：
+3. **Verify writing a file**:
    ```bash
-   PYTHONPATH=src python -m mini_agent "把'测试内容'写入 examples/test.txt"
+   PYTHONPATH=src python -m mini_agent "write 'test content' to examples/test.txt"
    ```
-   跑完后检查 `examples/test.txt` 是否被创建、内容是否正确。
+   Afterwards, check whether `examples/test.txt` was created and its content is correct.
 
-## 本版完整代码
+## Full Code for This Version
 
 - [`src/mini_agent/tools/file.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.03/src/mini_agent/tools/file.py) — read_file / write_file
-- [`src/mini_agent/tools/__init__.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.03/src/mini_agent/tools/__init__.py) — 注册三个工具
-- [`tests/test_tools.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.03/tests/test_tools.py) — 工具 smoke test（含 read_file/write_file）
+- [`src/mini_agent/tools/__init__.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.03/src/mini_agent/tools/__init__.py) — registers the three tools
+- [`tests/test_tools.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.03/tests/test_tools.py) — tool smoke test (including read_file/write_file)

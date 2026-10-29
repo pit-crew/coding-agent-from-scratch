@@ -1,31 +1,31 @@
-# 第 34 课：让 Agent 请一个只读助手查资料
+# Lesson 34: Letting the Agent ask a read-only helper to investigate
 
-上一课：[崩溃后的调用交接](33-crash-recovery.md) · [教程总览](README.md) · 下一课：[共享父子运行循环](35-shared-agent-runtime.md)
+Previous: [Handing off calls after a crash](33-crash-recovery.md) · [Tutorial overview](README.md) · Next: [Shared parent/child run loop](35-shared-agent-runtime.md)
 
-> 代码快照：`v0.34` · 相邻差异：`v0.33..v0.34` · 命令环境：Bash/zsh
+> Code snapshot: `v0.34` · Adjacent diff: `v0.33..v0.34` · Shell: Bash/zsh
 
-本课对应阶段十“受控子代理委派”。代码链接固定到 `v0.34`；阅读和运行本课都不需要创建 Git tag。
+This lesson belongs to Stage 10, "controlled subagent delegation". Code links are pinned to `v0.34`; reading and running this lesson do not require creating a Git tag.
 
-## 本课目标
+## Lesson Goals
 
-这里的 Agent 是一个能向模型发问、调用工具并完成任务的程序。到上一课为止，所有调查都由同一个 Agent 完成：它既要读文件、找定义，又要修改和验证。调查越多，主任务的上下文越拥挤。
+The Agent here is a program that can ask the model questions, call tools, and complete tasks. Up to the previous lesson, all investigation was done by the same Agent: it had to read files and find definitions, and also change and verify. The more investigation there is, the more crowded the main task's context becomes.
 
-本课让主 Agent 临时请一个 Subagent（子代理）做一件小而明确的只读调查。子代理有自己的消息历史和状态，只能查看工作区或计算；它把结构化报告交回主 Agent。读完后，你应能解释：
+This lesson lets the main Agent temporarily ask a Subagent to do one small, clearly defined read-only investigation. The subagent has its own message history and state and can only view the workspace or calculate; it hands a structured report back to the main Agent. After reading, you should be able to explain:
 
-- 为什么子代理是“独立的只读助手”，不是拥有主任务权限的第二个主 Agent；
-- `delegate_task` 怎样描述目标、范围和允许的工具；
-- 为什么父子各有自己的 Context、State 和权限；
-- 为什么子代理的报告只能作为调查材料，不能直接算作主任务的验证证据。
+- Why a subagent is "an independent read-only helper", not a second main Agent with the main task's permissions;
+- How `delegate_task` describes the goal, scope, and allowed tools;
+- Why parent and child each have their own Context, State, and permissions;
+- Why the subagent's report can only be investigation material and cannot count directly as verification evidence for the main task.
 
-## 上一版的问题
+## Problems in the Previous Version
 
-v0.33 已经能在崩溃后安全交接不确定的工具调用，但主 Agent 仍要亲自完成所有只读调查。这样会带来两个问题：调查内容占用主 Context，而且读文件、改文件、跑验证这些不同性质的工作容易混在一起。
+v0.33 can already hand off uncertain tool calls safely after a crash, but the main Agent still has to do all read-only investigation itself. This causes two problems: investigation content fills the main Context, and work of different natures — reading files, changing files, running verification — easily gets mixed together.
 
-本版只把“收集材料”分出去。主 Agent 仍是唯一能修改工作区、请求权限、维护计划、执行权威验证和决定任务完成的人；子代理没有这些能力。
+This version splits out only "collecting material". The main Agent is still the only one who can change the workspace, request permissions, maintain the plan, run authoritative verification, and decide task completion; the subagent has none of these abilities.
 
-## 前置条件与版本切换
+## Prerequisites and Version Checkout
 
-需要基础 Python、JSON、函数调用和相对路径知识，并先阅读第 33 课。下面命令使用 Bash/zsh；第一条切换到上一版，第二条只查看差异，最后一条进入本课快照。
+You need basic Python, JSON, function calls, and relative paths, and should read Lesson 33 first. The commands below use Bash/zsh; the first switches to the previous version, the second only views the diff, and the last enters this lesson's snapshot.
 
 ```bash
 git checkout v0.33
@@ -33,72 +33,72 @@ git diff --stat v0.33..v0.34
 git checkout v0.34
 ```
 
-本课的离线回归使用 fake LLM，不需要真实 API key。真实模型配置仍只应放在本地未跟踪的 `config_local.py`。
+This lesson's offline regression uses a fake LLM and needs no real API key. Real model configuration should still go only in the local untracked `config_local.py`.
 
-## 新增与改动文件
+## New and Changed Files
 
-先用 `git diff --stat v0.33..v0.34` 看范围，再关注下面这条学习主线：主侧提出委派，子侧在受限工具视图中运行，结果回到主侧。
+First look at the scope with `git diff --stat v0.33..v0.34`, then focus on this learning thread: the parent side proposes a delegation, the child side runs in a restricted tool view, and the result comes back to the parent side.
 
-| 文件 | 作用 |
+| File | Purpose |
 |---|---|
-| [`src/mini_agent/delegation.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.34/src/mini_agent/delegation.py) | 保存委派合同、范围检查、预算、结果校验和子代理运行入口。 |
-| [`src/mini_agent/tools/delegation.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.34/src/mini_agent/tools/delegation.py) | 提供父侧的 `delegate_task` 工具。 |
-| [`src/mini_agent/tools/base.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.34/src/mini_agent/tools/base.py) | 用显式能力标记筛出子代理可见的工具。 |
-| [`src/mini_agent/runtime.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.34/src/mini_agent/runtime.py) | 为父、子运行时提供本版的公共调用入口。 |
-| [`src/mini_agent/prompt.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.34/src/mini_agent/prompt.py) | 分别告诉父 Agent 和子代理各自的身份与边界。 |
+| [`src/mini_agent/delegation.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.34/src/mini_agent/delegation.py) | Holds the delegation contract, scope checks, budgets, result validation, and the subagent run entry. |
+| [`src/mini_agent/tools/delegation.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.34/src/mini_agent/tools/delegation.py) | Provides the parent-side `delegate_task` tool. |
+| [`src/mini_agent/tools/base.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.34/src/mini_agent/tools/base.py) | Uses an explicit capability marker to select the tools visible to subagents. |
+| [`src/mini_agent/runtime.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.34/src/mini_agent/runtime.py) | Provides this version's shared call entry for parent and child runtimes. |
+| [`src/mini_agent/prompt.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.34/src/mini_agent/prompt.py) | Tells the parent Agent and the subagent their respective identities and boundaries. |
 
-## 版本变更定位
+## Version Change Map
 
-图例：`[旧]` v0.33 已有，`[+]` v0.34 新增，`[~]` v0.34 修改，`[C]` 主要消费者，`[B]` 本课边界。
+Legend: `[old]` already in v0.33, `[+]` new in v0.34, `[~]` changed in v0.34, `[C]` main consumer, `[B]` boundary of this lesson.
 
-上一版的调查只能沿主 Agent 的路径进行：
+In the previous version, investigation could only follow the main Agent's path:
 
 ```text
-[旧][C] 父 Agent
+[old][C] parent Agent
       -> read_file / grep / calculate
-      -> 父 Context 和父 State
-      -> 修改、验证、完成判定
-      [B] 没有独立调查助手
+      -> parent Context and parent State
+      -> change, verify, decide completion
+      [B] no independent investigation helper
 ```
 
-本版在父 Agent 发出一个 `delegate_task` 后插入独立的子运行时：
+This version inserts an independent child runtime after the parent Agent issues one `delegate_task`:
 
 ```text
-[C] 父 Agent
-      -> [+] delegate_task（目标 + 工作区范围 + 工具白名单）
-      -> [+] ScopeGate / PermissionGate 检查
+[C] parent Agent
+      -> [+] delegate_task (goal + workspace scope + tool allowlist)
+      -> [+] ScopeGate / PermissionGate checks
       -> [+] SubagentRunner
-           -> [+] 独立子 Context / 子 State
+           -> [+] independent child Context / child State
            -> [+] calculate / read_file / list_dir / grep
-           -> [+] 结构化 JSON 报告
-      -> [C] 父 Context 收到一个 role=tool 结果
+           -> [+] structured JSON report
+      -> [C] the parent Context receives one role=tool result
 
-[B] 子代理不能写文件、运行 shell、操作进程、修改父计划或再次委派
+[B] the subagent cannot write files, run shell, operate processes, change the parent plan, or delegate again
 ```
 
-## 核心概念与数据结构
+## Core Concepts and Data Structures
 
-### 1. 委派合同：先说清楚“查什么”
+### 1. The delegation contract: first say clearly "what to investigate"
 
-如果只把一句“帮我看看项目”交给另一个模型，它可能读太多文件，也可能回答一个无法复查的问题。因此 `delegate_task` 不是一段任意提示词，而是一份小合同：`goal` 说明目标，`scope` 限定相对路径，`constraints` 说明限制，`expected_findings` 说明希望得到哪类发现，`requested_tools` 说明需要哪些只读工具。
+If you just hand another model a sentence like "take a look at the project for me", it may read too many files or give an answer that cannot be checked. So `delegate_task` is not an arbitrary prompt but a small contract: `goal` states the goal, `scope` limits the relative paths, `constraints` states restrictions, `expected_findings` states what kind of findings are wanted, and `requested_tools` states which read-only tools are needed.
 
-运行时会另外生成 `delegation_id`、`subagent_id` 和合同 hash。模型不能伪造这些身份，也不能把 `depth` 提高到 1 以上。一个父回合只能有一个独占的 `delegate_task`；若同回合混入普通工具，整轮会被拒绝，不会启动子模型。
+The runtime additionally generates a `delegation_id`, a `subagent_id`, and a contract hash. The model cannot forge these identities, nor raise `depth` above 1. A parent round can contain only one exclusive `delegate_task`; if ordinary tools are mixed into the same round, the whole round is rejected and no child model is started.
 
-### 2. 工具范围是两道门
+### 2. Tool scope has two gates
 
-子代理的 `scope` 必须是工作区内的 1–8 个相对路径。绝对路径、`..`、`config_local.py`，以及 realpath 后逃出工作区的链接都会被拒绝。每次读文件、列目录或搜索时还会再次检查实际路径，防止首次检查后路径发生变化。
+The subagent's `scope` must be 1–8 relative paths inside the workspace. Absolute paths, `..`, `config_local.py`, and links that escape the workspace after realpath are all rejected. Every file read, directory listing, or search checks the actual path again, preventing the path from changing after the first check.
 
-工具是否能给子代理使用，不由“看起来只读”推断，而由显式的 `delegation_capability` 标记决定。v0.34 只开放 `calculate`、`read_file`、`list_dir` 和 `grep`；写文件、shell、进程、计划、恢复和 `delegate_task` 都不在子代理的工具视图里。
+Whether a tool can be given to a subagent is not inferred from "it looks read-only" but decided by the explicit `delegation_capability` marker. v0.34 opens only `calculate`, `read_file`, `list_dir`, and `grep`; file writes, shell, processes, plans, recovery, and `delegate_task` are all outside the subagent's tool view.
 
-### 3. 子代理有自己的上下文和报告
+### 3. The subagent has its own context and report
 
-Context 是会送给模型的消息历史，State 是程序维护的任务事实账本。父子两者都拥有自己的副本，但父 Context、父 State、父权限和父 verification 不会复制给子代理。子代理只看到自己的身份规则、委派合同、被选中的父侧事实和自己的工具结果。
+Context is the message history sent to the model, and State is the task fact ledger the program maintains. Parent and child each have their own copies, but the parent Context, parent State, parent permissions, and parent verification are not copied to the subagent. The subagent sees only its own identity rules, the delegation contract, selected parent-side facts, and its own tool results.
 
-子代理最后必须返回固定形状的 JSON。下面的例子说明“结论”和“证据”如何关联；它不是要求读者手写，而是帮助理解返回值为何可检查：
+The subagent must finally return JSON of a fixed shape. The example below shows how "conclusions" and "evidence" are linked; it is not something you need to write by hand, but it helps you understand why the return value can be checked:
 
 ```json
 {
-  "summary": "配置从 src/example.py 读取",
+  "summary": "Configuration is read from src/example.py",
   "findings": [
     {"id": "f1", "claim": "...", "evidence_ids": ["e1"], "confidence": "observed", "caveat": null}
   ],
@@ -109,76 +109,76 @@ Context 是会送给模型的消息历史，State 是程序维护的任务事实
 }
 ```
 
-运行时会检查证据 ID 是否唯一、引用是否存在、路径是否在 scope 内、hash 是否为 SHA-256，并确认 hash 来自本次成功的只读观察。第一次格式不合格时只给一次修正提示；再次不合格或在修正阶段又调用工具，就以 `failed/invalid_result` 收口。
+The runtime checks that evidence IDs are unique, that references exist, that paths are within scope, and that hashes are SHA-256, and confirms that each hash comes from a successful read-only observation in this run. A first malformed result gets exactly one correction prompt; if it is malformed again, or a tool is called again during the correction phase, it finishes with `failed/invalid_result`.
 
-### 4. 一次父调用只对应一个父结果
+### 4. One parent call maps to one parent result
 
-无论子代理内部调用了多少次只读工具，父 Context 只接收一个对应的 `role=tool` 结果。`role=tool` 是对话协议中的“工具结果消息”，它必须与父模型发出的工具调用一一配对。子代理内部消息留在自己的 Context 中，不能直接拼进父 history。
+No matter how many read-only tool calls the subagent makes internally, the parent Context receives only one matching `role=tool` result. `role=tool` is the "tool result message" of the conversation protocol and must pair one-to-one with the tool call the parent model issued. The subagent's internal messages stay in its own Context and cannot be spliced directly into the parent history.
 
-子代理超时、预算耗尽或报告失败，也会返回一个结构化失败结果，而不是让父协议缺少消息。这个结果能告诉父 Agent “调查没有成功”，但不能把它变成主任务的验证证据。
+When the subagent times out, exhausts its budget, or its report fails, it also returns a structured failure result instead of leaving the parent protocol a message short. This result can tell the parent Agent "the investigation did not succeed", but it cannot be turned into verification evidence for the main task.
 
-## 关键流程
+## Key Flow
 
-正常路径是：
+The normal path:
 
 ```text
-父模型提出 delegate_task
-  -> 检查阶段、权限、合同和 scope
-  -> 创建一个独立的子 Runtime
-  -> 子模型使用四个只读工具调查
-  -> 校验 JSON 报告
-  -> 父侧写入唯一的 role=tool 结果
-  -> 父模型决定下一步
+the parent model proposes delegate_task
+  -> check the phase, permission, contract, and scope
+  -> create an independent child Runtime
+  -> the child model investigates with four read-only tools
+  -> validate the JSON report
+  -> the parent side writes the single role=tool result
+  -> the parent model decides the next step
 ```
 
-重要失败路径是：
+An important failure path:
 
 ```text
-父回合混入普通工具，或同时出现两个 delegate_task
+the parent round mixes in ordinary tools, or contains two delegate_task calls
   -> delegation_batch_gate
-  -> 所有调用得到有界拒绝结果
-  -> 不启动子模型，也不修改父任务
+  -> every call gets a bounded rejection result
+  -> no child model is started, and the parent task is not changed
 ```
 
-## 运行与观察
+## Run and Observe
 
-在已经配置本地模型后，用 Bash/zsh 启动交互式 CLI：
+After you have configured a local model, start the interactive CLI with Bash/zsh:
 
 ```bash
 PYTHONPATH=src python -m mini_agent
 ```
 
-观察一次委派时，父侧应看到一个 `delegate_task` 调用和一个对应的 JSON 工具结果；子代理的 `read_file` 等内部消息不会出现在父对话中。若子模型请求 `write_file` 或 `run_shell`，应得到拒绝结果，实际 handler 不会执行。命令行首条任务处理后，CLI 仍会进入交互循环。
+When you observe one delegation, the parent side should show one `delegate_task` call and one matching JSON tool result; the subagent's internal messages such as `read_file` do not appear in the parent conversation. If the child model requests `write_file` or `run_shell`, it should get a rejection result, and the actual handler does not run. After the command-line first task is handled, the CLI still enters the interactive loop.
 
-## 实现拆解
+## Implementation Breakdown
 
-`DelegationManager` 冻结合同并创建 `SubagentRunner`；`FilteredToolRegistryView` 只暴露被允许的四个工具；`ScopeGate` 在每次文件操作前复核路径。v0.34 的单个子代理默认最多 8 轮、8 次 LLM 调用、24 次工具调用、约 32,000 个估算 token、12 KiB 结果和 120 秒墙钟时间。模型只能请求更小预算，token 使用保守估算并标记为 `estimated`。
+`DelegationManager` freezes the contract and creates a `SubagentRunner`; `FilteredToolRegistryView` exposes only the four allowed tools; `ScopeGate` rechecks the path before every file operation. In v0.34, a single subagent defaults to at most 8 rounds, 8 LLM calls, 24 tool calls, about 32,000 estimated tokens, a 12 KiB result, and 120 seconds of wall-clock time. The model can only request a smaller budget, and token usage uses a conservative estimate marked `estimated`.
 
-父侧仍按既有工具边界记录一次 `delegate_task` 调用。子代理结果不会推进父 Plan、generation 或 `verification_evidence`；v0.34 也不保存完整子 Context、不恢复运行中的子代理、不做多子代理并行或父任务聚合预算。
+The parent side still records one `delegate_task` call under the existing tool boundary. The subagent result does not advance the parent Plan, generation, or `verification_evidence`; v0.34 also does not save the full child Context, resume a running subagent, run multiple subagents in parallel, or aggregate budgets across the parent task.
 
-## 为什么这样设计
+## Why This Design
 
-本版选择一个同步、单层、只读子代理，是因为它能带来独立调查的好处，同时让父侧仍保持清楚的“一次调用、一个结果”协议。显式能力和独立权限比“工具没有副作用所以安全”更可靠，因为某些工具虽然不写文件，仍可能绑定父任务状态或进程资源。
+This version chooses a synchronous, single-level, read-only subagent because it brings the benefits of independent investigation while keeping the parent side's protocol clear: "one call, one result". Explicit capabilities and independent permissions are more reliable than "the tool has no side effects, so it is safe", because some tools that do not write files can still be bound to parent task state or process resources.
 
-代价是调查必须等待子代理返回，且父 Agent 需要复查报告。子代理只能提供线索，不能替父 Agent 证明测试通过或决定任务完成。生命周期、聚合预算、并行和持久化交付会改变资源与恢复边界，留到后续课程。
+The cost is that investigation must wait for the subagent to return, and the parent Agent must review the report. The subagent can only provide clues; it cannot prove for the parent Agent that tests passed, nor decide that the task is complete. Lifecycles, aggregate budgets, parallelism, and durable delivery change resource and recovery boundaries and are left to later lessons.
 
-## 设计边界
+## Design Boundaries
 
-- 同一父任务同时最多一个子代理，`depth=1`，同步等待。
-- 子代理只能使用 `calculate`、`read_file`、`list_dir`、`grep`，不能写文件、运行 shell、操作进程或再次委派。
-- 子结果是父侧的不可信调查材料，不进入父 `verification_evidence`。
-- 子失败仍有结构化父工具结果；父 loop 不把子失败偷偷改写成成功。
-- v0.34 不提供多 provider、并行调度、后台取消、父聚合预算或跨进程恢复。
+- At most one subagent at a time per parent task, `depth=1`, waited for synchronously.
+- The subagent can only use `calculate`, `read_file`, `list_dir`, and `grep`; it cannot write files, run shell, operate processes, or delegate again.
+- A child result is untrusted investigation material for the parent and does not enter the parent `verification_evidence`.
+- A child failure still has a structured parent tool result; the parent loop does not quietly rewrite a child failure as success.
+- v0.34 provides no multiple providers, parallel scheduling, background cancellation, parent aggregate budgets, or cross-process recovery.
 
-## 本版特性、下一课与代码索引
+## Version Features, Next Lesson, and Code Index
 
-本课完成了最小受控委派：父 Agent 可以把范围清楚的只读调查交给一个独立子代理，并收到可复查的结构化结果。下一课会把父、子两套控制循环收敛为同一个 `AgentRuntime.run()`，但仍保持它们各自的状态和权限边界。
+This lesson completes minimal controlled delegation: the parent Agent can hand a clearly scoped read-only investigation to an independent subagent and receive a checkable structured result. The next lesson merges the parent and child control loops into the same `AgentRuntime.run()` while still keeping their separate state and permission boundaries.
 
-核心源码：
+Core source:
 
 - [`src/mini_agent/delegation.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.34/src/mini_agent/delegation.py)
 - [`src/mini_agent/runtime.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.34/src/mini_agent/runtime.py)
 - [`src/mini_agent/tools/base.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.34/src/mini_agent/tools/base.py)
 - [`src/mini_agent/tools/delegation.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.34/src/mini_agent/tools/delegation.py)
 
-完整设计见 [`docs/plans/subagent-delegation-plan.md`](../plans/subagent-delegation-plan.md)，运行约束见 [`docs/operation/manual.md`](../operation/manual.md)。
+For the full design, see [`docs/plans/subagent-delegation-plan.md`](../plans/subagent-delegation-plan.md); for runtime constraints, see [`docs/operation/manual.md`](../operation/manual.md).

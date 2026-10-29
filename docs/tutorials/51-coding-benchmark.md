@@ -1,20 +1,20 @@
-# 第 51 课：为什么要重复运行编码任务（v0.51）
+# Lesson 51: Why repeat coding tasks (v0.51)
 
-上一课：[单题评测链路](50-evaluation-harness.md) · [教程总览](README.md) · 下一阶段：可靠性评测
+Previous: [The single-case evaluation chain](50-evaluation-harness.md) · [Tutorial overview](README.md) · Next stage: reliability evaluation
 
-> 代码快照：`v0.51` · 相邻差异：`v0.50..v0.51` · 命令环境：Bash/zsh
+> Code snapshot: `v0.51` · Adjacent diff: `v0.50..v0.51` · Shell: Bash/zsh
 >
-> 源码链接固定到 `v0.51`。tag 建立前，请在当前工作树阅读对应文件。
+> Source links are pinned to `v0.51`. Before the tag exists, read the matching files in the current working tree.
 
-## 本课目标
+## Lesson Goals
 
-一次试跑成功只能说明 Agent 在那次模型响应和那份工作区上完成了任务。下一次模型回复可能不同，Agent 也可能只修好一部分。要了解它能不能稳定完成一类工作，就要让每次尝试从相同文件开始，独立运行和评分，并保留通过与失败的全部记录。
+One successful trial run only shows that the Agent completed the task with that model response and that workspace. The next model reply may differ, and the Agent may fix only part of the problem. To learn whether it can complete a kind of work reliably, each attempt must start from the same files, run and be graded independently, and keep the full record of passes and failures.
 
-本课增加四道纯标准库 Python 编码题、固定题目摘要、重复运行账本和逐题报告。读完后，你应能分清“计划运行多少次”“实际运行多少次”“有多少次能评分”以及“有多少次 Agent 最终成功”。
+This lesson adds four pure-standard-library Python coding cases, fixed case digests, a repeated-run ledger, and a per-case report. After reading, you should be able to tell apart "how many runs were planned", "how many actually ran", "how many could be graded", and "how many times the Agent finally succeeded".
 
-## 前置条件与版本切换
+## Prerequisites and Version Checkout
 
-需要 Python 3.10+、终端和 Git。第 50 课介绍了单题评测：Runner 为一个 Case 创建工作区，Agent 结束后由独立 grader 检查。维护者建立相邻 tag 后，可以查看本版改动：
+You need Python 3.10+, a terminal, and Git. Lesson 50 introduced single-case evaluation: the Runner creates a workspace for one Case, and an independent grader checks it after the Agent ends. After the maintainer creates the adjacent tags, you can view this version's changes:
 
 ```bash
 git checkout v0.50
@@ -23,114 +23,114 @@ git diff v0.50..v0.51 -- src/mini_agent/evaluation tests/fixtures/evaluation/ben
 git checkout v0.51
 ```
 
-本课源码索引：[benchmark.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.51/src/mini_agent/evaluation/benchmark.py)、[schema.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.51/src/mini_agent/evaluation/schema.py)、[runner.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.51/src/mini_agent/evaluation/runner.py)、[report.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.51/src/mini_agent/evaluation/report.py)。
+Source index for this lesson: [benchmark.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.51/src/mini_agent/evaluation/benchmark.py), [schema.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.51/src/mini_agent/evaluation/schema.py), [runner.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.51/src/mini_agent/evaluation/runner.py), [report.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.51/src/mini_agent/evaluation/report.py).
 
-## 上一版的限制
+## Limits of the Previous Version
 
-v0.50 已能运行一道小题并保存单次结果，但只有一条记录时，看不出任务结果会不会随着模型回复变化。即使 Agent 自称完成，结果也可能只通过了部分要求。因此，本版先固定一组任务和评分，再为每题计划多次独立运行。
+v0.50 can already run one small case and save a single result, but with only one record you cannot see whether task results change with the model's replies. Even if the Agent says it is done, the result may pass only some of the requirements. So this version first fixes a set of tasks and their grading, then plans several independent runs for each case.
 
-## 新增与改动文件
+## New and Changed Files
 
-| 位置 | 变化 | 作用 |
+| Location | Change | Purpose |
 |---|---|---|
-| [benchmark/suite.json](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.51/tests/fixtures/evaluation/benchmark/suite.json) 与四个题目目录 | 新增 | 冻结题目顺序、任务、初始代码、grader 和正确版本摘要。 |
-| [evaluation/benchmark.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.51/src/mini_agent/evaluation/benchmark.py) | 新增 | 校验摘要、验证题目基线、编排 suite run、重建逐题报告。 |
-| [evaluation/schema.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.51/src/mini_agent/evaluation/schema.py) | 修改 | 增加有上限的 Suite / SuiteRun 合同和 TrialResult schema 2，同时保留 schema 1。 |
-| [evaluation/runner.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.51/src/mini_agent/evaluation/runner.py)、[report.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.51/src/mini_agent/evaluation/report.py)、[__main__.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.51/src/mini_agent/evaluation/__main__.py) | 修改 | 复用单题 runner，保存每个槽位和原始 trial，再从它们重建报告。 |
-| [test_evaluation_v051.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.51/tests/test_evaluation_v051.py) | 新增 | 验证题目评分、摘要拒绝、重复运行、部分中断和报告引用。 |
+| [benchmark/suite.json](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.51/tests/fixtures/evaluation/benchmark/suite.json) and four case directories | New | Freeze the case order, tasks, initial code, graders, and known-good version digests. |
+| [evaluation/benchmark.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.51/src/mini_agent/evaluation/benchmark.py) | New | Validates digests, verifies case baselines, orchestrates suite runs, and rebuilds per-case reports. |
+| [evaluation/schema.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.51/src/mini_agent/evaluation/schema.py) | Changed | Adds bounded Suite / SuiteRun contracts and TrialResult schema 2, while keeping schema 1. |
+| [evaluation/runner.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.51/src/mini_agent/evaluation/runner.py), [report.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.51/src/mini_agent/evaluation/report.py), [__main__.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.51/src/mini_agent/evaluation/__main__.py) | Changed | Reuse the single-case runner, save each slot and raw trial, then rebuild reports from them. |
+| [test_evaluation_v051.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.51/tests/test_evaluation_v051.py) | New | Verifies case grading, digest rejection, repeated runs, partial interruptions, and report references. |
 
-## 版本变更定位
+## Version Change Map
 
-图例：`[旧]` 上一版已有；`[+]` 本版新增；`[~]` 本版修改；`[C]` 主要使用者；`[B]` 边界。
+Legend: `[old]` already in the previous version; `[+]` new in this version; `[~]` changed in this version; `[C]` main user; `[B]` boundary.
 
-v0.50 的入口处理一条 Case。每次运行有自己的初始工作区；评分器在 Agent 停止后检查文件：
+The v0.50 entry handles one Case. Each run has its own initial workspace; the grader checks files after the Agent stops:
 
 ```text
-v0.50 基线：
-[旧] validate / run --live / self-test
-  → [旧] Case 与 fixture 检查
-  → [旧] 单次新工作区 → Agent worker → 独立 grader
-  → [旧] schema 1 TrialResult 原子保存
-  → [C] report 从 trial.json 重建汇总
+v0.50 baseline:
+[old] validate / run --live / self-test
+  → [old] Case and fixture check
+  → [old] one fresh workspace → Agent worker → independent grader
+  → [old] schema 1 TrialResult saved atomically
+  → [C] report rebuilds the summary from trial.json
 ```
 
-v0.51 在外层增加固定顺序的题集和运行账本。单题执行仍由 v0.50 的 `run_case()` 完成；新增逻辑负责预检全部题目、准备重复槽位，并在每次结束后更新账本：
+v0.51 adds a fixed-order case set and a run ledger on the outside. Single-case execution is still done by v0.50's `run_case()`; the new logic pre-checks all cases, prepares the repeated slots, and updates the ledger after each run ends:
 
 ```text
-v0.51 变更：
+v0.51 change:
 [+] validate-suite
-  → [~] Suite / 初始文件 / grader / 正确版本摘要核对
-  → [B] grader 必须拒绝原始版本并接受正确版本
-  → [B] 任一摘要或基线不符时不启动 Agent
-  → [+] 按清单顺序建立 12 个计划槽位
-  → [C] 每个槽位调用 [旧] EvaluationRunner.run_case()
-  → [~] 保存 schema 2 TrialResult + [~] 原子更新 suite-run.json
-  → [+] report-suite 校验原始证据引用并重建逐题/总报告
+  → [~] Suite / initial files / grader / known-good digest check
+  → [B] the grader must reject the original version and accept the known-good version
+  → [B] if any digest or baseline does not match, the Agent is not started
+  → [+] create 12 planned slots in manifest order
+  → [C] each slot calls [old] EvaluationRunner.run_case()
+  → [~] save schema 2 TrialResult + [~] atomically update suite-run.json
+  → [+] report-suite validates the raw evidence references and rebuilds per-case/total reports
 
-失败分支：[B] live 需显式 --live 且全部题目绑定同一模型来源；[+] 中断保留未运行槽位；
-          [B] 不自动重试失败或基础设施错误槽位。
+failure branches: [B] live requires an explicit --live and all cases bound to the same model source; [+] an interruption keeps unrun slots;
+                  [B] failed or infrastructure-error slots are not retried automatically.
 ```
 
-## 先冻结问题和评分标准
+## Freeze the Problems and Grading Criteria First
 
-任务的题目文字告诉 Agent 要解决什么，grader 则在 Agent 停止后检查可观察结果。每道题还保留一份人工制作的正确版本。运行前的 `validate-suite` 会检查摘要，并让 grader 分别评分原始版和正确版；若原始版也通过，或正确版失败，这道题就不能进入 live 运行。
+The case text tells the Agent what to solve, and the grader checks the observable result after the Agent stops. Each case also keeps a hand-made known-good version. Before running, `validate-suite` checks the digests and has the grader score both the original version and the known-good version; if the original version also passes, or the known-good version fails, the case cannot enter a live run.
 
-固定题集按这个顺序包含四个问题：
+The fixed case set contains four problems in this order:
 
-1. 分页函数漏掉末页，要求覆盖空集合、整页边界、部分末页和非法页大小。
-2. 订单折扣舍入不正确，收据也未准确列出折扣和应付金额；要同时修好计算与展示两个模块。
-3. 缓存条目在恰好到达 TTL 时仍被返回；除了修复，还要新增能在当前代码通过、在原始错误实现上失败的 `unittest` 回归测试。
-4. 环境变量无法覆盖项目配置和默认值；任务只描述不同来源的预期优先级，不告诉 Agent 哪个文件有错。
+1. A pagination function misses the last page; the fix must cover the empty collection, the full-page boundary, a partial last page, and an invalid page size.
+2. Order discount rounding is wrong, and the receipt also does not list the discount and the amount due accurately; both the calculation and the display modules must be fixed.
+3. A cache entry is still returned when it reaches its TTL exactly; besides the fix, a new `unittest` regression test must be added that passes on the current code and fails on the original buggy implementation.
+4. Environment variables cannot override project configuration and defaults; the task only describes the expected priority of the different sources and does not tell the Agent which file is wrong.
 
-题目目录里的 grader 和 `known_good/` 不会复制进 Agent 工作区。`suite.json` 保存它们以及 Case、任务文字和初始文件树的 SHA-256。Suite 本身还有固定的 ID/version 指纹；摘要改变但版本未更新时，加载会失败。
+The graders and `known_good/` in the case directories are never copied into the Agent workspace. `suite.json` stores their SHA-256 together with those of the Case, the task text, and the initial file tree. The Suite itself also has a fixed ID/version fingerprint; if a digest changes but the version is not updated, loading fails.
 
-## 重复槽位如何保留证据
+## How Repeated Slots Keep Evidence
 
-Suite run 有固定的 12 个槽位：按清单顺序先列出同一道题的三次运行，再进入下一题。每个槽位开始前会写成 `running`，完成后写成 `completed` 并保存 trial 相对路径。进程在中途退出时，已经结束的记录继续保留，未开始的槽位仍在账本中；下次运行必须使用新的输出目录，不会静默重跑旧槽位。
+A suite run has 12 fixed slots: in manifest order, the three runs of one case are listed first, then the next case. Before each slot starts it is written as `running`, and after it finishes it is written as `completed` with the trial's relative path. When the process exits midway, the finished records are kept and the unstarted slots stay in the ledger; the next run must use a new output directory and never quietly reruns old slots.
 
-TrialResult schema 1 仍用于原来的单题结果。Suite trial 使用 schema 2，额外记录 suite ID/version/摘要、suite run ID、重复序号、初始文件摘要和运行时代码指纹。SuiteRun 账本还保存 Git code revision、运行时代码指纹与模型来源摘要；每次 trial 启动前核对实现来源，Agent 停止后再记录一次指纹，报告会标出中途变化的样本。
+TrialResult schema 1 is still used for the original single-case results. Suite trials use schema 2, which also records the suite ID/version/digest, the suite run ID, the repetition number, the initial file digest, and the runtime code fingerprint. The SuiteRun ledger also stores the Git code revision, the runtime code fingerprint, and the model source summary; before each trial starts, the implementation source is checked, and after the Agent stops, the fingerprint is recorded again, so the report marks samples where it changed midway.
 
-## 看报告时先看分母
+## Look at the Denominator First When Reading the Report
 
-计划次数表示账本里预留的槽位数。运行次数是已经生成并引用原始 trial 的槽位数。可评分次数还要求 grader 正常返回布尔结果；runner 或 grader 基础设施错误单列，不混入 Agent 成败。独立验收通过数只看 grader，最终成功数还要求 Agent 正常收束、状态为 `done` 并完成清理。
+The planned count is the number of slots reserved in the ledger. The run count is the number of slots that produced and reference a raw trial. The gradable count also requires the grader to return a boolean result normally; runner or grader infrastructure errors are listed separately and not mixed into Agent success or failure. The independent acceptance pass count looks only at the grader, while the final success count also requires the Agent to finish normally, with status `done` and cleanup complete.
 
-工具调用、成功模型响应和输入/输出 token 只加总实际观测到的值，同时列出对应观测样本数。耗时报告中位数和 P95。没有价格快照时成本保持 `null`。每个数字都能回到逐 trial 路径，检查 `trial.json`、`diff.patch` 和 `grader.log`。Fixture 结果单独标记，只验证评测器，不计入真实模型基线。
+Tool calls, successful model responses, and input/output tokens sum only actually observed values, and list the number of observed samples alongside. Durations report the median and P95. Without a price snapshot, cost stays `null`. Every number can be traced back to a per-trial path to check `trial.json`, `diff.patch`, and `grader.log`. Fixture results are marked separately; they only verify the evaluator and are not counted in the real model baseline.
 
-## 为什么这样设计
+## Why This Design
 
-固定初始文件让重复运行可比较，独立 grader 避免把 Agent 的自我报告当成成功证据，原始 trial 路径则让汇总数字可复查。原始版与正确版的离线检查还能发现永远通过或永远失败的评分规则。
+Fixed initial files make repeated runs comparable, an independent grader avoids treating the Agent's self-report as evidence of success, and raw trial paths make summary numbers reviewable. The offline check of the original and known-good versions also catches grading rules that always pass or always fail.
 
-代价是摘要变更必须提升 suite 版本并重新审核；当前四题也只能反映这些具体行为，不能代表所有 Python 编码任务。每题三次的样本很小，报告用于描述这次冻结题集的观察结果，不用于宣称统计显著或普遍能力。工作区隔离仍不是操作系统安全沙箱。
+The cost is that a digest change requires raising the suite version and reviewing again; the current four cases also reflect only these specific behaviors and cannot represent all Python coding tasks. Three runs per case is a small sample; the report describes the observations on this frozen case set and is not used to claim statistical significance or general ability. Workspace isolation is still not an operating system security sandbox.
 
-## 关键流程
+## Key Flow
 
-先执行离线预检。预期输出包含四道题，并为每题列出 `initial: passed=false` 与 `known_good: passed=true`；缓存题的 grader 还会验证回归测试能否揭露旧错误。此命令不调用模型：
+First run the offline pre-check. The expected output contains four cases and lists `initial: passed=false` and `known_good: passed=true` for each; the cache case's grader also verifies that the regression test can reveal the old bug. This command does not call the model:
 
 ```bash
 PYTHONPATH=src python -m mini_agent.evaluation validate-suite tests/fixtures/evaluation/benchmark/suite.json
 ```
 
-审阅任务与成功标准后，才运行首轮真实基线。命令会打印 12 个计划 trial、各题轮数和时间上限、获准工具及任务正文。运行完成后，报告应让你能按题查看计划、已运行、可评分、通过数和每条 trial 路径：
+Only after reviewing the tasks and success criteria do you run the first real baseline. The command prints the 12 planned trials, each case's round and time limits, the approved tools, and the task text. After the run, the report should let you see, per case, the planned, run, gradable, and pass counts, and every trial path:
 
 ```bash
 PYTHONPATH=src python -m mini_agent.evaluation run-suite tests/fixtures/evaluation/benchmark/suite.json --live --repeats 3 --output ./evaluation-baselines/v0.51
 PYTHONPATH=src python -m mini_agent.evaluation report-suite ./evaluation-baselines/v0.51
 ```
 
-本版首份 live 基线在任务审阅批准后运行；离线预检结果不会被记成 Agent 成绩。
+This version's first live baseline runs after the task review is approved; offline pre-check results are never recorded as Agent results.
 
-## 实现拆解
+## Implementation Breakdown
 
-Suite 的摘要不是只对 JSON 文件做一次校验。`load_suite()` 会把清单中的路径逐段限制在 suite 根目录内，重新计算 Case、任务文字、初始文件、grader 和正确版本摘要，再核对代码内固定的 ID/version 指纹。以下代码表达的是拒绝摘要变化的关键边界：
+The suite digests are not just one check over the JSON file. `load_suite()` limits each path in the manifest, segment by segment, to the suite root, recomputes the digests of the Case, task text, initial files, grader, and known-good version, and then checks the ID/version fingerprint fixed in the code. The code below expresses the key boundary that rejects digest changes:
 
 ```python
 if item[key] != actual_value:
-    raise ValueError(f"{case.case_id} 的 {key} 摘要不匹配；请提升 suite version")
+    raise ValueError(f"{key} digest of {case.case_id} does not match; raise the suite version")
 ```
 
-这一检查发生在创建任何 live worker 之前。固定指纹还要求改变摘要时同时提升 suite 版本并更新审核后的指纹。
+This check happens before any live worker is created. The fixed fingerprint also requires that changing a digest goes together with raising the suite version and updating the reviewed fingerprint.
 
-`run_suite()` 先写出包含所有槽位的运行账本，再按顺序让现有 `run_case()` 处理每一题。运行账本通过同目录临时文件、文件同步和替换更新；如果一项任务中断，之前已保存的 trial 路径继续保留，剩余项不会从计划里消失。
+`run_suite()` first writes a run ledger that contains all slots, then lets the existing `run_case()` handle each case in order. The run ledger is updated through a temporary file in the same directory, a file sync, and a replacement; if a task is interrupted, the trial paths already saved are kept, and the remaining items do not disappear from the plan.
 
 ```python
 slot["status"] = "completed"
@@ -139,10 +139,10 @@ ledger["updated_at"] = _now()
 _atomic_json(ledger_path, ledger)
 ```
 
-`build_suite_report()` 会先验证账本、每个槽位和原始 TrialResult 的 suite/run/repetition/fixture 摘要一致，再统计数字。每条结果保留相对路径，报告可回到原始 trial 查看。
+`build_suite_report()` first verifies that the ledger, every slot, and the raw TrialResults agree on the suite/run/repetition/fixture digests, and only then computes the numbers. Every result keeps its relative path, so the report can lead back to the raw trial.
 
-## 本版特性、下一课与代码索引
+## Version Features, Next Lesson, and Code Index
 
-v0.51 为单题评测增加有版本的任务合同、顺序编排、原子运行账本和逐题证据报告。它不改 Agent Runtime 的决策、计划或权限，也不加入新的模型工具。四道固定题和当前运行状态见[评测说明](../evaluation/README.md)；真实结果生成后归档到[首份基线目录](../evaluation/baselines/v0.51/README.md)。
+v0.51 adds versioned task contracts, ordered orchestration, an atomic run ledger, and per-case evidence reports to single-case evaluation. It does not change the Agent Runtime's decisions, plans, or permissions, and adds no new model tools. For the four fixed cases and the current run status, see the [evaluation guide](../evaluation/README.md); after real results are produced, they are archived in the [first baseline directory](../evaluation/baselines/v0.51/README.md).
 
-下一阶段将在同一条评测链路上检查故障处理和恢复行为。
+The next stage checks fault handling and recovery behavior on the same evaluation chain.

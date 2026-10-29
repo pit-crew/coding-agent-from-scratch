@@ -1,37 +1,37 @@
-# 第 18 课：受限恢复策略（Recovery Policy，v0.18）
+# Lesson 18: Bounded recovery policy (Recovery Policy, v0.18)
 
-上一课：[失败模型](17-failure-model.md) · [教程总览](README.md) · 下一课：[单文件检查点与回滚（Checkpoint / Rollback）](19-checkpoint-rollback.md)
+Previous: [Failure model](17-failure-model.md) · [Tutorial overview](README.md) · Next: [Single-file checkpoint and rollback (Checkpoint / Rollback)](19-checkpoint-rollback.md)
 
-> 代码快照：`v0.18` · 相邻差异：`v0.17..v0.18` · 命令环境：Bash/zsh
+> Code snapshot: `v0.18` · Adjacent diff: `v0.17..v0.18` · Shell: Bash/zsh
 
-> 补丁代码快照：`v0.18.1` · 相邻差异：`v0.18..v0.18.1` · 命令环境：Bash/zsh
+> Patch snapshot: `v0.18.1` · Adjacent diff: `v0.18..v0.18.1` · Shell: Bash/zsh
 
-> 本课保留 v0.18 的概念和演进基线；恢复边界以 v0.18.1 修正后的实现为准。v0.18.1 没有增加新的恢复动作，只把既有承诺在拒绝、授权、预算和终态路径上落实一致。
+> This lesson keeps the concepts and evolution baseline of v0.18; the recovery boundaries follow the implementation as corrected in v0.18.1. v0.18.1 adds no new recovery actions; it only makes the existing promises hold consistently on the rejection, authorization, budget, and terminal-state paths.
 
-> 运行要求：Python 3.10+；运行时只使用标准库。
+> Requirements: Python 3.10+; the runtime uses only the standard library.
 
-## 本课目标
+## Lesson Goals
 
-第 17 课已经能回答“哪次调用失败、失败属于什么类别、可能有没有副作用”，但还没有规定模型下一步能做什么。本课要解决的是：**失败后怎样做出有限、可审计、不会把一次成功调用误当成修复的选择。**
+Lesson 17 can already answer "which call failed, which category the failure belongs to, and whether there may be side effects", but it does not yet say what the model may do next. This lesson solves: **after a failure, how to make a bounded, auditable choice that never mistakes one successful call for a fix.**
 
-读完本课，你应能解释：
+After reading this lesson, you should be able to explain:
 
-- `recover` 为什么是一个受 JSON Schema（描述输入形状和允许值的规则）约束的控制工具，而不是模型用文字宣称“已修复”；
-- `retry`、`adjust`、`ask`、`block` 何时适用，以及它们如何经过参数校验、PermissionGate 和预算；
-- 为什么接受恢复后要打开后继 generation（代次），清除旧验证，并在下一轮单独验证；
-- v0.18.1 为什么把“预留额度”“确认目标权限”和“激活 generation”拆开。
+- Why `recover` is a control tool constrained by a JSON Schema (rules describing the input shape and allowed values), rather than the model claiming "fixed" in words;
+- When `retry`, `adjust`, `ask`, and `block` apply, and how they pass through argument validation, the PermissionGate, and budgets;
+- Why accepting a recovery opens a successor generation, clears old verification, and requires a separate verification in the next round;
+- Why v0.18.1 separates "reserving budget", "confirming target permission", and "activating the generation".
 
-主线只有一句话：**先根据失败事实选择有限动作，再用当前代次的新验证判断任务是否真的完成。**
+The main thread is one sentence: **first choose a bounded action from the failure facts, then judge whether the task is really done with new verification of the current generation.**
 
-## 上一版的问题
+## Problems in the Previous Version
 
-v0.17 建立了事实层，但模型仍可能只在自然语言中决定“再试一次”“换个参数”或“停止”。自然语言不能保证重试的是同一组原始参数，也不能阻止同一失败被无限重复。更重要的是，恢复调用返回成功时，不能因此宣称原任务已经修复；它只说明某个恢复 attempt（一次调用记录）执行完了。
+v0.17 built the fact layer, but the model could still decide "try again", "change the arguments", or "stop" only in natural language. Natural language cannot guarantee that a retry uses the same original arguments, and it cannot stop the same failure from repeating forever. More importantly, when a recovery call returns success, that cannot be taken as proof that the original task is fixed; it only says that a recovery attempt (a call record) finished.
 
-v0.18 把这个选择放进已有工具协议：模型调用 `recover`，运行时校验动作和 failure 引用、预留预算，需要执行真实工具时仍走参数校验、PermissionGate（权限闸门）和 ToolExecutor（工具执行边界）。恢复结果只报告执行事实；是否修复，交给后续 verification（独立验证）。
+v0.18 puts this choice into the existing tool protocol: the model calls `recover`, the runtime validates the action and the failure reference and reserves budget, and when a real tool needs to run, it still goes through argument validation, the PermissionGate, and the ToolExecutor (the tool execution boundary). The recovery result reports only execution facts; whether the problem is fixed is left to a later, independent verification.
 
-## 前置条件与版本切换
+## Prerequisites and Version Checkout
 
-建议先阅读第 17 课。命令均适用于 Bash/zsh：
+Read Lesson 17 first. All commands are for Bash/zsh:
 
 ```bash
 git checkout v0.17
@@ -42,62 +42,62 @@ git diff v0.18..v0.18.1 -- src/mini_agent/recovery.py src/mini_agent/state.py sr
 git checkout v0.18.1
 ```
 
-前四条命令让读者先看到 v0.18 新增了什么，再看到 v0.18.1 修正了哪些边界；最后一条切到补丁快照。查看差异时，先找 `recover` 从哪里注册、恢复如何复用 ToolExecutor，再看补丁如何把拒绝也写入 State。正文涉及 v0.18 原始行为的地方会明确标出，避免把补丁能力倒灌回主版本。
+The first four commands show what v0.18 added and then which boundaries v0.18.1 corrected; the last one switches to the patch snapshot. When you read the diff, first find where `recover` is registered and how recovery reuses the ToolExecutor, then see how the patch also writes rejections into State. Where the text refers to original v0.18 behavior, it says so explicitly, so patch capabilities are not projected back onto the main version.
 
-## 新增与改动文件
+## New and Changed Files
 
-下表是本课教学主线直接涉及的文件；补丁还调整了文件工具、上下文渲染和终态调度。
+The table lists the files directly involved in this lesson's teaching thread; the patch also adjusts the file tools, context rendering, and terminal-state scheduling.
 
-| 文件 | 变化 | 作用 |
+| File | Change | Purpose |
 |---|---|---|
-| `src/mini_agent/recovery.py` | v0.18 新增；v0.18.1 收紧拒绝和授权顺序 | 定义 `recover` schema 与动作调度 |
-| `src/mini_agent/state.py` | 增加恢复记录、因果链接、额度和 generation 操作 | 原子保存恢复事实，避免并发绕过预算 |
-| `src/mini_agent/tools/__init__.py` | 为每个 `AgentState` 注册 `recover` | 让控制工具与任务状态绑定，不共享任务数据 |
-| `src/mini_agent/tools/base.py` | 复用预留 attempt/generation；补丁处理终态和 schema 拒绝 | 保持所有真实工具经过同一执行边界 |
-| `src/mini_agent/agent.py` | 顺序处理 recover，并为每个调用回灌 tool result | 保持调用协议完整 |
+| `src/mini_agent/recovery.py` | New in v0.18; v0.18.1 tightens rejection and authorization order | Defines the `recover` schema and action dispatch |
+| `src/mini_agent/state.py` | Adds recovery records, causal links, budgets, and generation operations | Saves recovery facts atomically so concurrency cannot bypass budgets |
+| `src/mini_agent/tools/__init__.py` | Registers `recover` for each `AgentState` | Binds the control tool to the task state without sharing task data |
+| `src/mini_agent/tools/base.py` | Reuses the reserved attempt/generation; the patch handles terminal states and schema rejections | Keeps all real tools passing through the same execution boundary |
+| `src/mini_agent/agent.py` | Handles recover in order and feeds back a tool result for every call | Keeps the call protocol complete |
 
-## 版本变更定位
+## Version Change Map
 
-图例：`[旧]` 是上一版已有，`[+]` 是本版新增，`[~]` 是本版修改，`[C]` 是主要消费者，`[B]` 是本版边界。
+Legend: `[old]` already in the previous version, `[+]` new in this version, `[~]` changed in this version, `[C]` main consumer, `[B]` boundary of this version.
 
-先看 v0.17 的基线：失败会被记录和展示，但没有受控的恢复入口。
+First the v0.17 baseline: failures are recorded and shown, but there is no controlled recovery entry.
 
 ```text
-[旧] agent loop -> ToolExecutor.execute_result()
-  -> [旧] AgentState.record_execution_result()
+[old] agent loop -> ToolExecutor.execute_result()
+  -> [old] AgentState.record_execution_result()
   -> ExecutionAttempt / FailureEvent / generation
-  -> role=tool 回灌 -> [C] Structured State
-  -> [B] 没有受控的恢复入口
+  -> role=tool fed back -> [C] Structured State
+  -> [B] no controlled recovery entry
 ```
 
-v0.18 在同一条调用链旁边加入控制工具。这个图展示的是概念主线；目标工具的权限预留顺序在 v0.18.1 由补丁进一步收紧：
+v0.18 adds a control tool alongside the same call chain. This diagram shows the conceptual main thread; the order in which target permissions are reserved is tightened further by the v0.18.1 patch:
 
 ```text
-[旧] FailureEvent + Structured State
+[old] FailureEvent + Structured State
   -> [~] agent loop -> [+] recover JSON Schema
   -> [+] RecoveryRuntime.recover()
-       -> 校验 failure、动作组合和预算
+       -> validate the failure, action combination, and budget
        -> [+] AgentState.reserve_recovery()
-            -> retry：取直接失败 attempt 的私有原始参数
-            -> adjust：先校验目标工具的新参数
-            -> ask/block：不进入 handler，最终阻塞
+            -> retry: take the private original arguments of the directly failed attempt
+            -> adjust: validate the target tool's new arguments first
+            -> ask/block: do not enter the handler, finally block
        -> PermissionGate -> ToolExecutor.execute_result() -> handler
        -> [+] RecoveryAction / ExecutionAttempt
-  -> role=tool 回灌
-  -> 下一轮单独 verification
+  -> role=tool fed back
+  -> separate verification in the next round
 
-[B] rollback 明确拒绝；没有 checkpoint、自动 repair 调度、trace replay 或跨进程持久化。
+[B] rollback is explicitly refused; no checkpoint, automatic repair scheduling, trace replay, or cross-process persistence.
 ```
 
-v0.18 的入口是 `RecoveryRuntime.recover()`，它负责动作选择；`AgentState` 保存 failure、recovery、generation 和预算；ToolExecutor 仍是唯一的参数、权限和 handler 边界。v0.18.1 的重点不是另加一条路径，而是让这些节点在拒绝、终态和权限不通过时仍然保持一致。
+The v0.18 entry is `RecoveryRuntime.recover()`, which chooses the action; `AgentState` stores failures, recoveries, generations, and budgets; the ToolExecutor is still the only boundary for arguments, permissions, and handlers. The focus of v0.18.1 is not another path but keeping these nodes consistent on rejection, terminal states, and failed permission checks.
 
-## 核心概念与数据结构
+## Core Concepts and Data Structures
 
-### 1. `recover` 是可校验的恢复申请
+### 1. `recover` is a validatable recovery request
 
-要解决的问题是“模型说要修复”没有统一格式，也没有明确说明它针对哪次失败。`recover` 是一个控制工具：它不直接代表任务完成，而是提交一个带 failure 因果引用、理由和动作参数的申请。
+The problem is that "the model says it will fix it" has no uniform format and does not say clearly which failure it addresses. `recover` is a control tool: it does not represent task completion directly; it submits a request with a causal failure reference, a reason, and action arguments.
 
-下面的 schema 片段说明输入的骨架；阅读它前，先记住用途是限制模型能表达的恢复范围：
+The schema snippet below shows the skeleton of the input; before reading it, remember its purpose is to limit the range of recovery the model can express:
 
 ```python
 parameters = {
@@ -115,28 +115,28 @@ parameters = {
 }
 ```
 
-这段规则通过后，还要检查 failure 是否存在、任务是否已经终态、动作组合是否合法、目标参数是否能通过工具 schema，以及预算是否还有余量。失败的申请不会静默消失：在 v0.18.1 中，schema、参数、failure 引用、动作组合、恢复预算、`recover` 自身权限和目标权限的拒绝都会生成唯一 `recovery_id`，并只记录一条 `status="rejected"` 的 `RecoveryAction`；generation 不变。
+After these rules pass, the runtime still checks whether the failure exists, whether the task is already in a terminal state, whether the action combination is valid, whether the target arguments pass the tool schema, and whether there is budget left. A failed request does not disappear silently: in v0.18.1, rejections for schema, arguments, failure reference, action combination, recovery budget, `recover`'s own permission, and target permission all produce a unique `recovery_id` and record exactly one `RecoveryAction` with `status="rejected"`; the generation does not change.
 
-工具名严格匹配注册表。例如 `edit_file` 是合法目标名，`functions.edit_file` 不是别名。目标权限使用当前会话的同一把 PermissionGate；目标获准后，实际执行复用已经确认的授权，不重复询问同一次目标。
+Tool names must match the registry exactly. For example, `edit_file` is a valid target name, but `functions.edit_file` is not an alias. Target permission uses the same PermissionGate of the current session; once the target is approved, the actual execution reuses the confirmed authorization and does not ask again for the same target.
 
-### 2. 四种动作把恢复限制在可解释的范围内
+### 2. Four actions keep recovery within an explainable range
 
-四种动作解决四个不同问题：
+The four actions solve four different problems:
 
-| action | 需要提供什么 | 运行时行为 | 重要边界 |
+| action | What it needs | Runtime behavior | Important boundary |
 |---|---|---|---|
-| `retry` | 直接失败的 `requested_attempt` | 取 State 私有保存的原始参数，重新执行原工具 | 不接受模型改写参数；同一 failure 默认最多 3 次，且 failure 必须可重试 |
-| `adjust` | `requested_tool` 与 `requested_arguments` | 先按目标工具 schema 校验，再执行 | 记录 canonical JSON hash 和脱敏摘要；不能把 `recover` 作为目标 |
-| `ask` | failure 引用与 reason | 不进入 handler，创建 state-only generation，进入 `blocked` | 表示等待外部条件，但本版不提供外部等待机制 |
-| `block` | failure 引用与 reason | 不进入 handler，创建 state-only generation，进入 `blocked` | 表示按策略保守停止 |
+| `retry` | The directly failed `requested_attempt` | Takes the original arguments State keeps privately and runs the original tool again | Does not accept model-rewritten arguments; at most 3 times per failure by default, and the failure must be retryable |
+| `adjust` | `requested_tool` and `requested_arguments` | Validates against the target tool schema first, then runs | Records the canonical JSON hash and a redacted summary; `recover` cannot be the target |
+| `ask` | The failure reference and reason | Does not enter a handler, creates a state-only generation, enters `blocked` | Means waiting for an external condition, but this version provides no external waiting mechanism |
+| `block` | The failure reference and reason | Does not enter a handler, creates a state-only generation, enters `blocked` | Means stopping conservatively by policy |
 
-`retry` 的直接引用关系可以用下面的真实逻辑理解。代码前先明确用途：它防止模型拿一个“相关但不是直接失败”的 attempt 来重试；代码后再看结果：参数从 State 的私有副本深拷贝，不从模型重新提交。
+The direct reference rule of `retry` can be understood from the real logic below. Purpose first: it prevents the model from retrying with an attempt that is "related but not the direct failure"; result afterwards: the arguments are deep-copied from State's private copy, not resubmitted by the model.
 
 ```python
 if source_attempt is None or source_attempt.failure_id != caused_by_failure_id:
     return self._reject_recovery(
         action, caused_by_failure_id, reason,
-        "retry 必须引用直接失败 attempt",
+        "retry must reference the directly failed attempt",
     ) + (None,)
 requested_tool = source_attempt.tool
 requested_arguments = deepcopy(
@@ -144,40 +144,40 @@ requested_arguments = deepcopy(
 )
 ```
 
-因此 retry 不能悄悄替换参数；adjust 才是显式提交新工具和新参数的入口。adjust 的无效参数不会进入权限闸门或 handler。两种真实执行都仍经过 ToolExecutor.execute_result()。
+So retry cannot quietly replace arguments; adjust is the entry for explicitly submitting a new tool and new arguments. Invalid adjust arguments never reach the permission gate or the handler. Both kinds of real execution still pass through ToolExecutor.execute_result().
 
-### 3. 接受恢复时，generation 是验证边界，不是快照
+### 3. When recovery is accepted, the generation is a verification boundary, not a snapshot
 
-generation 的直观含义是“从哪一次环境边界开始重新验证”。它不是操作系统快照，也不能撤销文件、shell、网络或未知副作用。接受恢复后，旧 verification evidence 会被清空，并要求下一轮验证。
+The intuitive meaning of a generation is "the environment boundary from which verification must start again". It is not an operating system snapshot and cannot undo files, shell, network, or unknown side effects. After a recovery is accepted, old verification evidence is cleared, and verification is required in the next round.
 
-v0.18 原始实现把预留动作、generation 激活和目标执行连在一起。v0.18.1 将它们拆开，以避免目标权限还没通过就让旧证据失效。补丁后的顺序如下：
+The original v0.18 implementation chained the reservation, generation activation, and target execution together. v0.18.1 separates them so that old evidence is not invalidated before the target permission has passed. The order after the patch:
 
 ```text
 recovery_target()
-  -> 只读确认 failure、动作组合、目标和当前额度
+  -> read-only confirmation of the failure, action combination, target, and current budget
 reserve_recovery(..., defer_generation=True)
-  -> 在 State 锁内创建 proposed action
-  -> 预留 failure retry 与目标参数指纹额度
-  -> generation 尚未改变，attempt 尚未创建
+  -> create a proposed action inside the State lock
+  -> reserve failure retry and target argument fingerprint budget
+  -> generation not yet changed, attempt not yet created
 PermissionGate.guard(target)
-  ├─拒绝 -> deny_reserved_recovery()
-  │         proposed -> rejected
-  │         释放未使用的 retry / 参数指纹额度
-  │         不打开 generation
-  └─通过 -> activate_recovery()
-            打开后继 generation，清除旧 verification
-            创建并执行预留 attempt
+  ├─denied -> deny_reserved_recovery()
+  │           proposed -> rejected
+  │           release the unused retry / argument fingerprint budget
+  │           do not open a generation
+  └─allowed -> activate_recovery()
+               open the successor generation, clear old verification
+               create and run the reserved attempt
 ```
 
-这里有两类额度，含义不要混淆：恢复动作额度记录“申请过几次”，所以目标权限拒绝后不退还；failure retry 和参数指纹额度限制“实际可执行几次”，目标没有获准执行时会退还。只有目标获准后才推进 generation，表示恢复边界已被接受，而不是一个尚未授权的意图。
+There are two kinds of budget here; do not confuse their meaning: the recovery action budget records "how many requests were made", so it is not refunded after a target permission denial; the failure retry and argument fingerprint budgets limit "how many times something can actually run", and they are refunded when the target was not approved to run. The generation advances only after the target is approved, meaning the recovery boundary was accepted, not that an unauthorized intent exists.
 
-### 4. 恢复结果不是修复证据
+### 4. A recovery result is not evidence of a fix
 
-`RecoveryAction.result_attempt` 只表示恢复调用的执行事实，不表示任务已经修复。retry/adjust 的目标 attempt 使用已预留 generation；ask/block 没有 handler，却仍创建 state-only generation 并进入 `blocked`。
+`RecoveryAction.result_attempt` only represents the execution facts of the recovery call, not that the task is fixed. The target attempt of retry/adjust uses the reserved generation; ask/block have no handler but still create a state-only generation and enter `blocked`.
 
-恢复结果先以对应的 `role=tool` 消息完整回灌。下一轮才能调用 `run_shell(purpose="verification")`，只有当前 generation 的 `[exit=0]` 才可能成为完成条件。如果验证失败，它是新的 `validation` failure，不能用“恢复工具返回 executed”来替代。
+The recovery result is first fed back in full as the matching `role=tool` message. Only in the next round can `run_shell(purpose="verification")` be called, and only `[exit=0]` in the current generation can become a completion condition. If verification fails, that is a new `validation` failure, and "the recovery tool returned executed" cannot replace it.
 
-这条边界在状态判断中体现为“证据的代次必须等于当前代次”：
+This boundary shows in the state check as "the evidence's generation must equal the current generation":
 
 ```python
 return (
@@ -187,117 +187,117 @@ return (
 )
 ```
 
-因此恢复返回 `executed` 只说明恢复 attempt 已记录；只有后续验证把当前 generation 标记为通过，任务才有完成证据。
+So recovery returning `executed` only says the recovery attempt was recorded; the task has completion evidence only after a later verification marks the current generation as passed.
 
-## 为什么这样设计
+## Why This Design
 
-让模型读到失败文本后直接再调工具成本低，却不能保证重试同一调用，也难以限制循环；让恢复模块自行执行所有修复，则会重复工具逻辑，容易绕过参数校验和权限规则。
+Letting the model call the tool again directly after reading the failure text is cheap, but it cannot guarantee the same call is retried and makes loops hard to limit; letting the recovery module run all fixes itself would duplicate tool logic and could easily bypass argument validation and permission rules.
 
-本版采用“控制工具 + 既有执行器”：recover 只选择受限动作、建立因果链接、占用预算；真实工具仍走唯一的参数和权限边界。这样做多了一次控制调用和一个 LLM 回合，换来可审计的记录，以及不会跨 generation 误用验证证据的约束。
+This version uses "a control tool + the existing executor": recover only chooses a bounded action, sets up causal links, and uses budget; real tools still go through the single argument and permission boundary. This costs one more control call and one more LLM round, in exchange for auditable records and a guarantee that verification evidence is never misused across generations.
 
-本版不自动重写完整 Todo；需要改计划时，下一轮使用 `update_todo`。本版也不把 generation 当成 checkpoint，不提供自动 repair、rollback 或跨进程恢复。
+This version does not rewrite the full Todo automatically; when the plan needs to change, the next round uses `update_todo`. This version also does not treat the generation as a checkpoint and provides no automatic repair, rollback, or cross-process recovery.
 
-## 设计边界
+## Design Boundaries
 
-- `MAX_RECOVERY_ACTIONS` 默认为 8；恢复申请额度耗尽时保守进入 `blocked`。`MAX_FAILURE_RETRIES`、`MAX_ATTEMPT_FINGERPRINTS` 和 `MAX_REPAIR_CYCLES` 分别默认为 3、3、3。
-- schema、参数、failure 引用、预算或权限拒绝的恢复不会打开 generation，但 v0.18.1 仍记录拒绝事实和 `recovery_id`。
-- hash 用于关联和计数，脱敏摘要只用于展示；两者都不是授权凭证。
-- recover 与 possible effect 同轮时按模型顺序串行提交；verification 不得与副作用同轮，恢复后必须下一轮验证。
-- rollback 明确拒绝。v0.18 没有检查点，不承诺撤销文件、shell、网络或未知副作用，也不提供跨进程持久化。
-- ask 和 block 都是 `blocked`；前者说明等待外部条件，后者说明策略停止，本版不会自动等待或继续执行。
-- Structured State 会展示 recovery notice、最近三条失败与恢复动作、失败对应的工具/attempt/generation/分类/可重试性，以及 hash 形式的剩余预算；裁剪或压缩后这些字段仍从 State 快照重建。
-- 一旦状态进入 `blocked` 或 `failed`，调度器和 Executor 都拒绝后续 handler 与权限询问。v0.18.1 仍按原顺序为批次中剩余的每个 tool call 追加 `task_terminal` 结果并全部回灌；终态原因不会被后续拒绝记录改写。
+- `MAX_RECOVERY_ACTIONS` defaults to 8; when the recovery request budget is exhausted, the task conservatively enters `blocked`. `MAX_FAILURE_RETRIES`, `MAX_ATTEMPT_FINGERPRINTS`, and `MAX_REPAIR_CYCLES` default to 3, 3, and 3 respectively.
+- Recoveries rejected for schema, arguments, failure reference, budget, or permission do not open a generation, but v0.18.1 still records the rejection fact and a `recovery_id`.
+- The hash is used for association and counting, and the redacted summary only for display; neither is an authorization credential.
+- When recover appears in the same round as a possible effect, they commit serially in model order; verification must not be in the same round as side effects, and after recovery it must be verified in the next round.
+- rollback is explicitly refused. v0.18 has no checkpoints and makes no promise to undo files, shell, network, or unknown side effects, and it provides no cross-process persistence.
+- ask and block are both `blocked`; the first says it is waiting for an external condition, the second that policy stopped it; this version does not wait or continue automatically.
+- Structured State shows the recovery notice, the last three failures and recovery actions, the tool/attempt/generation/category/retryability for each failure, and the remaining budgets in hash form; after trimming or compaction, these fields are still rebuilt from the State snapshot.
+- Once the state enters `blocked` or `failed`, both the scheduler and the Executor refuse later handlers and permission prompts. v0.18.1 still appends a `task_terminal` result, in the original order, for every remaining tool call in the batch and feeds them all back; the terminal reason is not rewritten by later rejection records.
 
-## 关键流程
+## Key Flow
 
-下面先看一次 retry 的正常路径，再看两个重要拒绝点。它用于判断运行时观察到的字段，而不是把恢复调用当成完成信号：
+First the normal path of one retry, then two important rejection points. Use it to judge the fields observed at runtime, not to treat a recovery call as a completion signal:
 
 ```text
-一次执行 attempt 失败，创建 failure event
+an execution attempt fails and creates a failure event
   -> recover(retry,
-       caused_by_failure_id=<该 failure event 的 ID>,
-       requested_attempt=<直接失败的 attempt ID>)
-  -> schema / failure 关联 / retry 预算
-       ├─拒绝 -> status=rejected，generation 不变 -> role=tool
-       └─预留额度 -> 取私有原始参数 -> PermissionGate
-                    ├─拒绝：动作 rejected，实际执行额度释放，generation 不变
-                    └─接受：打开 generation，清除旧 verification
-                         -> handler -> 新 attempt
+       caused_by_failure_id=<ID of that failure event>,
+       requested_attempt=<ID of the directly failed attempt>)
+  -> schema / failure link / retry budget
+       ├─rejected -> status=rejected, generation unchanged -> role=tool
+       └─budget reserved -> take the private original arguments -> PermissionGate
+                    ├─denied: action rejected, execution budget released, generation unchanged
+                    └─accepted: open a generation, clear old verification
+                         -> handler -> new attempt
                     -> role=tool
-  -> 下一轮单独 verification
-       ├─[exit=0]：当前 generation 获得证据
-       └─失败：新的 validation failure，不能宣称已修复
+  -> separate verification in the next round
+       ├─[exit=0]: the current generation gets evidence
+       └─failure: a new validation failure; cannot claim it is fixed
 ```
 
-运行真实任务时，成功接受恢复应观察到 generation 增加、旧 verification evidence 消失，并出现要求独立验证的 recovery notice。若申请或目标权限被拒绝，应看到 `status=rejected`、一个 recovery_id，且 generation 不变；如果同一批次在某个 possible handler 异常后进入终态，后续调用只得到 `error_kind=task_terminal`，不会进入 handler。
+When you run a real task, an accepted recovery should show the generation increasing, old verification evidence disappearing, and a recovery notice requiring independent verification. If the request or the target permission is rejected, you should see `status=rejected`, a recovery_id, and an unchanged generation; if the same batch enters a terminal state after an exception in a possible handler, later calls only get `error_kind=task_terminal` and never enter the handler.
 
-## 实现拆解
+## Implementation Breakdown
 
-`create_registry(state)` 为每个 `AgentState` 新建 RecoveryRuntime 和 `recover` 工具，避免不同任务共享恢复状态。agent loop 按模型顺序处理 recover；每个 tool call 都有对应的 `role=tool` 结果，全部回灌后才进入下一轮。
+`create_registry(state)` creates a new RecoveryRuntime and `recover` tool for each `AgentState`, so different tasks do not share recovery state. The agent loop handles recover in the model's order; every tool call has a matching `role=tool` result, and the next round starts only after all of them are fed back.
 
-在 v0.18.1，`RecoveryRuntime.recover()` 的关键顺序是：检查 reason 与 rollback；adjust 校验目标参数；`recovery_target()` 做不改变状态的目标确认；`reserve_recovery(defer_generation=True)` 原子预留额度；用当前会话的 PermissionGate 检查目标；`activate_recovery()` 打开 generation；ToolExecutor 执行目标；`record_execution_result()` 写入 attempt/failure。目标权限拒绝只更新已预留动作，不增加第二条拒绝记录，也不打开 generation。
+In v0.18.1, the key order of `RecoveryRuntime.recover()` is: check the reason and rollback; validate the target arguments for adjust; `recovery_target()` confirms the target without changing state; `reserve_recovery(defer_generation=True)` reserves budget atomically; check the target with the current session's PermissionGate; `activate_recovery()` opens the generation; the ToolExecutor runs the target; `record_execution_result()` writes the attempt/failure. A target permission denial only updates the reserved action, adds no second rejection record, and opens no generation.
 
-补丁还把 `edit_file` 的两个已知前置条件错误从普通 `ValueError` 分开：`EditNoMatchError` 表示 `old_string` 没有匹配，`EditMultipleMatchesError` 表示多处匹配但没有 `replace_all=true`。两种情况都发生在写入前，文件保持原样；Executor 用 `error_kind` 分别记录，State 将它们归为 `deterministic`，任务保持可继续状态。相反，已获准进入 handler 的普通异常仍可能已经产生未知副作用，继续归为 `unknown` 并阻塞；补丁不通过异常文字猜测是否写入。
+The patch also separates two known precondition errors of `edit_file` from an ordinary `ValueError`: `EditNoMatchError` means `old_string` did not match, and `EditMultipleMatchesError` means there were several matches without `replace_all=true`. Both happen before writing, so the file stays as it was; the Executor records them separately with `error_kind`, State classifies them as `deterministic`, and the task stays able to continue. By contrast, an ordinary exception in an approved handler may still have produced unknown side effects, so it is still classified as `unknown` and blocks; the patch does not guess from exception text whether a write happened.
 
-## 本版特性、下一课与代码索引
+## Version Features, Next Lesson, and Code Index
 
-v0.18 将失败后的选择限制为精确重试、显式调参、等待外部条件或保守停止。它不撤销副作用，也不把恢复 attempt 当作完成证据；每个已接受动作都要求当前 generation 的独立验证。v0.18.1 进一步让拒绝记录、预算预留、目标授权、文件前置条件和终态批次遵守同一套边界。
+v0.18 limits the choices after a failure to an exact retry, an explicit adjustment, waiting for an external condition, or a conservative stop. It does not undo side effects and does not treat a recovery attempt as completion evidence; every accepted action requires independent verification of the current generation. v0.18.1 further makes rejection records, budget reservation, target authorization, file preconditions, and terminal batches follow the same boundaries.
 
-下一课将讨论检查点与有边界的回滚：只有保存明确文件前镜像的场景才可能恢复内容，shell 和外部副作用仍不承诺可回滚。
+The next lesson discusses checkpoints and bounded rollback: content can be restored only where an explicit pre-change image of a file was saved, and shell and external side effects are still not promised to be reversible.
 
-核心代码索引：
+Core code index:
 
-- v0.18：[recovery.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.18/src/mini_agent/recovery.py)、[state.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.18/src/mini_agent/state.py)、[tools/__init__.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.18/src/mini_agent/tools/__init__.py)、[tools/base.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.18/src/mini_agent/tools/base.py)、[agent.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.18/src/mini_agent/agent.py)
-- v0.18.1：[recovery.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.18.1/src/mini_agent/recovery.py)、[state.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.18.1/src/mini_agent/state.py)、[tools/base.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.18.1/src/mini_agent/tools/base.py)、[tools/file.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.18.1/src/mini_agent/tools/file.py)、[tools/file_errors.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.18.1/src/mini_agent/tools/file_errors.py)、[context.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.18.1/src/mini_agent/context.py)、[agent.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.18.1/src/mini_agent/agent.py)
+- v0.18: [recovery.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.18/src/mini_agent/recovery.py), [state.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.18/src/mini_agent/state.py), [tools/__init__.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.18/src/mini_agent/tools/__init__.py), [tools/base.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.18/src/mini_agent/tools/base.py), [agent.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.18/src/mini_agent/agent.py)
+- v0.18.1: [recovery.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.18.1/src/mini_agent/recovery.py), [state.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.18.1/src/mini_agent/state.py), [tools/base.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.18.1/src/mini_agent/tools/base.py), [tools/file.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.18.1/src/mini_agent/tools/file.py), [tools/file_errors.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.18.1/src/mini_agent/tools/file_errors.py), [context.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.18.1/src/mini_agent/context.py), [agent.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.18.1/src/mini_agent/agent.py)
 
-## 补丁附录：v0.18.1 修正了什么
+## Patch Appendix: What v0.18.1 Corrected
 
-这一节最后阅读即可：主线仍是“受限恢复后必须重新验证”。补丁没有增加新的动作，而是修正了 v0.18 原始实现中会让模型看到的事实、State 保存的事实和实际执行边界不一致的路径。
+Read this section last: the main thread is still "verify again after bounded recovery". The patch adds no new actions; it corrects the paths in the original v0.18 implementation where the facts the model saw, the facts State saved, and the actual execution boundary disagreed.
 
-### 1. 拒绝也必须成为可追踪事实
+### 1. Rejections must also become traceable facts
 
-v0.18 已经要求恢复可审计、预算在执行前生效、终态后不再执行工具，但原始实现没有在所有入口兑现：schema 或参数拒绝可能没有 `RecoveryAction`，目标权限确认前可能已经推进 generation，同一参数指纹预算没有统一覆盖普通执行与恢复执行，终态批次的后续调用还可能继续走执行路径。
+v0.18 already required recovery to be auditable, budgets to take effect before execution, and no tools to run after a terminal state, but the original implementation did not deliver this at every entry: a schema or argument rejection might have no `RecoveryAction`, the generation might advance before the target permission was confirmed, the same argument fingerprint budget did not uniformly cover ordinary execution and recovery execution, and later calls in a terminal batch might still go down the execution path.
 
-v0.18.1 把这些入口统一到 `reject_recovery()` 或等价的 Executor 拒绝路径。下面的图先说明输入，再说明读者应观察到的结果：
+v0.18.1 unifies these entries into `reject_recovery()` or an equivalent Executor rejection path. The diagram first shows the input, then what you should observe:
 
 ```text
-recover 申请
-  ├─ schema / JSON 不合法
-  ├─ failure 或 action 引用不合法
-  ├─ adjust 目标参数不合法
-  ├─ recover 自身权限拒绝
-  ├─ 恢复或参数指纹预算耗尽
-  └─ 目标工具权限拒绝
+recover request
+  ├─ schema / JSON invalid
+  ├─ failure or action reference invalid
+  ├─ adjust target arguments invalid
+  ├─ recover's own permission denied
+  ├─ recovery or argument fingerprint budget exhausted
+  └─ target tool permission denied
          v
-一条 RecoveryAction(status="rejected")
-  + 一个包含 recovery_id 的 role=tool 结果
-  + generation 保持不变
+one RecoveryAction(status="rejected")
+  + one role=tool result containing the recovery_id
+  + generation unchanged
 ```
 
-只记录一次很重要：目标权限拒绝发生在已创建的 `proposed` 动作之后，运行时更新这条记录，而不是再追加第二条拒绝记录。恢复动作申请本身仍消耗 `MAX_RECOVERY_ACTIONS`，所以模型不能用无效参数或无权目标无限消耗回合；默认上限为 8，达到上限后任务进入 `blocked`。
+Recording only once matters: a target permission denial happens after the `proposed` action already exists, so the runtime updates that record instead of appending a second rejection record. The recovery request itself still consumes `MAX_RECOVERY_ACTIONS`, so the model cannot consume rounds endlessly with invalid arguments or unauthorized targets; the default limit is 8, after which the task enters `blocked`.
 
-### 2. 把额度预留、授权和 generation 激活拆开
+### 2. Separating budget reservation, authorization, and generation activation
 
-补丁后的 `proposed` 不是执行结果。它只说明 State 已在锁内占用恢复申请额度和实际执行所需的 retry/指纹额度。目标没有获准时，后两类实际执行额度释放；恢复申请额度不释放。通过同一把 PermissionGate 后，`activate_recovery()` 才打开后继 generation，Executor 以 `permission_already_checked=True` 复用这次授权，避免同一目标被重复询问。
+After the patch, `proposed` is not an execution result. It only says that State has reserved, inside the lock, the recovery request budget and the retry/fingerprint budget needed for actual execution. When the target is not approved, the latter two execution budgets are released; the recovery request budget is not. Only after the same PermissionGate approves does `activate_recovery()` open the successor generation, and the Executor reuses this authorization with `permission_already_checked=True`, so the same target is not asked about twice.
 
-补丁还收紧动作组合：retry 只能引用可重试 failure 的直接失败 attempt，并复用 State 私有的原始参数；adjust 不接受 `requested_attempt`；ask/block 不接受目标参数；`recover` 本身不能成为恢复目标。目标工具名必须严格匹配注册表，例如 `edit_file`，而不是 `functions.edit_file`。
+The patch also tightens action combinations: retry can only reference the directly failed attempt of a retryable failure and reuses State's private original arguments; adjust does not accept `requested_attempt`; ask/block do not accept target arguments; `recover` itself cannot be a recovery target. The target tool name must match the registry exactly, for example `edit_file`, not `functions.edit_file`.
 
-### 3. 区分“无法编辑”和“写入结果未知”
+### 3. Distinguishing "cannot edit" from "write result unknown"
 
-`edit_file` 先读取文件并检查 `old_string`。没有匹配，或多处匹配但没有 `replace_all=true` 时，写入尚未发生，这是确定性前置条件失败，不是未知副作用。v0.18.1 用专用异常和 `error_kind` 稳定归类，文件保持原样，generation 仍保留这次已获准的 possible-effect attempt 所打开的边界，但任务不会仅因这两个异常进入 `blocked`，模型可以改正参数后申请 adjust。
+`edit_file` first reads the file and checks `old_string`. When there is no match, or several matches without `replace_all=true`, no write has happened yet; this is a deterministic precondition failure, not an unknown side effect. v0.18.1 classifies it stably with dedicated exceptions and `error_kind`; the file stays as it was, the generation keeps the boundary opened by this approved possible-effect attempt, but the task does not enter `blocked` just because of these two exceptions, and the model can correct the arguments and request adjust.
 
-相反，只要调用已获准进入 handler，而运行时无法证明副作用没有发生，就仍用 `handler_exception` 和 `unknown` 分类，保留已推进的 generation 并进入 `blocked`。补丁没有通过异常文本猜测文件是否写入。
+By contrast, as long as a call has been approved into the handler and the runtime cannot prove that no side effect happened, it is still classified with `handler_exception` and `unknown`, keeps the advanced generation, and enters `blocked`. The patch does not guess from exception text whether the file was written.
 
-### 4. 终态既停止执行，也保持工具协议完整
+### 4. A terminal state stops execution and keeps the tool protocol complete
 
-一次 possible-effect handler 抛出未知异常后，State 可能立即进入 `blocked`。同一条模型消息中剩余的 tool call 不再询问权限，也不进入 handler；但它们不能从协议中消失。调度器按原顺序为每个 call 追加对应的 `role=tool`，并以 `error_kind=task_terminal` 说明拒绝原因。
+After a possible-effect handler raises an unknown exception, State may enter `blocked` immediately. The remaining tool calls in the same model message no longer ask for permission or enter handlers; but they cannot disappear from the protocol. The scheduler appends a matching `role=tool` for every call in the original order and states the rejection reason with `error_kind=task_terminal`.
 
-这同时维护两个不变量：`blocked` 或 `failed` 之后不再进入后续 handler；每个 tool call 仍有且只有一个对应的 tool result，整批回灌后才进入下一轮。终态原因采用“首次终态获胜”，后续拒绝记录不会覆盖最初导致终态的 failure。
+This maintains two invariants at once: after `blocked` or `failed`, no later handler is entered; every tool call still has exactly one matching tool result, and the next round starts only after the whole batch is fed back. The terminal reason follows "the first terminal state wins", so later rejection records do not overwrite the failure that originally caused the terminal state.
 
-### 5. 如何观察补丁是否生效
+### 5. How to observe whether the patch works
 
-切换到补丁 tag 后，可以先查看本课开头给出的真实 diff。运行一次“失败 → 被拒绝的恢复”时，应观察到带 failure 因果引用的 rejected recovery，`recovery_actions_remaining` 减少，而 generation 不变；若是目标权限拒绝，retry 与参数指纹的实际执行额度不减少。
+After switching to the patch tag, first look at the real diff given at the start of this lesson. When you run "failure → rejected recovery", you should see a rejected recovery with a causal failure reference, `recovery_actions_remaining` decreasing, and an unchanged generation; for a target permission denial, the execution budgets for retry and argument fingerprints do not decrease.
 
-运行 `edit_file` 无匹配场景时，应观察到 `error_kind=edit_no_match`、failure category 为 `deterministic`、文件内容不变，任务仍可继续。若让一个已获准的 possible-effect handler 抛出普通异常，则应观察到 category 为 `unknown`、任务进入 `blocked`，同批后续调用只收到 `task_terminal`，不会进入 handler。
+When you run the `edit_file` no-match scenario, you should see `error_kind=edit_no_match`, a failure category of `deterministic`, unchanged file content, and a task that can still continue. If you make an approved possible-effect handler raise an ordinary exception, you should see category `unknown`, the task entering `blocked`, and later calls in the same batch only receiving `task_terminal` without entering the handler.
 
-v0.18.1 仍不提供检查点、回滚、自动 repair 调度或 trace replay；这些属于后续版本。补丁只让 v0.18 已声明的恢复协议在拒绝、预算、权限、异常与终态路径上保持一致。
+v0.18.1 still provides no checkpoint, rollback, automatic repair scheduling, or trace replay; those belong to later versions. The patch only makes the recovery protocol already declared in v0.18 consistent on the rejection, budget, permission, exception, and terminal-state paths.

@@ -1,62 +1,62 @@
-# 多阶段教学仓库方案
+# Multi-Stage Teaching Repository Plan
 
-> 状态：方案已确认，教程导航按单目录分阶段结构落地
-> 决策记录：重置 main 到 v0.01 / 复用 docs/ 加 tutorials 子目录 / v0.01 为无工具纯对话 loop / 先出方案不动代码
-> 更新：教学文档模板加入"使用指导"章节，随版本演进
-> 更新：改为持续迭代模式，不设固定版本上限，每次加一个功能，直到达到轻量编程 agent 的能力集
-> 更新：教程入口按阶段组织，具体课程仍按版本放在 `docs/tutorials/` 根目录，不新增阶段子目录
-> 更新：v0.011 拆为 v0.11–v0.13"阶段四：Context Management"三个版本（tag 命名弃用 v0.011），plan 引导顺移至 v0.14，详见 `context-management-plan.md`
+> Status: plan confirmed; tutorial navigation is implemented as a single directory organized by stage
+> Decision record: reset main to v0.01 / reuse docs/ with a tutorials subdirectory / v0.01 is a tool-free pure conversation loop / plan first, do not touch code
+> Update: the tutorial document template adds a "Usage Guide" section that evolves with the versions
+> Update: switched to continuous iteration with no fixed version limit, adding one feature at a time until the capability set of a lightweight coding agent is reached
+> Update: the tutorial entry is organized by stage; individual lessons stay in the `docs/tutorials/` root by version, with no new stage subdirectories
+> Update: v0.011 was split into the three versions v0.11–v0.13 of "Stage 4: Context Management" (the tag name v0.011 was dropped), and plan guidance moved on to v0.14; see `context-management-plan.md`
 
-## 1. 目标
+## 1. Goal
 
-把 `mini_agent` 改造成**按能力阶段导航、按版本号切片的教学仓库**：学习者从阶段一开始，按 `v0.01 → v0.02 → ...` 顺序 checkout，每个版本只引入一个新概念，配套一份教学文档，最终能理解一个能读写改文件、跑命令、跑测试的编程 agent 是怎么一步步长出来的。
+Turn `mini_agent` into a **teaching repository navigated by capability stage and sliced by version number**: learners start at Stage 1 and check out in the order `v0.01 → v0.02 → ...`; each version introduces only one new concept with a matching teaching document, until learners understand how a coding agent that can read, write, and edit files, run commands, and run tests grows step by step.
 
-本仓库不限于固定版本数，改为持续迭代模式，每次加一个功能，直到达到轻量编程 agent 的能力集。后续版本按需追加，不设上限。
+This repository is not limited to a fixed number of versions; it uses continuous iteration, adding one feature at a time until the capability set of a lightweight coding agent is reached. Later versions are added as needed, with no limit.
 
-## 2. 版本切片表
+## 2. Version Slicing Table
 
-每版相对上一版只加一个概念。tag 名 `v0.X`。
+Each version adds only one concept relative to the previous one. Tag names are `v0.X`.
 
-| 版本 | 主题 | 相对上一版只加什么 | 教学文档要点 |
+| Version | Topic | Only adds, relative to the previous version | Teaching document points |
 |---|---|---|---|
-| v0.01 | 最简 agent loop | `call_llm`（非流式）+ `agent_loop`（无工具纯对话）+ `__main__` + `config.py` | 什么是 agent loop；messages 列表；结束条件；http.client 调 LLM |
-| v0.02 | 第一个工具 | `Tool`/`ToolRegistry`/`ToolExecutor` + `calculate` + function calling 协议 | 工具怎么接到 loop 里；`role=tool` 回灌；工具签名约定 |
-| v0.03 | 文件读写工具 | `read_file`/`write_file` | agent 如何读写文件；副作用工具的风险 |
-| v0.04 | 权限闸门 | `permission.py`（allow/deny/ask 三态）+ `PermissionGate` + `write_file` 改 ASK | 让 agent 改文件前先问人；三态权限模型 |
-| v0.05 | 流式输出 | `call_llm` 改流式 + chunk 拼接 + 打字机效果 | 为什么用流式；`Accept-Encoding: identity` 踩坑 |
-| v0.06 | 并发 tool_calls | `ThreadPoolExecutor` 并发执行同一轮多个 tool_calls | 一轮多工具的并发模型 |
-| v0.07 | 系统提示词工程化 | system prompt 从一行扩到完整规范 | prompt 即配置 |
-| v0.08 | 文件操作补全 | `list_dir`/`edit_file`（精准替换）/`grep` | 精准编辑而非整文件重写 |
-| v0.09 | 权限系统升级 | 二维权限 (tool_name, pattern) + once/always 回复区分 + fnmatch 通配符匹配 | 从一维到二维；命令模式粒度控制 |
-| v0.10 | shell 执行 | `run_shell` 工具 + subprocess 超时 + 输出截断 + 二维命令模式权限 | 跑测试/跑脚本；shell 权限从严 |
-| v0.11 | 上下文架构 | `AgentState`（状态独立于 messages）+ `ContextManager`（LLM 调用前统一入口） | Agent State ≠ LLM Context；上下文构建与 loop 解耦 |
-| v0.12 | 预算与裁剪 | token 估算 + Context Budget + 按轮次原子 trimming | Context 是有限资源；超限优先删低价值信息而非崩溃 |
-| v0.13 | 上下文压缩 | 老历史 LLM 摘要 + Structured State 锚定 + `MAX_ITERATIONS` 调大 + Context Observability | 压缩不失忆；State 是锚，Summary 允许有损；过程可观察 |
-| v0.14 | plan 引导 | 规划模式引导 | 规划与执行分离 |
-| ... | ... | ...（持续迭代，按需追加行） | ... |
+| v0.01 | Minimal agent loop | `call_llm` (non-streaming) + `agent_loop` (tool-free pure conversation) + `__main__` + `config.py` | What an agent loop is; the messages list; the end condition; calling the LLM with http.client |
+| v0.02 | First tool | `Tool`/`ToolRegistry`/`ToolExecutor` + `calculate` + the function calling protocol | How tools connect to the loop; `role=tool` feedback; tool signature conventions |
+| v0.03 | File read/write tools | `read_file`/`write_file` | How the agent reads and writes files; the risks of side-effect tools |
+| v0.04 | Permission gate | `permission.py` (allow/deny/ask) + `PermissionGate` + `write_file` changed to ASK | Let the agent ask a person before changing files; the three-state permission model |
+| v0.05 | Streaming output | `call_llm` becomes streaming + chunk assembly + typewriter effect | Why streaming; the `Accept-Encoding: identity` pitfall |
+| v0.06 | Concurrent tool_calls | `ThreadPoolExecutor` runs several tool_calls of one round concurrently | The concurrency model for several tools in one round |
+| v0.07 | System prompt engineering | The system prompt grows from one line to a full specification | The prompt is configuration |
+| v0.08 | Completing file operations | `list_dir`/`edit_file` (exact replacement)/`grep` | Exact edits instead of whole-file rewrites |
+| v0.09 | Permission system upgrade | Two-dimensional permissions (tool_name, pattern) + distinguishing once/always replies + fnmatch wildcard matching | From one dimension to two; command pattern granularity |
+| v0.10 | Shell execution | `run_shell` tool + subprocess timeout + output truncation + two-dimensional command pattern permissions | Run tests/scripts; strict shell permissions |
+| v0.11 | Context architecture | `AgentState` (state independent of messages) + `ContextManager` (single entry before LLM calls) | Agent State ≠ LLM Context; context building decoupled from the loop |
+| v0.12 | Budget and trimming | Token estimation + Context Budget + atomic trimming by round | Context is a limited resource; over the limit, delete low-value information first instead of crashing |
+| v0.13 | Context compaction | LLM summary of old history + Structured State anchor + larger `MAX_ITERATIONS` + Context Observability | Compaction without memory loss; State is the anchor and the Summary may be lossy; the process is observable |
+| v0.14 | Plan guidance | Planning mode guidance | Separating planning from execution |
+| ... | ... | ... (continuous iteration, rows added as needed) | ... |
 
-> 切分原则：每版只引入一个新概念，代码差异控制在"一个文件或一个新模块"量级，让 `git diff v0.(X-1)..v0.X` 可读。
+> Slicing principle: each version introduces only one new concept, keeping the code difference on the order of "one file or one new module", so that `git diff v0.(X-1)..v0.X` is readable.
 
-## 3. 目录结构
+## 3. Directory Structure
 
-复用现有 `docs/` 三级结构，在其下加 `tutorials/` 子目录。代码仍在 `src/`，始终是最新版状态。
+Reuse the existing three-level `docs/` structure and add a `tutorials/` subdirectory under it. Code stays in `src/` and is always at the latest version.
 
 ```
 mini_agent/
-├── AGENTS.md                # 运行时硬约束与精简架构索引
-├── CHANGELOG.md             # 新增：每版一段 Added/Changed/Why
-├── README.md                # 更新：加"教学路径"章节
-├── pyproject.toml           # version 跟随最新 tag
-├── src/mini_agent/          # 代码（main 始终是最新版）
+├── AGENTS.md                # Runtime hard constraints and condensed architecture index
+├── CHANGELOG.md             # New: one Added/Changed/Why section per version
+├── README.md                # Updated: adds a "learning path" section
+├── pyproject.toml           # version follows the latest tag
+├── src/mini_agent/          # Code (main is always the latest version)
 ├── tests/
 ├── examples/
 └── docs/
-    ├── README.txt           # 更新：加 tutorials/ 说明
-    ├── governance/          # 不变
-    ├── plans/               # 不变（本方案文档放此）
-    ├── operation/           # 不变
-    └── tutorials/          # 教学文档：README 按阶段导航，课程按版本切片
-        ├── README.md        # 教学路径索引
+    ├── README.txt           # Updated: adds a tutorials/ description
+    ├── governance/          # Unchanged
+    ├── plans/               # Unchanged (this plan document lives here)
+    ├── operation/           # Unchanged
+    └── tutorials/          # Teaching documents: README navigates by stage, lessons sliced by version
+        ├── README.md        # Learning path index
         ├── 01-minimal-loop.md
         ├── 02-first-tool.md
         ├── 03-file-tools.md
@@ -71,213 +71,213 @@ mini_agent/
         ├── 12-token-budget-trimming.md
         ├── 13-context-compaction.md
         ├── 14-plan-guidance.md
-        └── ...（持续迭代，按需追加，仍放在此目录）
+        └── ... (continuous iteration, added as needed, still in this directory)
 ```
 
-### 3.1 各目录职责边界
+### 3.1 Responsibility Boundaries of Each Directory
 
-| 目录 | 面向谁 | 内容性质 | 更新频率 |
+| Directory | Audience | Nature of content | Update frequency |
 |---|---|---|---|
-| `docs/tutorials/` | 学习者 | 概念讲解 + 代码差异解读 + 使用指导 | 每版加一篇 |
-| `docs/governance/` | 维护者 | 约束、规范、决策记录 | 偶尔 |
-| `docs/plans/` | 维护者 | 方案、任务拆解（本文件所在目录） | 偶尔 |
-| `docs/operation/` | 使用者 | 运行手册、使用指南 | 跟随代码变 |
-| `AGENTS.md` | 维护者 + AI | 运行时硬约束与精简索引 | 约束变化时同步 |
+| `docs/tutorials/` | Learners | Concept explanations + code diff walkthroughs + usage guides | One per version |
+| `docs/governance/` | Maintainers | Constraints, rules, decision records | Occasionally |
+| `docs/plans/` | Maintainers | Plans, task breakdowns (the directory of this file) | Occasionally |
+| `docs/operation/` | Users | Runbook, usage guide | Follows code changes |
+| `AGENTS.md` | Maintainers + AI | Runtime hard constraints and condensed index | Synced when constraints change |
 
-## 4. 教学文档模板
+## 4. Teaching Document Template
 
-每份 `docs/tutorials/0X-xxx.md` 用统一结构，降低学习者认知负担。文件名：两位序号 + 连字符主题，与 `docs/plans/` 约定一致。
+Each `docs/tutorials/0X-xxx.md` uses a uniform structure to reduce learners' cognitive load. File name: a two-digit number + a hyphenated topic, consistent with the `docs/plans/` convention.
 
 ```markdown
-# 第 X 课：{主题}
+# Lesson X: {topic}
 
-> 版本 v0.X | [上一课](0Y-yyy.md) | [下一课](0Z-zzz.md)
+> Version v0.X | [Previous lesson](0Y-yyy.md) | [Next lesson](0Z-zzz.md)
 
-## 本课目标
-一句话：这版加了什么、解决什么问题。
+## Lesson Goals
+One sentence: what this version adds and what problem it solves.
 
-## 前置
-- 已读上一课文档
-- `git checkout v0.X` 切到本版代码
+## Prerequisites
+- Read the previous lesson
+- `git checkout v0.X` to switch to this version's code
 
-## 新增/改动了什么
-列出变动文件 + `git diff --stat v0.(X-1)..v0.X` 输出。
+## What Was Added or Changed
+List the changed files + the output of `git diff --stat v0.(X-1)..v0.X`.
 
-## 核心概念
-### {概念名}
-代码片段（从 src/ 摘关键部分）+ 解释。
-重点用 `git diff v0.(X-1)..v0.X -- <file>` 的真实差异，让学习者看到"加了哪几行"。
+## Core Concepts
+### {concept name}
+Code snippet (key parts taken from src/) + explanation.
+Prefer the real diff from `git diff v0.(X-1)..v0.X -- <file>`, so learners see "which lines were added".
 
-## 为什么这样设计
-记录踩坑/权衡。v0.05 要讲"为什么不用 requests"；v0.04 要讲"为什么三态不是两态"。
+## Why This Design
+Record pitfalls/trade-offs. v0.05 explains "why not requests"; v0.04 explains "why three states, not two".
 
-## 使用指导
-### 本版可用的命令
-列出本版可运行的命令（单次任务 / 交互模式 / 测试）。
+## Usage Guide
+### Commands available in this version
+List the commands this version can run (single task / interactive mode / tests).
 
-### 本版典型示例
-3-5 个能跑的示例，每个给命令 + 预期输出。
-示例随版本变化：v0.01 只能对话，v0.02+ 能调工具，v0.04+ 有权限交互。
+### Typical examples for this version
+3-5 runnable examples, each with a command + expected output.
+Examples change with the version: v0.01 can only converse, v0.02+ can call tools, v0.04+ has permission interaction.
 
-### 本版独有特性
-本版新引入的、值得观察的现象。
-例：v0.04 的权限交互 `[once/always/reject]`；v0.05 的流式打字机效果；v0.06 的并发 tool_calls 日志。
+### Features unique to this version
+Phenomena newly introduced in this version that are worth observing.
+E.g.: v0.04's permission interaction `[once/always/reject]`; v0.05's streaming typewriter effect; v0.06's concurrent tool_calls log.
 
-## 本版完整代码
-指向 `src/mini_agent/` 对应文件，不贴大段代码。
+## Full Code for This Version
+Point to the matching files under `src/mini_agent/`; do not paste large blocks of code.
 ```
 
-### 4.1 文档写作约定
+### 4.1 Document Writing Conventions
 
-- **不贴大段完整代码**，只摘关键片段 + 指向文件路径，避免代码改了文档不同步
-- **差异优先**：能用 `git diff` 说清的就用 diff，不重写一遍
-- **每篇可独立读懂**：假设读者刚看完上一课，但不假设他记得本课细节
-- **使用指导必须有**：每课给能跑的命令 + 预期输出，让学习者有反馈
-- **示例随版本演进**：每版的典型示例要体现本版新能力，不重复上一版已覆盖的
+- **Do not paste large blocks of complete code**; take only key snippets + point to file paths, so documents do not fall out of sync when code changes
+- **Diffs first**: if `git diff` can explain it, use the diff instead of rewriting it
+- **Each document readable on its own**: assume the reader just finished the previous lesson, but do not assume they remember this lesson's details
+- **The usage guide is required**: each lesson gives runnable commands + expected output, so learners get feedback
+- **Examples evolve with the version**: each version's typical examples should show the new capability of that version and not repeat what the previous version covered
 
-## 5. 各版本"使用指导"差异要点
+## 5. "Usage Guide" Differences per Version
 
-每版的使用指导会随工具集和能力变化。下表列出每版使用指导应包含的独有内容：
+Each version's usage guide changes with the tool set and capabilities. The table lists the unique content each version's usage guide should include:
 
-| 版本 | 使用指导独有内容 |
+| Version | Unique usage guide content |
 |---|---|
-| v0.01 | 仅对话；交互模式 `你:` 提示符；`exit`/`quit` 退出；无工具可调 |
-| v0.02 | 调 `calculate`；观察 `role=tool` 消息回灌；试 `"计算 3+5*2"` |
-| v0.03 | 调 `read_file`/`write_file`；`write_file` 的 `"路径\n内容"` 参数格式；试 `"读取 examples/input.txt 并总结"` |
-| v0.04 | `write_file` 触发权限提示；`once`/`always`/`reject` 三选项说明；观察拒绝后 LLM 如何反应 |
-| v0.05 | 流式打字机效果（看终端逐字出现）；对比 v0.04 的"整段输出"差异 |
-| v0.06 | 让模型一次发多个 tool_calls（如同时调 `read_file` ×2）；观察并发执行日志 |
-| v0.07 | 对比 v0.06 vs v0.07 的 system prompt 让 LLM 行为差异；试长任务 |
-| v0.08 | `edit_file` 精准替换示例；`grep` 搜索示例；`list_dir` 列目录 |
-| v0.09 | 观察二维权限：按命令模式询问；`git *` 批准后同类免问；对比 v0.04 的一维权限差异 |
-| v0.10 | `run_shell` 跑 `python tests/test_tools.py`；观察二维命令模式权限；试 "跑一下测试" |
-| v0.11 | 对比 v0.10：loop 不再直接拼 messages；演示"同一 State 构建不同 Context" |
-| v0.12 | 构造长任务观察预算检查与裁剪日志；验证裁剪后 agent 不崩、消息协议合法 |
-| v0.13 | 长任务验证多次压缩后仍能继续原任务；观察 summary 与 Structured State 注入 |
-| v0.14 | plan 模式引导示例；观察规划与执行的分离 |
+| v0.01 | Conversation only; the `You:` prompt in interactive mode; leave with `exit`/`quit`; no tools to call |
+| v0.02 | Call `calculate`; observe `role=tool` message feedback; try `"calculate 3+5*2"` |
+| v0.03 | Call `read_file`/`write_file`; the `"path\ncontent"` argument format of `write_file`; try `"read examples/input.txt and summarize"` |
+| v0.04 | `write_file` triggers a permission prompt; explain the three options `once`/`always`/`reject`; observe how the LLM reacts after a refusal |
+| v0.05 | The streaming typewriter effect (watch text appear word by word in the terminal); compare with v0.04's "whole block output" |
+| v0.06 | Have the model send several tool_calls at once (for example, `read_file` ×2 at the same time); observe the concurrent execution log |
+| v0.07 | Compare how the v0.06 vs v0.07 system prompt changes the LLM's behavior; try a long task |
+| v0.08 | `edit_file` exact replacement examples; `grep` search examples; `list_dir` to list a directory |
+| v0.09 | Observe two-dimensional permissions: asking by command pattern; after approving `git *`, similar commands skip the question; compare with v0.04's one-dimensional permissions |
+| v0.10 | `run_shell` runs `python tests/test_tools.py`; observe two-dimensional command pattern permissions; try "run the tests" |
+| v0.11 | Compare with v0.10: the loop no longer assembles messages directly; demonstrate "the same State building different Contexts" |
+| v0.12 | Build a long task to observe the budget check and trimming log; verify that the agent does not crash after trimming and the message protocol is valid |
+| v0.13 | Verify on a long task that the original task can continue after repeated compaction; observe the summary and Structured State injection |
+| v0.14 | Plan mode guidance examples; observe the separation of planning and execution |
 
-### 5.1 与 `docs/operation/manual.md` 的分工
+### 5.1 Division of Work With `docs/operation/manual.md`
 
-- `docs/operation/manual.md`：**最新版**完整使用手册，不按版本切片，每版完成时同步更新。涵盖所有当前可用工具、配置、权限交互、测试、FAQ。
-- 教学文档的"使用指导"：只讲**本版**怎么用，是"学习者手册"，跟着版本走。不重复 manual.md 的所有细节，但告诉学习者"想看完整用法去翻 manual.md"。
+- `docs/operation/manual.md`: the complete manual for the **latest version**, not sliced by version, updated each time a version is completed. It covers all currently available tools, configuration, permission interaction, tests, and FAQ.
+- The "Usage Guide" of a teaching document: covers only how to use **this version**; it is a "learner's manual" that follows the version. It does not repeat all the details of manual.md but tells learners "for the full usage, see manual.md".
 
-## 6. `docs/tutorials/README.md` 内容要点
+## 6. Contents of `docs/tutorials/README.md`
 
-教程路径索引，给学习者一个入口。所有课程文件直接放在 `docs/tutorials/` 根目录，不新增阶段子目录；README 负责把版本课程分成清晰的学习阶段：
+The tutorial path index gives learners an entry point. All lesson files go directly in the `docs/tutorials/` root, with no stage subdirectories; the README is responsible for dividing the version lessons into clear learning stages:
 
 ```markdown
-# 教学路径
+# Learning Path
 
-## 先从这里开始
-说明完整学习路径、Mini Agent 里程碑和功能查找方式。
+## Start Here
+Describe the full learning path, the Mini Agent milestone, and how to find features.
 
-## 阶段一：理解 Agent Loop
+## Stage 1: Understand the Agent Loop
 v0.01
 
-## 阶段二：工具与安全
+## Stage 2: Tools and Safety
 v0.02 → v0.04
 
-## 阶段三：Mini Agent 里程碑
+## Stage 3: Mini Agent Milestone
 v0.05 → v0.10
 
-## 阶段四：Context Management
+## Stage 4: Context Management
 v0.11 → v0.13
 
-## 阶段五：进阶能力（规划中）
-v0.14 及以后
+## Stage 5: Advanced Capabilities (planned)
+v0.14 and later
 
-## 环境准备（一次性）
-保留 Python、配置和安装说明。
+## Environment Setup (one time)
+Keep the Python, configuration, and install instructions.
 
-## 版本与 Git tag
-说明如何 checkout 版本和使用 git diff 查看演进。
+## Versions and Git Tags
+Explain how to check out versions and use git diff to view the evolution.
 
-## 完整使用手册
-docs/operation/manual.md — 最新版的完整用法。
+## Full Manual
+docs/operation/manual.md — the full usage of the latest version.
 ```
 
-## 7. CHANGELOG.md 格式
+## 7. CHANGELOG.md Format
 
 ```markdown
 # Changelog
 
-## [v0.01] - 最简 agent loop
+## [v0.01] - Minimal agent loop
 ### Added
-- `src/mini_agent/agent.py`：call_llm（非流式）+ agent_loop
-- `src/mini_agent/__main__.py`：CLI 入口
-- `src/mini_agent/config.py`：BASE_URL/API_KEY/MODEL/MAX_ITERATIONS
+- `src/mini_agent/agent.py`: call_llm (non-streaming) + agent_loop
+- `src/mini_agent/__main__.py`: CLI entry
+- `src/mini_agent/config.py`: BASE_URL/API_KEY/MODEL/MAX_ITERATIONS
 ### Why
-- 从最小可用的对话 loop 起步，先讲清"什么是 agent loop"。
+- Start from the smallest usable conversation loop and first explain "what an agent loop is".
 
-## [v0.02] - 第一个工具
+## [v0.02] - First tool
 ...
 ```
 
-每版一段，Added/Changed/Why 三段式。Why 段记录"为什么这版要加这个"，与教学文档的"为什么这样设计"呼应但更简短。
+One section per version, in three parts: Added/Changed/Why. The Why part records "why this version adds this", echoing the "Why This Design" of the teaching document but shorter.
 
-## 8. Git 操作清单
+## 8. Git Operation Checklist
 
-### 8.1 初始化：重置 main 到 v0.01
+### 8.1 Initialization: Reset main to v0.01
 
-> 决策已确认：重置 main 到 v0.01，丢失现有 4 个 commit。
+> Decision confirmed: reset main to v0.01, losing the existing 4 commits.
 
 ```bash
-# 1. 备份现有代码（万一要参考）
+# 1. Back up the existing code (in case it is needed for reference)
 git branch backup-pre-teaching
 
-# 2. 创建无历史的新 main
+# 2. Create a new main with no history
 git checkout --orphan main-new
 git rm -rf .
 
-# 3. 放入 v0.01 代码 + 文档（见第 9 节）
-#    只放：agent.py(非流式版) / __main__.py / config.py / __init__.py
-#    + pyproject.toml + README.md + AGENTS.md(精简版)
+# 3. Add the v0.01 code + documents (see section 9)
+#    Only: agent.py (non-streaming version) / __main__.py / config.py / __init__.py
+#    + pyproject.toml + README.md + AGENTS.md (condensed version)
 #    + docs/tutorials/01-minimal-loop.md + docs/tutorials/README.md
 #    + CHANGELOG.md + .gitignore
 
 git add -A
-git commit -m "v0.01: 最简 agent loop"
-git tag -a v0.01 -m "v0.01: 最简 agent loop"
+git commit -m "v0.01: minimal agent loop"
+git tag -a v0.01 -m "v0.01: minimal agent loop"
 
-# 4. 替换 main
+# 4. Replace main
 git branch -D main
 git branch -m main-new main
 ```
 
-### 8.2 逐版往上加
+### 8.2 Add Version by Version
 
 ```bash
-# 1. 在 main 上开发到本版状态
-# 2. 更新 CHANGELOG.md、docs/tutorials/0X-xxx.md；必要时同步 AGENTS.md 运行时约束
-# 3. 跑 tests
+# 1. Develop on main up to this version's state
+# 2. Update CHANGELOG.md and docs/tutorials/0X-xxx.md; sync the AGENTS.md runtime constraints when needed
+# 3. Run the tests
 $env:PYTHONPATH="src"; python tests/test_tools.py
-# 4. 提交 + 打 tag
+# 4. Commit + tag
 git add -A
-git commit -m "v0.X: {主题}"
-git tag -a v0.X -m "v0.X: {主题}"
+git commit -m "v0.X: {topic}"
+git tag -a v0.X -m "v0.X: {topic}"
 ```
 
-### 8.3 学习者使用方式
+### 8.3 How Learners Use It
 
 ```bash
 git clone <repo>
 cd mini_agent
-git tag                    # 看所有版本
-git checkout v0.01          # 切到第一版
-# 读 docs/tutorials/01-minimal-loop.md
-# 跑：$env:PYTHONPATH="src"; python -m mini_agent "你好"
-git checkout v0.02          # 看差异，读 02-first-tool.md
-# ...依次到最新版
+git tag                    # see all versions
+git checkout v0.01          # switch to the first version
+# read docs/tutorials/01-minimal-loop.md
+# run: $env:PYTHONPATH="src"; python -m mini_agent "Hello"
+git checkout v0.02          # look at the diff, read 02-first-tool.md
+# ...on to the latest version
 ```
 
-## 9. v0.01 代码清单
+## 9. v0.01 Code Inventory
 
-v0.01 只保留 4 个源文件，删掉所有工具/权限相关代码。
+v0.01 keeps only 4 source files and removes all tool/permission-related code.
 
-### 9.1 `src/mini_agent/agent.py`（非流式版，约 30 行）
+### 9.1 `src/mini_agent/agent.py` (non-streaming version, about 30 lines)
 
 ```python
-"""最简 Agent Loop：调 LLM -> 回复 -> 再调，循环到结束或上限。"""
+"""Minimal Agent Loop: call the LLM -> reply -> call again, until finished or the limit."""
 
 import http.client
 import json
@@ -287,7 +287,7 @@ from mini_agent.config import BASE_URL, API_KEY, MODEL, MAX_ITERATIONS
 
 
 def call_llm(messages):
-    """非流式调用 LLM，返回 assistant message dict。"""
+    """Call the LLM without streaming and return the assistant message dict."""
     p = urlparse(BASE_URL)
     conn = http.client.HTTPConnection(p.hostname, p.port or 80, timeout=120)
     body = json.dumps(
@@ -307,83 +307,83 @@ def call_llm(messages):
 
 
 def agent_loop(messages):
-    """循环：调 LLM -> 打印回复 -> 无 tool_calls 则结束。"""
+    """Loop: call the LLM -> print the reply -> stop when there are no tool_calls."""
     for i in range(MAX_ITERATIONS):
         msg = call_llm(messages)
         messages.append(msg)
-        print(f"\n=== [{i+1}] LLM 回复 ===")
+        print(f"\n=== [{i+1}] LLM reply ===")
         print(msg.get("content", ""))
         if not msg.get("tool_calls"):
             return msg.get("content", "")
-    return "达到最大迭代次数"
+    return "Maximum iterations reached"
 ```
 
-> v0.01 的 `call_llm` 不带 `tools` 参数、不流式、不处理 tool_calls。
-> `agent_loop` 不执行工具，只判断 `tool_calls` 为空就结束。第一课 loop 概念最干净。
+> The v0.01 `call_llm` has no `tools` argument, does not stream, and does not handle tool_calls.
+> `agent_loop` runs no tools and only checks whether `tool_calls` is empty to stop. The loop concept of the first lesson is at its cleanest.
 
-### 9.2 其他文件
+### 9.2 Other Files
 
-- `__main__.py`：与现有版基本一致，system prompt 保持一行 `"你是一个助手。"`
-- `config.py`：与现有版一致
-- `__init__.py`：空文件
+- `__main__.py`: basically the same as the existing version; the system prompt stays one line, `"You are an assistant."`
+- `config.py`: the same as the existing version
+- `__init__.py`: empty file
 
-### 9.3 删除的文件（v0.01 不要）
+### 9.3 Deleted Files (not in v0.01)
 
-- `src/mini_agent/permission.py`（v0.04 才加）
-- `src/mini_agent/tools/`（整个目录，v0.02 才加）
-- `tests/test_tools.py`（v0.02 才有工具可测；v0.01 可加一个 `test_loop.py` 测 import 链路）
+- `src/mini_agent/permission.py` (added only in v0.04)
+- `src/mini_agent/tools/` (the whole directory, added only in v0.02)
+- `tests/test_tools.py` (tools exist to test only from v0.02; v0.01 can add a `test_loop.py` to test the import chain)
 
-## 10. 后续版本代码差异要点
+## 10. Code Difference Points of Later Versions
 
-- **v0.02**：新增 `tools/base.py`+`calc.py`+`__init__.py`；`agent.py` 加 `tools` 参数 + tool_calls 执行 + `role=tool` 回灌；`__main__.py` system prompt 改"通过调用工具完成任务"；新增 `tests/test_tools.py`
-- **v0.03**：新增 `tools/file.py`；`tools/__init__.py` 注册；tests 加 read_file/write_file
-- **v0.04**：新增 `permission.py`；`tools/base.py` 的 Executor 加 gate；`tools/__init__.py` 传 gate；write_file 改 ASK
-- **v0.05**：`agent.py` 的 `call_llm` 改流式，chunk 累积 content + tool_calls；文档重点讲 `Accept-Encoding: identity` 踩坑
-- **v0.06**：`agent.py` 的 tool_calls 执行改 `ThreadPoolExecutor`
-- **v0.07**：`__main__.py` system prompt 扩为完整规范
-- **v0.08**：新增 `tools/file.py`；`tools/__init__.py` 注册；tests 加 read_file/write_file
-- **v0.09**：`permission.py` 升级（`check()` 二维匹配 + `fnmatch` + `approve()` 存 pattern）；`tools/base.py` 的 `PermissionGate.guard()` 从 args 提取 pattern；`PERMISSION_RULES` 支持 dict 格式
-- **v0.10**：新增 `tools/shell.py`（`run_shell` + `subprocess` 超时 + 输出截断）；`tools/__init__.py` 注册；`permission.py` 加 `run_shell` 二维权限规则 + `_from_config` 排序修复（`*` 排最前）；`prompt.py` 更新能力描述
-- **v0.11**：新增 `state.py`（AgentState）+ `context.py`（ContextManager 统一入口）；`agent.py` 改经 `prepare_messages()` 调 LLM；`tools/base.py` Executor 加结果回调更新 State。纯重构，行为与 v0.10 一致
-- **v0.12**：`context.py` 加 `count_tokens`（`len//3` 启发式）+ `ContextBudget`（比例配置）+ `TrimPolicy`（按轮次原子裁剪，无孤儿 tool result）；`config.py` 加 `CONTEXT_WINDOW`
-- **v0.13**：`context.py` 加 `compact()`（LLM 摘要 + Structured State 注入 + 失败降级 trimming）；`config.py` 调大 `MAX_ITERATIONS`
-- **v0.14**：`prompt.py` 加 plan 引导；`__main__.py` 加 plan 模式入口
-- **v0.15+**：按需追加。Context Management 细化方案见 `context-management-plan.md`
+- **v0.02**: adds `tools/base.py` + `calc.py` + `__init__.py`; `agent.py` adds the `tools` argument + tool_calls execution + `role=tool` feedback; the `__main__.py` system prompt changes to "complete tasks by calling tools"; adds `tests/test_tools.py`
+- **v0.03**: adds `tools/file.py`; registered in `tools/__init__.py`; tests add read_file/write_file
+- **v0.04**: adds `permission.py`; the Executor in `tools/base.py` adds a gate; `tools/__init__.py` passes the gate; write_file changes to ASK
+- **v0.05**: `call_llm` in `agent.py` becomes streaming, with chunks accumulating content + tool_calls; the document focuses on the `Accept-Encoding: identity` pitfall
+- **v0.06**: tool_calls execution in `agent.py` changes to `ThreadPoolExecutor`
+- **v0.07**: the `__main__.py` system prompt expands into a full specification
+- **v0.08**: adds `tools/file.py`; registered in `tools/__init__.py`; tests add read_file/write_file
+- **v0.09**: `permission.py` upgrade (two-dimensional matching in `check()` + `fnmatch` + `approve()` stores the pattern); `PermissionGate.guard()` in `tools/base.py` extracts the pattern from args; `PERMISSION_RULES` supports a dict format
+- **v0.10**: adds `tools/shell.py` (`run_shell` + `subprocess` timeout + output truncation); registered in `tools/__init__.py`; `permission.py` adds two-dimensional `run_shell` permission rules + the `_from_config` ordering fix (`*` first); `prompt.py` updates the capability description
+- **v0.11**: adds `state.py` (AgentState) + `context.py` (ContextManager single entry); `agent.py` calls the LLM through `prepare_messages()`; the Executor in `tools/base.py` adds a result callback that updates State. A pure refactoring; behavior matches v0.10
+- **v0.12**: `context.py` adds `count_tokens` (the `len//3` heuristic) + `ContextBudget` (ratio configuration) + `TrimPolicy` (atomic trimming by round, no orphan tool results); `config.py` adds `CONTEXT_WINDOW`
+- **v0.13**: `context.py` adds `compact()` (LLM summary + Structured State injection + degradation to trimming on failure); `config.py` raises `MAX_ITERATIONS`
+- **v0.14**: `prompt.py` adds plan guidance; `__main__.py` adds a plan mode entry
+- **v0.15+**: added as needed. For the detailed Context Management plan, see `context-management-plan.md`
 
-## 11. AGENTS.md 更新要点
+## 11. AGENTS.md Update Points
 
-落地时需同步更新 AGENTS.md：
-- "路线图"章节保留版本切片表，并补充教程阶段划分，每完成一版打勾
-- "当前架构"章节跟随最新版更新
-- "运行"章节不变
-- "关键约束"章节不变（这些约束跨版本有效）
-- 顶部加一行："本仓库为多阶段教学仓库，按 git tag v0.01→v0.X 顺序学习（持续迭代），见 `docs/tutorials/`"
+During implementation, AGENTS.md must be synced:
+- The "Roadmap" section keeps the version slicing table and adds the tutorial stage division, checking off each completed version
+- The "Current Architecture" section follows the latest version
+- The "Running" section is unchanged
+- The "Key Constraints" section is unchanged (these constraints hold across versions)
+- Add a line at the top: "This repository is a multi-stage teaching repository; learn in the order of git tags v0.01→v0.X (continuous iteration); see `docs/tutorials/`"
 
-## 12. 验收标准
+## 12. Acceptance Criteria
 
-方案落地后应满足：
-- [ ] `git tag` 按顺序列出 v0.01 起递增的 tag，无固定上限
-- [ ] `git checkout v0.X` 后代码可跑（`python -m mini_agent "你好"` 不报错）
-- [ ] `docs/tutorials/` 下有与已落地版本对应数量的文档 + 1 份 README 索引
-- [ ] 每份教学文档有"使用指导"章节且命令可跑通
-- [ ] `CHANGELOG.md` 每个已落地版本一段，每段 Added/Changed/Why 齐全
-- [ ] `git diff v0.(X-1)..v0.X --stat` 每版差异在"一两个文件"量级
-- [ ] 版本切片表与教程索引、CHANGELOG 保持一致
+After the plan is implemented, it should satisfy:
+- [ ] `git tag` lists tags in order, increasing from v0.01, with no fixed limit
+- [ ] After `git checkout v0.X`, the code runs (`python -m mini_agent "Hello"` raises no error)
+- [ ] `docs/tutorials/` has as many documents as implemented versions + 1 README index
+- [ ] Every teaching document has a "Usage Guide" section whose commands run
+- [ ] `CHANGELOG.md` has one section per implemented version, each with Added/Changed/Why
+- [ ] `git diff v0.(X-1)..v0.X --stat` for each version is on the order of "one or two files"
+- [ ] The version slicing table stays consistent with the tutorial index and CHANGELOG
 
-## 13. 执行顺序建议
+## 13. Suggested Execution Order
 
-1. **先落地 v0.01 全套**：重置 main + v0.01 代码 + 01 文档 + CHANGELOG + tag
-2. **v0.02 → v0.06**：复用 backup 分支现有代码，按版本顺序重新提交 + 写文档（工作量在文档）
-3. **v0.07 → v0.14**：需新写代码（system prompt 扩写、list_dir/edit_file/grep、权限升级、run_shell、上下文管理三版、plan 引导），工作量较大
-4. **v0.15+**：持续迭代，按需追加新功能
-5. **每版完成后**：跑 tests、更新计划/教程索引与 CHANGELOG；仅约束变化时更新 AGENTS.md，再打 tag
+1. **Implement the full v0.01 first**: reset main + v0.01 code + lesson 01 document + CHANGELOG + tag
+2. **v0.02 → v0.06**: reuse the existing code in the backup branch, recommit in version order + write documents (the work is in the documents)
+3. **v0.07 → v0.14**: new code is needed (expanded system prompt, list_dir/edit_file/grep, permission upgrade, run_shell, three context management versions, plan guidance), a larger amount of work
+4. **v0.15+**: continuous iteration, adding new features as needed
+5. **After each version**: run the tests, update the plans/tutorial index and CHANGELOG; update AGENTS.md only when constraints change, then tag
 
-> v0.02-v0.06 的代码已存在于 backup-pre-teaching 分支，落地主要是拆分提交节奏 + 写文档。
-> v0.07+ 需要新写代码，工作量较大。
+> The code for v0.02-v0.06 already exists in the backup-pre-teaching branch; implementing them is mainly about splitting the commit rhythm + writing documents.
+> v0.07+ needs new code and is a larger amount of work.
 
-## 14. 风险与权衡
+## 14. Risks and Trade-Offs
 
-- **重置 main 丢失 4 个 commit**：已用 `backup-pre-teaching` 分支备份，需要时可查
-- **v0.01 代码与现有代码差异大**：是有意的，第一课必须最简。现有代码会在 v0.02-v0.06 逐步加回
-- **教学文档维护成本**：代码改了文档要跟。用"指向文件 + diff"而非"贴完整代码"可降低同步成本
-- **API_KEY 硬编码进教学仓库**：教学仓库若公开，需把 `config.py` 的 API_KEY 改为占位符 `"sk-YOUR_KEY_HERE"`，并在 01 文档说明学习者需自行填入
+- **Resetting main loses 4 commits**: backed up in the `backup-pre-teaching` branch for reference when needed
+- **The v0.01 code differs a lot from the existing code**: this is intentional; the first lesson must be minimal. The existing code is added back gradually in v0.02-v0.06
+- **Teaching document maintenance cost**: when code changes, documents must follow. Using "point to files + diff" instead of "paste complete code" reduces sync cost
+- **API_KEY hard-coded into the teaching repository**: if the teaching repository is public, change the API_KEY in `config.py` to the placeholder `"sk-YOUR_KEY_HERE"`, and explain in lesson 01 that learners must fill it in themselves

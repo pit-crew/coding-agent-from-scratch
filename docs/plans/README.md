@@ -1,29 +1,29 @@
-# 计划文档（plans）
+# Plan Documents
 
-存放路线图、功能计划、任务拆解。
+This directory holds the roadmap, feature plans, and task breakdowns.
 
-## 索引
-- 路线图与计划文档以本目录为权威来源。运行时硬约束和精简架构索引另见 `AGENTS.md`。
-- [`teaching-repo-plan.md`](teaching-repo-plan.md) — 把仓库改造成多阶段教学仓库的完整方案（版本切片、目录结构、文档模板、git 操作清单、验收标准）。
-- [`context-management-plan.md`](context-management-plan.md) — 阶段四 Context Management 实施计划（v0.11 架构 / v0.12 预算裁剪 / v0.13 压缩）。
-- [`project-task-orchestration-plan.md`](project-task-orchestration-plan.md) — 阶段五项目感知与任务编排实施计划（v0.14 项目级指令 / v0.15 任务清单与状态 / v0.16 计划驱动执行；英文标识分别为 Project Instructions、Todo / Task State、Plan-driven Execution）。
-- [`reliable-execution-plan.md`](reliable-execution-plan.md) — 阶段六可靠执行实施计划（v0.17 Failure Model / v0.18 Recovery Policy / v0.19 检查点与回滚（Checkpoint / Rollback）/ v0.20 Repair Loop / v0.21 Trace & Replay）。
-- [`adaptive-planning-plan.md`](adaptive-planning-plan.md) — 阶段七自适应规划与重规划实施计划（v0.22 Plan Contract / v0.23 Plan Mode & Handoff / v0.24 Replanning Policy / v0.25 Plan Trace & Evaluation）。
-- [`process-management-plan.md`](process-management-plan.md) — 阶段八进程管理实施计划（v0.26 后台进程 / v0.27 进程观察 / v0.28 进程控制 / v0.29 有界管道 stdin；PTY 后续评估）。
-- [`session-persistence-resume-plan.md`](session-persistence-resume-plan.md) — 阶段九会话持久化与恢复实施计划（v0.30 会话持久化 / v0.31 安全恢复 / v0.32 持久工具边界 / v0.33 崩溃恢复）。
+## Index
+- This directory is the authoritative source for the roadmap and plan documents. Runtime hard constraints and the condensed architecture index are in `AGENTS.md`.
+- [`teaching-repo-plan.md`](teaching-repo-plan.md) — The full plan for turning the repository into a multi-stage teaching repository (version slicing, directory structure, document templates, git operation checklist, acceptance criteria).
+- [`context-management-plan.md`](context-management-plan.md) — Stage 4 Context Management implementation plan (v0.11 architecture / v0.12 budget trimming / v0.13 compaction).
+- [`project-task-orchestration-plan.md`](project-task-orchestration-plan.md) — Stage 5 project awareness and task orchestration implementation plan (v0.14 project instructions / v0.15 task list and state / v0.16 plan-driven execution; the English identifiers are Project Instructions, Todo / Task State, and Plan-driven Execution).
+- [`reliable-execution-plan.md`](reliable-execution-plan.md) — Stage 6 reliable execution implementation plan (v0.17 Failure Model / v0.18 Recovery Policy / v0.19 Checkpoint / Rollback / v0.20 Repair Loop / v0.21 Trace & Replay).
+- [`adaptive-planning-plan.md`](adaptive-planning-plan.md) — Stage 7 adaptive planning and replanning implementation plan (v0.22 Plan Contract / v0.23 Plan Mode & Handoff / v0.24 Replanning Policy / v0.25 Plan Trace & Evaluation).
+- [`process-management-plan.md`](process-management-plan.md) — Stage 8 process management implementation plan (v0.26 background processes / v0.27 process observation / v0.28 process control / v0.29 bounded pipe stdin; PTY to be evaluated later).
+- [`session-persistence-resume-plan.md`](session-persistence-resume-plan.md) — Stage 9 session persistence and resume implementation plan (v0.30 session persistence / v0.31 safe resume / v0.32 durable tool boundaries / v0.33 crash recovery).
 
-阶段九已完成：v0.30–v0.33 已实现安全点保存、跨进程恢复、持久工具边界和崩溃后的不确定调用交接；源 session 不覆盖，旧调用不自动 replay。
-- [`subagent-delegation-plan.md`](subagent-delegation-plan.md) — 阶段十受控子代理委派实施计划；v0.34 最小同步只读委派、v0.35 共享父子运行循环、v0.36 多 provider/统一协议适配、v0.37 生命周期与聚合预算、v0.38 有界并行和 v0.39 持久委派交付已实现。保持子代理只读、单层，由父 Agent 独占修改和完成判定。
-- [`memory-retrieval-references-plan.md`](memory-retrieval-references-plan.md) — 阶段十一轻量记忆、相关检索与资料引用实施计划；v0.40–v0.42 工作区持久 Memory、相关检索与具名本地 References 已实现。
+Stage 9 is complete: v0.30–v0.33 implement safe point saving, cross-process resume, durable tool boundaries, and the handoff of uncertain calls after a crash; source sessions are not overwritten, and old calls are not replayed automatically.
+- [`subagent-delegation-plan.md`](subagent-delegation-plan.md) — Stage 10 controlled subagent delegation implementation plan; v0.34 minimal synchronous read-only delegation, v0.35 shared parent/child run loop, v0.36 multiple providers/unified protocol adaptation, v0.37 lifecycle and aggregate budget, v0.38 bounded parallelism, and v0.39 durable delegation delivery are implemented. Subagents stay read-only and single-level, and the parent Agent exclusively owns changes and the completion decision.
+- [`memory-retrieval-references-plan.md`](memory-retrieval-references-plan.md) — Stage 11 lightweight memory, relevance retrieval, and reference material implementation plan; v0.40–v0.42 workspace durable Memory, relevance retrieval, and named local References are implemented.
 
-阶段十一已完成 v0.40–v0.42：工作区 Memory 支持显式 CRUD 与相关检索，父 Context 可按预算临时注入不可信候选，父 Agent 可按稳定 alias 查阅受权限保护的本地资料。
-- [`mcp-skills-plan.md`](mcp-skills-plan.md) — 阶段十二 MCP 与 Skills 实施计划；v0.43–v0.46 已实现 stdio/受限 HTTP MCP、父侧 MCP Tool、文本 Resource、文本 Prompt 与本地按需 Skills。
-- [`agent-collaboration-plan.md`](agent-collaboration-plan.md) — 阶段十三轻量 Agent Collaboration 实施计划；v0.47–v0.49 已实现，保持单层只读与父 Agent 独占执行权。
-- [`evaluation-regression-plan.md`](evaluation-regression-plan.md) — 阶段十四评测计划；v0.50 live 链路完成，v0.51 suite 1.1 编码基线未完成，v0.52 suite 1.6 可靠性 live 基线未完成；v0.53 比较实现与离线验收单列，live 仍待用户审阅清单并明确启动。
-- [`v053-regression-comparison-plan.md`](v053-regression-comparison-plan.md) — v0.53 回归比较与 Memory 自动检索消融的合同、隔离运行、指标、交付状态和 live 授权边界。
-- [`terminal-output-plan.md`](terminal-output-plan.md) — 终端输出、流式观察、CLI 交互和三种输出模式的实施计划（A–D 已完成）。
+Stage 11 has completed v0.40–v0.42: workspace Memory supports explicit CRUD and relevance retrieval, the parent Context can temporarily inject untrusted candidates within budget, and the parent Agent can consult permission-protected local material by stable alias.
+- [`mcp-skills-plan.md`](mcp-skills-plan.md) — Stage 12 MCP and Skills implementation plan; v0.43–v0.46 implement stdio/restricted HTTP MCP, parent-side MCP Tools, text Resources, text Prompts, and local on-demand Skills.
+- [`agent-collaboration-plan.md`](agent-collaboration-plan.md) — Stage 13 lightweight Agent Collaboration implementation plan; v0.47–v0.49 are implemented, keeping single-level read-only subagents and the parent Agent's exclusive execution rights.
+- [`evaluation-regression-plan.md`](evaluation-regression-plan.md) — Stage 14 evaluation plan; the v0.50 live chain is complete, the v0.51 suite 1.1 coding baseline is not complete, and the v0.52 suite 1.6 reliability live baseline is not complete; the v0.53 comparison implementation and offline acceptance are listed separately, and live still awaits the user reviewing the manifest and starting it explicitly.
+- [`v053-regression-comparison-plan.md`](v053-regression-comparison-plan.md) — The contract, isolated runs, metrics, delivery status, and live authorization boundary of the v0.53 regression comparison and Memory automatic retrieval ablation.
+- [`terminal-output-plan.md`](terminal-output-plan.md) — Implementation plan for terminal output, streaming observation, CLI interaction, and the three output modes (A–D complete).
 
-## 文档约定
-- 文件名用小写 + 连字符，如 `add-shell-tool.md`。
-- 每篇文档建议包含：目标、方案、任务拆解、验收标准。
-- 完成后更新对应计划、教程索引、CHANGELOG 和版本信息；仅当运行时约束变化时更新 `AGENTS.md`。
+## Document Conventions
+- File names use lowercase with hyphens, for example `add-shell-tool.md`.
+- Each document should include: goal, approach, task breakdown, and acceptance criteria.
+- After completion, update the matching plan, the tutorial index, CHANGELOG, and version information; update `AGENTS.md` only when runtime constraints change.

@@ -1,188 +1,188 @@
-# Mini Agent 上下文构成：一张动态视图
+# Mini Agent Context Composition: A Dynamic View
 
-> 事实来源：`src/mini_agent/` 下 `__main__.py`、`agent.py`、`context.py`、`state.py`、`prompt.py`、`instructions.py`、`tools/base.py`。
+> Source of truth: `__main__.py`, `agent.py`, `context.py`, `state.py`, `prompt.py`, `instructions.py`, and `tools/base.py` under `src/mini_agent/`.
 
-## 0. 心智模型：一句话版本
+## 0. Mental Model: The One-Sentence Version
 
-**上下文不是一份存储，而是一个每轮重新计算的视图**。v0.20 还把 Repair Loop 阶段作为不可丢失的关键状态注入，v0.22 又把 active Plan Contract 的有界执行视图放入同一条语义轨道；v0.24 继续加入活动 replan trigger、修订预算和 LoopStagnationState；v0.33 再加入受保护的 crash recovery 摘要：模型看到的不是“最近一次文字说了什么”，而是当前计划、步骤依赖、真实触发来源、未结算 issue 以及是否必须只读调查、重规划或独立验证。完整 `plan_revisions`、`plan_progress_history` 和 crash recovery 记录保存在 State，Structured State 只显示有界摘要；v0.21 的 Trace 对缺失 `todo_revisions` 继续安全降级为空。
+**The context is not a store but a view recomputed every round**. v0.20 also injects the Repair Loop phase as critical state that must not be lost, and v0.22 puts the bounded execution view of the active Plan Contract on the same semantic track; v0.24 continues by adding the active replan trigger, the revision budget, and LoopStagnationState; v0.33 then adds a protected crash recovery summary: what the model sees is not "what the most recent text said" but the current plan, step dependencies, real trigger sources, unsettled issues, and whether read-only investigation, replanning, or independent verification is required. The full `plan_revisions`, `plan_progress_history`, and crash recovery records are kept in State, and Structured State shows only bounded summaries; v0.21's Trace still degrades safely to empty when `todo_revisions` is missing.
 
 ```text
-view = Runtime Notice? + 只读底座(System Prompt) + [Structured State](语义轨道，含 Repair Loop 阶段)
-     + [Relevant Memory — Untrusted Reference]? + [Historical Summary]? + Task + 历史轮次(协议轨道)
-     —— 再过一遍预算闸门
+view = Runtime Notice? + read-only base (System Prompt) + [Structured State] (semantic track, including the Repair Loop phase)
+     + [Relevant Memory — Untrusted Reference]? + [Historical Summary]? + Task + history rounds (protocol track)
+     —— then once more through the budget gate
 ```
 
-- **一个只读底座**：`protected_messages`，启动时构建一次，永不变化。
-- **两条写入轨道**：同一次工具执行被记录两次——`history` 里的协议原文（给 LLM 直接读，可被裁剪）和 `AgentState` 里的语义事实（免疫裁剪，每轮重渲染）。
-- **一个反馈环**：视图超预算时，改写的是视图本身（trim → compact），`history` 本体永远完整。
+- **One read-only base**: `protected_messages`, built once at startup and never changed.
+- **Two write tracks**: the same tool execution is recorded twice — the protocol original in `history` (read directly by the LLM, can be trimmed) and the semantic facts in `AgentState` (immune to trimming, re-rendered every round).
+- **One feedback loop**: when the view exceeds the budget, what gets rewritten is the view itself (trim → compact); the `history` itself always stays complete.
 
-v0.41 新增的 Memory 不是第四条持久轨道，而是每轮临时生成的资料视图：
+The Memory added in v0.41 is not a fourth durable track but an information view generated temporarily every round:
 
 ```text
-[工作区外部的 schema 1 JSON]
-            │ snapshot()（只读校验、深拷贝；不建目录、不加写锁）
+[schema 1 JSON outside the workspace]
+            │ snapshot() (read-only validation, deep copy; no directory creation, no write lock)
             ▼
-MemoryRetriever（NFKC/casefold、词元/中文双字片段、字段加权、稳定排序）
-            │ 最多 4 条、最多 2400 字符；失败只产生有界降级提示
+MemoryRetriever (NFKC/casefold, tokens/CJK two-character fragments, field weights, stable ranking)
+            │ at most 4 entries, at most 2400 characters; a failure produces only a bounded degradation notice
             ▼
-[Relevant Memory — Untrusted Reference]（单个临时 system 消息）
-            │ 插在 [Structured State] 后、首条 user 任务前
+[Relevant Memory — Untrusted Reference] (a single temporary system message)
+            │ inserted after [Structured State], before the first user task
             ▼
-不回写 history、AgentState、session、Plan、Trace 或 verification_evidence
+not written back to history, AgentState, session, Plan, Trace, or verification_evidence
 ```
 
-父 Runtime 在每次 `prepare_messages()` 重新读取当前快照。查询只由稳定的
-`AgentState.task` 和完整本地 history 中最近一条 `role=user` 文本组成；assistant 输出、
-tool result、历史摘要和 Memory 正文不会反向扩大查询。子 Runtime 不绑定 retriever，
-所以既没有 Memory 工具，也没有自动候选。
+The parent Runtime rereads the current snapshot on every `prepare_messages()`. The query consists only of the stable
+`AgentState.task` and the latest `role=user` text in the full local history; assistant output,
+tool results, history summaries, and Memory bodies never expand the query in reverse. The child Runtime binds no retriever,
+so it has neither Memory tools nor automatic candidates.
 
-## 1. 主图：一轮的上下文生产线（闭环）
+## 1. Main Diagram: One Round's Context Production Line (Closed Loop)
 
 ```text
-启动（__main__.py main()，进程内只做一次）
+Startup (__main__.py main(), done only once per process)
 │
-├─ InstructionLoader.load()      root→cwd 逐级收集 AGENTS.md，合并截断 ≤12000 字符
-├─ build_system_prompt()         header 身份 + core_rules 规范 + <env> 环境 + 项目级指令
-└─ protected_messages            只读底座：永不变化，裁剪永不触碰
+├─ InstructionLoader.load()      collect AGENTS.md level by level from root→cwd, merge and truncate to ≤12000 characters
+├─ build_system_prompt()         header identity + core_rules + <env> environment + project instructions
+└─ protected_messages            read-only base: never changes, never touched by trimming
 
 
-用户任务（run_task，一次会话可多次）
+User task (run_task, can happen several times per session)
 │
-├─ state.begin_task(task)        语义轨道清零重开（history 不清，跨任务保留）
-└─ history += {role:user}        进入协议轨道，成为永不删除的 Task 锚点
+├─ state.begin_task(task)        the semantic track is reset (history is not cleared and persists across tasks)
+└─ history += {role:user}        enters the protocol track and becomes the never-deleted Task anchor
 
 
-agent_loop 每一轮（agent.py:141，上限 MAX_ITERATIONS=50）
+Each agent_loop round (agent.py:141, limit MAX_ITERATIONS=50)
 │
-│  ① 汇合投影 —— prepare_messages()（context.py:405），上下文在这一刻诞生
-│  │    view = [Runtime Notice]?        一次性提醒，插最顶，发出即消费
-│  │         + System Prompt            来自 protected_messages（拷贝）
-│  │         + [Structured State]       来自 state.snapshot()，本轮重新渲染
-│  │         + [Relevant Memory]?        基础 trim/compact 后单次快照检索，再适配候选预算
-│  │         + [Historical Summary]?    来自 compact()，触发过压缩才存在
-│  │         + Task                     首条 user 消息
-│  │         + 历史轮次                  assistant + 其 tool result，原子成组
-│  │    预算闸门：截断大 tool result → 删最老整轮 → compact 摘要老轮次
+│  ① Merge projection —— prepare_messages() (context.py:405); the context is born at this moment
+│  │    view = [Runtime Notice]?        one-time reminder, inserted at the very top, consumed once sent
+│  │         + System Prompt            from protected_messages (copied)
+│  │         + [Structured State]       from state.snapshot(), re-rendered this round
+│  │         + [Relevant Memory]?        single-snapshot retrieval after base trim/compact, then candidates fitted to the budget
+│  │         + [Historical Summary]?    from compact(); exists only if compaction was triggered
+│  │         + Task                     the first user message
+│  │         + history rounds           assistant + its tool results, grouped atomically
+│  │    Budget gate: truncate large tool results → delete the oldest whole rounds → compact-summarize old rounds
 │  ▼
-│  ② call_llm(view)              流式发送，收 assistant 回复
+│  ② call_llm(view)              streamed send, receive the assistant reply
 │  │
-│  ③ 分流
-│  ├─ 无 tool_calls：查完成条件（active plan 全部完成 + 最近修改后验证通过；无计划时走 Direct Path）
-│  │     ├─ 满足 → 结束返回
-│  │     └─ 不满足且未提醒过 → set_runtime_notice → 回 ①
-│  │           （仅提醒一次；仍不满足则 status=blocked 后返回）
+│  ③ Branch
+│  ├─ No tool_calls: check completion conditions (active plan all complete + verification passed after the latest change; without a plan, take the Direct Path)
+│  │     ├─ met → finish and return
+│  │     └─ not met and not yet reminded → set_runtime_notice → back to ①
+│  │           (reminded only once; if still not met, status=blocked and return)
 │  │
-│  └─ 有 tool_calls：ThreadPoolExecutor 并发执行（含 PermissionGate 拦截）
+│  └─ Has tool_calls: ThreadPoolExecutor runs them concurrently (including PermissionGate interception)
 │        │
-│        │   ★ 同一次执行，写两条轨道；全部 role=tool 回灌后再观察停滞：
+│        │   ★ The same execution writes both tracks; stagnation is observed after all role=tool results are fed back:
 │        │
-│        ├─ 协议轨迹：history += {role:tool}（完整结果原文）
-│        │     LLM 下一轮直接读；受预算约束，可能被截断/折叠
+│        ├─ Protocol track: history += {role:tool} (full original result)
+│        │     read directly by the LLM next round; subject to the budget, may be truncated/folded
 │        │
-│        └─ 语义事实：结构化 ExecutionResult → state.record_execution_result（兼容回调仍可写入 record_tool）
-│              files_changed / errors / active plan / 验证证据
-│              免疫裁剪，下一轮渲染进 [Structured State] 锚定事实
+│        └─ Semantic facts: structured ExecutionResult → state.record_execution_result (the compatibility callback can still write record_tool)
+│              files_changed / errors / active plan / verification evidence
+│              immune to trimming, rendered into [Structured State] next round to anchor the facts
 │
-└──► 两条轨道在下一轮的 ① 重新汇合 —— 循环，直到纯文本收尾或轮次上限
+└──► The two tracks merge again at ① in the next round —— loop until a plain-text finish or the round limit
 ```
 
-恢复时还有一条不可裁剪的交接事实：`crash_recovery` issue 会插入 Structured State，原始参数和 stdin 正文不进入摘要。未结算 issue 存在时，agent loop 只允许只读调查；所有 issue 结算后必须经过新的计划和 verification 才能收口。
+On resume there is another fact that cannot be trimmed: `crash_recovery` issues are inserted into Structured State, and the original arguments and stdin bodies do not enter the summary. While unsettled issues exist, the agent loop allows only read-only investigation; after all issues are settled, it must go through a new plan and verification before it can finish.
 
-Repair Loop 的阶段约束也在这里重新渲染：`diagnosis_required` 要求只读调查、独占 `recover` 或独占 `request_replan`；failure trigger 进入 Explore 后只允许只读调查或独占 `commit_plan`；`verification_required` 要求下一回合只有一个独立 verification。v0.24 的停滞计数、短 hash、活动 trigger 来源和 gate 合法下一动作也来自同一份 State 快照。v0.33 未结算 crash issue 会进一步收窄 gate 到无副作用观察，不能被历史裁剪或摘要覆盖。上下文压缩只处理协议历史，不能删除计划执行视图、`repair_loop`、活动 failure/recovery、crash recovery、generation、预算或停滞状态。
+The Repair Loop phase constraints are also re-rendered here: `diagnosis_required` requires read-only investigation, an exclusive `recover`, or an exclusive `request_replan`; after a failure trigger enters Explore, only read-only investigation or an exclusive `commit_plan` is allowed; `verification_required` requires that the next round contain only one independent verification. v0.24's stagnation counts, short hashes, active trigger source, and the gate's legal next actions also come from the same State snapshot. v0.33's unsettled crash issues further narrow the gate to side-effect-free observation and cannot be overwritten by history trimming or summaries. Context compaction only handles the protocol history and cannot delete the plan execution view, `repair_loop`, the active failure/recovery, crash recovery, generations, budgets, or stagnation state.
 
-## 2. 关键机制一：双轨记录（本架构的核心取舍）
+## 2. Key Mechanism 1: Dual-Track Recording (the Core Trade-Off of This Architecture)
 
-为什么一次执行要写两份？因为**协议历史会被预算破坏，而事实必须存活**。
+Why write two copies of one execution? Because **the protocol history can be damaged by the budget, while the facts must survive**.
 
-| | 协议轨迹 `history` | 语义事实 `AgentState` |
+| | Protocol track `history` | Semantic facts `AgentState` |
 |---|---|---|
-| 写入者 | `agent_loop` 回灌 `role=tool` 消息 | 结构化 `ExecutionResult → AgentState.record_execution_result`；兼容入口可用 `on_result → record_tool` |
-| 内容 | 完整结果原文（命令输出、文件片段） | brief 截断 ≤200 字符 + 派生事实 |
-| 预算下的命运 | 可被截断、整轮删除、折叠进摘要 | **免疫裁剪**，每轮完整重渲染 |
-| 读出方式 | 作为历史轮次原文进入视图 | 渲染为 `[Structured State]`（context.py:312） |
-| 生命周期 | 跨任务累积（会话级） | `begin_task` 清零重开（任务级） |
+| Writer | `agent_loop` feeds back `role=tool` messages | Structured `ExecutionResult → AgentState.record_execution_result`; the compatibility entry can use `on_result → record_tool` |
+| Content | Full original result (command output, file fragments) | Brief truncated to ≤200 characters + derived facts |
+| Fate under the budget | Can be truncated, deleted as whole rounds, folded into the summary | **Immune to trimming**, fully re-rendered every round |
+| How it is read | Enters the view as the original text of history rounds | Rendered as `[Structured State]` (context.py:312) |
+| Lifetime | Accumulates across tasks (session level) | Reset by `begin_task` (task level) |
 
-两个特例，同样服务于这个设计：
+Two special cases serve the same design:
 
-- `commit_plan` / `update_plan_progress`：计划意图不是环境执行事实，两个 state-bound 工具直接写入不可变 revision/event；它们不推进 generation，也不产生验证证据。Structured State 只显示从 State 推导的 active plan 执行视图。
-- `run_shell(purpose="execution"/"verification")`：execution 视为改动环境 → 作废全部验证证据；verification 通过 → 记录证据并解除"需要验证"标记。证据失真比缺证据更危险，所以宁可作废重来。
+- `commit_plan` / `update_plan_progress`: plan intent is not an environment execution fact; these two state-bound tools write immutable revisions/events directly; they do not advance the generation and produce no verification evidence. Structured State shows only the active plan execution view derived from State.
+- `run_shell(purpose="execution"/"verification")`: execution is treated as changing the environment → all verification evidence is invalidated; a passing verification → the evidence is recorded and the "verification required" flag is cleared. Distorted evidence is more dangerous than missing evidence, so it is better to invalidate and start over.
 
-## 3. 关键机制二：视图随轮次演化
+## 3. Key Mechanism 2: The View Evolves With the Rounds
 
-同一任务里，第 1 / N / M 轮发送的消息长这样（自上而下即实际顺序）：
+Within one task, the messages sent in round 1 / N / M look like this (top to bottom is the actual order):
 
 ```text
-第 1 轮（任务刚下达）
+Round 1 (task just assigned)
   System Prompt
-  [Structured State]        Task=修复登录bug | Tools: 0 | Status: running
-  user: 修复登录 bug
-  （还没有历史）
+  [Structured State]        Task=fix the login bug | Tools: 0 | Status: running
+  user: fix the login bug
+  (no history yet)
 
 
-第 N 轮（历史生长，事实累积）
+Round N (history grows, facts accumulate)
   System Prompt
   [Structured State]        Plan revision=1 | step=inspect | Files: auth.py | Errors: 1
-  user: 修复登录 bug
+  user: fix the login bug
   assistant(tool_calls: read_file, update_plan_progress)
-  tool: <文件内容>          ┐
-  tool: ok                 ├─ 轮次 = assistant + 其全部 tool result
-  assistant(edit_file)     │  原子成组，绝不产生孤儿 tool result
+  tool: <file content>      ┐
+  tool: ok                 ├─ round = assistant + all its tool results
+  assistant(edit_file)     │  grouped atomically, never producing orphan tool results
   tool: ok                 ┘
-  …（历史逐轮变长，token 逼近预算）
+  … (history grows round by round, tokens approach the budget)
 
 
-第 M 轮（超预算，压缩已触发）
+Round M (over budget, compaction triggered)
   System Prompt
-  [Structured State]        语义事实无损：改了什么、验证是否通过都在
-  [Historical Summary]      ← 老轮次折叠成结构化摘要（按已摘要边界增量更新）
-  user: 修复登录 bug
+  [Structured State]        semantic facts lossless: what changed and whether verification passed are all there
+  [Historical Summary]      ← old rounds folded into a structured summary (incrementally updated along the summarized boundary)
+  user: fix the login bug
   assistant(tool_calls: run_shell)
-  tool: [exit=0] …          ← 只保留最近 keep_rounds=6 轮原文
+  tool: [exit=0] …          ← only the last keep_rounds=6 rounds of original text are kept
 ```
 
-注意两点：`[Structured State]` 的位置在 Task **之前**（首条 user 前插入）；压缩后历史的"中间"被摘要替换，但**头（Task）和尾（最近 6 轮）保真**——模型始终知道自己为什么来、刚刚做了什么。
+Note two things: `[Structured State]` sits **before** the Task (inserted before the first user message); after compaction, the "middle" of the history is replaced by the summary, but **the head (Task) and the tail (last 6 rounds) stay faithful** — the model always knows why it is here and what it just did.
 
-## 4. 关键机制三：预算反馈环
+## 4. Key Mechanism 3: The Budget Feedback Loop
 
 ```text
 window = CONTEXT_WINDOW
-├─ reserve   15%              输出预留，不发送
+├─ reserve   15%              output reserve, not sent
 └─ input_limit 85%
-   ├─ system / task / state / memory   受保护区：候选先按整体丢弃，裁剪永不拆半条
-   └─ history / tool_result   可压缩区：上限约 window × 45%（history_ratio）
+   ├─ system / task / state / memory   protected area: candidates are dropped as a whole first; trimming never cuts half an entry
+   └─ history / tool_result   compressible area: limit about window × 45% (history_ratio)
 ```
 
-超预算时按"损失从小到大"三步走，全部只作用于视图副本（`history` 本体不动）：
+When over budget, it takes three steps in the order "smallest loss first", all applied only to the view copy (the `history` itself is untouched):
 
-1. **截断 tool result**：只截超过 120 字符的 tool 内容，保头尾 + `[... omitted N characters ...]`，协议字段不变。
-2. **整轮原子删除**：最老的轮次先走，assistant 与 tool result 同生共死。
-3. **compact()**：把最近 6 轮之前的完整轮次交给 LLM 做无工具摘要（任务/已完成步骤/最后成功调用/改动文件/错误/进度/下一步）；失败降级为仅 trimming。
+1. **Truncate tool results**: only tool content longer than 120 characters is truncated, keeping the beginning and end + `[... omitted N characters ...]`; protocol fields are unchanged.
+2. **Delete whole rounds atomically**: the oldest rounds go first; an assistant message and its tool results live and die together.
+3. **compact()**: complete rounds older than the last 6 are given to the LLM for a tool-free summary (task/completed steps/last successful call/changed files/errors/progress/next steps); on failure, it degrades to trimming only.
 
-精确阈值：`message_limit = max(protected, min(input_limit, protected + history_limit))`（context.py:115）——受保护前缀再大也不误删，只是极端情况下放开上限。
+Exact threshold: `message_limit = max(protected, min(input_limit, protected + history_limit))` (context.py:115) — no matter how large the protected prefix is, it is never deleted by mistake; in extreme cases the limit is simply relaxed.
 
-## 5. 不变量
+## 5. Invariants
 
-1. System Prompt 与首条 user 永不删除；轮次原子，无孤儿 tool result。
-2. `history` 只追加不修改；trim/compact 只改副本——任何一轮的视图都可从完整 history 重建。
-3. 每轮 tool results 全部回灌后才进下一轮（无 v0.10 的"半截状态"）。
-4. 语义事实免疫裁剪：不管协议历史被削成什么样，`[Structured State]` 每轮完整重渲染。
-5. Runtime Notice 只发一次，且在最终视图构建成功后才消费（context.py:429）——压缩重建消息不会吞掉提醒；v0.20 的阶段性 Notice 会明确指出下一步合法动作，v0.24 的停滞 Notice 还会显示计数、类别和同时满足 Planning / Repair gate 的下一动作。
-6. Trace & Replay 读取独立的 `state.snapshot()` 视图，不进入 LLM 消息，不调用执行链，也不改变上下文或 State。
-7. 可观测性与结果回调都是纯观察者，异常被吞（base.py:128、context.py:281），不破坏执行。
+1. The System Prompt and the first user message are never deleted; rounds are atomic, with no orphan tool results.
+2. `history` is append-only and never modified; trim/compact change only the copy — any round's view can be rebuilt from the full history.
+3. The next round starts only after all tool results of each round are fed back (no "half state" as in v0.10).
+4. Semantic facts are immune to trimming: no matter how much the protocol history is cut, `[Structured State]` is fully re-rendered every round.
+5. A Runtime Notice is sent only once, and is consumed only after the final view is built successfully (context.py:429) — rebuilding messages during compaction never swallows a reminder; v0.20's phase Notices state the next legal action explicitly, and v0.24's stagnation Notice also shows the count, the category, and the next actions that satisfy both the Planning and Repair gates.
+6. Trace & Replay reads the separate `state.snapshot()` view; it does not enter LLM messages, does not call the execution chain, and does not change the context or State.
+7. Observability and result callbacks are pure observers; their exceptions are swallowed (base.py:128, context.py:281) and do not break execution.
 
-8. v0.41 的 Memory 资料区遵循“基础 Context trim/compact → 单次检索 → 候选适配 → 最终 trim”，
-   每个请求只使用一个 Memory 快照；它只在 prepared view 中存在。`ContextStats.memory` 单独计数，
-   `memory_retrieved` / `memory_retrieval_failed` 每次 prepare 至多一次，只记录有界元数据，不记录正文或真实存储路径。
-9. v0.33 的 `crash_recoveries`、`crash_issues` 和 `crash_decisions` 是不可裁剪的恢复事实；Structured State 只显示有界摘要，包含 issue ID、工具、分类、准入状态、公开原因和下一动作，不显示原始参数、shell 命令或 stdin。未结算 issue 存在时只允许获准的无副作用观察，所有 issue 结算后仍需新计划和独立 verification。
+8. v0.41's Memory information block follows "base Context trim/compact → single retrieval → candidate fitting → final trim",
+   and each request uses only one Memory snapshot; it exists only in the prepared view. `ContextStats.memory` counts it separately,
+   and `memory_retrieved` / `memory_retrieval_failed` happen at most once per prepare, recording only bounded metadata, never bodies or real storage paths.
+9. v0.33's `crash_recoveries`, `crash_issues`, and `crash_decisions` are recovery facts that cannot be trimmed; Structured State shows only bounded summaries, including the issue ID, tool, classification, admission status, public reason, and next action, never the original arguments, shell commands, or stdin. While unsettled issues exist, only approved side-effect-free observation is allowed, and after all issues are settled, a new plan and independent verification are still required.
 
-## 6. 代码速查
+## 6. Code Quick Reference
 
-| 视图成分 | 产出位置 | 更新频率 |
+| View component | Produced at | Update frequency |
 |---|---|---|
-| System Prompt | `prompt.py:112` + `instructions.py:48`，`__main__.py:30` 组装 | 进程级一次 |
-| `[Runtime Notice]` | `context.py:414`（`set_runtime_notice` 设置） | 单次请求 |
-| `[Structured State]` | `context.py:312 _render_state` ← `state.py:171 snapshot` | 每轮 |
-| `[Relevant Memory — Untrusted Reference]` | `retrieval.py` → `context.py:prepare_messages()` | 父侧每次请求；临时视图 |
-| `[Historical Summary]` | `context.py:360 compact` ← `agent.py:136 summarize_messages` | 压缩后增量 |
-| Task / 历史轮次 | `__main__.py:45`、`agent.py:236,304` 追加 | 事件驱动 |
-| 语义事实 | `agent.py` 提交 `ExecutionResult` → `state.py record_execution_result` | 每次结构化工具执行 |
+| System Prompt | `prompt.py:112` + `instructions.py:48`, assembled in `__main__.py:30` | Once per process |
+| `[Runtime Notice]` | `context.py:414` (set by `set_runtime_notice`) | Single request |
+| `[Structured State]` | `context.py:312 _render_state` ← `state.py:171 snapshot` | Every round |
+| `[Relevant Memory — Untrusted Reference]` | `retrieval.py` → `context.py:prepare_messages()` | Every parent-side request; temporary view |
+| `[Historical Summary]` | `context.py:360 compact` ← `agent.py:136 summarize_messages` | Incrementally after compaction |
+| Task / history rounds | appended by `__main__.py:45`, `agent.py:236,304` | Event driven |
+| Semantic facts | `agent.py` commits `ExecutionResult` → `state.py record_execution_result` | Every structured tool execution |

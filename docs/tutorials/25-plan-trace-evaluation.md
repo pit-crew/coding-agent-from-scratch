@@ -1,75 +1,75 @@
-# 第 25 课：计划轨迹回放与验收
+# Lesson 25: Plan trace replay and acceptance
 
-上一课：[证据驱动重规划与停滞收口](24-replanning-policy.md) · [教程总览](README.md) · 下一课：后续版本课程（待规划）
+Previous: [Evidence-driven replanning and stagnation stop](24-replanning-policy.md) · [Tutorial overview](README.md) · Next: later version lessons (to be planned)
 
-代码快照：`v0.25` · 相邻差异：`v0.24..v0.25`
+Code snapshot: `v0.25` · Adjacent diff: `v0.24..v0.25`
 
-本课示例命令适用于 Bash/zsh。`v0.25` tag 由仓库维护者在交付前手动创建；在 tag 尚未创建时，可以留在当前分支阅读和运行实现。
+The example commands in this lesson are for Bash/zsh. The `v0.25` tag is created manually by the repository maintainer before delivery; before the tag exists, you can stay on the current branch to read and run the implementation.
 
-## 本课目标
+## Lesson Goals
 
-上一课已经保存了计划 revision、重规划 trigger、执行失败、恢复动作和验证历史，但这些记录分散在不同列表中。只看 generation 能知道某一代发生了什么，却无法回答同一代提交两个 revision 后，一次调查属于旧方案还是新方案。
+The previous lesson already saved plan revisions, replanning triggers, execution failures, recovery actions, and verification history, but these records are scattered across different lists. Looking only at generations tells you what happened in one generation, but it cannot answer, when two revisions are submitted in the same generation, whether an investigation belongs to the old approach or the new one.
 
-本课结束后，读者应能解释三个维度的分工：`generation` 表示环境经过一次副作用或恢复后的验证代次，`revision` 表示计划结构版本，顺序事件把两者以及 trigger、用户决定和事实记录连接起来。Trace 仍然只读，它展示证据链的完整性，不重新执行工具，也不替模型判断计划是否聪明。
+After this lesson, you should be able to explain how three dimensions divide the work: a `generation` is the verification generation after the environment goes through a side effect or recovery, a `revision` is a version of the plan structure, and sequence events connect the two, together with triggers, user decisions, and fact records. Trace is still read-only: it shows the integrity of the evidence chain, does not re-run tools, and does not judge for the model whether a plan is smart.
 
-## 前置条件
+## Prerequisites
 
-需要基础 Python、Bash/zsh，以及第 24 课中的 Plan Contract、Repair Loop 和重规划 trigger。先切换到本课代码并查看相邻差异：
+You need basic Python, Bash/zsh, and the Plan Contract, Repair Loop, and replanning triggers from Lesson 24. First switch to this lesson's code and view the adjacent diff:
 
 ```bash
 git checkout v0.25
 git diff --stat v0.24..v0.25
 ```
 
-如果本地还没有 `v0.25` tag，可继续在当前开发分支运行下面的 API。固定源码链接和教程事实检查以维护者手动创建 tag 后的快照为准。
+If the `v0.25` tag does not exist locally yet, you can keep running the API below on the current development branch. Pinned source links and tutorial fact checks follow the snapshot after the maintainer creates the tag manually.
 
-## 新增与改动文件
+## New and Changed Files
 
-| 文件 | 本课作用 |
+| File | Role in this lesson |
 | --- | --- |
-| `src/mini_agent/state.py` | 增加任务内连续的 `TraceEvent`，在事实成功写入的同一把 State 锁中记录顺序、generation、revision、阶段变化和停滞摘要。 |
-| `src/mini_agent/trace.py` | 增加 revision 查询、计划时间线、计划归属、结构校验、计划因果边和结论依据，同时保留 v0.21 generation 查询。 |
-| `src/mini_agent/__main__.py` | 增加只读命令 `/trace revision <revision_id>`。 |
-| `tests/test_plan_trace_v025.py` | 覆盖失败—重规划—新 generation 验证链、用户交接、停滞恢复、查询互斥和损坏快照。 |
-| `docs/operation/manual.md`、`README.md`、`README_EN.md`、`CHANGELOG.md`、`pyproject.toml` | 同步操作入口、版本导航和发布元数据。 |
+| `src/mini_agent/state.py` | Adds a `TraceEvent` that is contiguous within a task, recording order, generation, revision, phase changes, and stagnation summaries under the same State lock in which facts are written successfully. |
+| `src/mini_agent/trace.py` | Adds revision queries, a plan timeline, plan ownership, structural validation, plan causal edges, and the basis of conclusions, while keeping the v0.21 generation query. |
+| `src/mini_agent/__main__.py` | Adds the read-only command `/trace revision <revision_id>`. |
+| `tests/test_plan_trace_v025.py` | Covers the failure—replan—new generation verification chain, user handoff, stagnation resume, query exclusivity, and corrupted snapshots. |
+| `docs/operation/manual.md`, `README.md`, `README_EN.md`, `CHANGELOG.md`, `pyproject.toml` | Sync the operation entry, version navigation, and release metadata. |
 
-## 关键流程
+## Key Flow
 
-下面的流程保留第 24 课已有的执行和 Repair Loop 节点，只在事实写入处插入顺序事件。事件保存的是已有记录的类型和 ID，因此它不会复制工具原始输出：
+The flow below keeps the execution and Repair Loop nodes from Lesson 24 and only inserts sequence events where facts are written. An event stores the type and ID of an existing record, so it does not copy raw tool output:
 
 ```text
-[旧] attempt / failure / verification 事实写入
+[old] attempt / failure / verification facts written
        │
        ├── [+] TraceEvent(sequence_id, generation_id, revision_id, record pointer)
        │
-[旧] failure -> request_replan -> exploring -> commit_plan
+[old] failure -> request_replan -> exploring -> commit_plan
        │                                  │
        │                                  └── [+] parent / trigger / diff
        │
-[旧] possible effect / recovery -> 新 generation -> 独立 verification
-       │                                  │
-       └── [+] revision -> attempt / recovery / verification 因果边
+[old] possible effect / recovery -> new generation -> independent verification
+       │                                   │
+       └── [+] revision -> attempt / recovery / verification causal edges
 ```
 
-以“旧计划失败、引用失败重规划、新计划验证通过”为例，事件顺序会表达：旧 revision 的失败先发生；trigger 引用这个失败；新 revision 提交时引用旧 revision 和 trigger；随后新 revision 的执行事实和新 generation 验证通过。后一个通过证据不会被写回旧 revision，也不会被解释成旧计划已经正确。
+Take "the old plan fails, a replan cites the failure, the new plan passes verification" as an example. The event order expresses: the failure of the old revision happens first; the trigger references this failure; the new revision references the old revision and the trigger when it is submitted; then the new revision's execution facts and the new generation's verification pass. The later passing evidence is not written back to the old revision and is not interpreted as proof that the old plan was correct.
 
-`generation` 和 `revision` 的关系可以这样看：
+The relationship between `generation` and `revision` can be seen like this:
 
 ```text
-计划 revision 1 ──失败 attempt / failure──> trigger 1 ──> 计划 revision 2
-       │                                         │                 │
-       └── generation 0                          └── parent         └── generation 1 的执行与验证
+plan revision 1 ──failed attempt / failure──> trigger 1 ──> plan revision 2
+       │                                            │                 │
+       └── generation 0                             └── parent         └── execution and verification in generation 1
 ```
 
-## 上一版的问题
+## Problems in the Previous Version
 
-第 24 课的 `snapshot()` 已分别提供 `plan_revisions`、`plan_progress_history`、`replan_triggers`、`user_plan_decisions`、attempt、failure、recovery 和 verification history。Trace 可以验证每张表内部的引用，却不能可靠知道记录的先后。按数组位置会把实现细节误当成发生顺序，按 generation 又无法区分同一代中的多个 revision。
+In Lesson 24, `snapshot()` already provided `plan_revisions`, `plan_progress_history`, `replan_triggers`, `user_plan_decisions`, attempts, failures, recoveries, and verification history separately. Trace could validate the references inside each table, but it could not reliably know the order of the records. Using array positions would mistake an implementation detail for the order of events, and using generations cannot tell several revisions in the same generation apart.
 
-因此本课只增加连接信息。状态转换、模型工具和规划策略保持不变；事件也不参与完成判定、预算计算或验证证据计算。旧 snapshot 没有计划数据时仍按 v0.21 结果回放；有计划记录但没有新事件时，报告保留能直接验证的结构，并把跨记录顺序和执行归属标为 `unresolved`。
+So this lesson only adds connecting information. State transitions, model tools, and planning policies stay unchanged; events also take no part in completion decisions, budget calculation, or verification evidence. An old snapshot without plan data still replays with the v0.21 result; when there are plan records but no new events, the report keeps the structure that can be validated directly and marks cross-record order and execution ownership as `unresolved`.
 
-## 核心概念：顺序事件
+## Core Concepts: Sequence Events
 
-`TraceEvent` 是一个很小的指针记录。它的 `sequence_id` 在任务内连续递增，`record_type` 和 `record_id` 指向已有记录；verification 的 ID 是 `verification_history` 的索引。事件还保存发生时的 generation 和 revision，以及确实发生变化时的 planning / repair phase 前后值。
+`TraceEvent` is a very small pointer record. Its `sequence_id` increases contiguously within a task, and `record_type` and `record_id` point to an existing record; the ID of a verification is its index in `verification_history`. The event also stores the generation and revision at the time it happened, and the before/after values of the planning / repair phase when they actually changed.
 
 ```python
 snapshot = state.snapshot()
@@ -77,13 +77,13 @@ for event in snapshot["trace_events"]:
     print(event["sequence_id"], event["kind"], event["revision_id"])
 ```
 
-这段代码读取公开快照，不触发回放副作用。读者应看到计划提交、步骤进度、执行结果、失败和验证事件按事实写入顺序排列；一次非法 `commit_plan` 不会多出事件，因为它没有成功写入 Plan Contract。
+This code reads the public snapshot and triggers no replay side effects. You should see plan submissions, step progress, execution results, failures, and verification events in the order the facts were written; an illegal `commit_plan` adds no event, because it did not write the Plan Contract successfully.
 
-任务开始和 `/reset` 会清除旧事件并把序号重新从 1 开始。停滞告警即使后来因为新观察被当前状态清除，也会留在事件列表中；事件中的停滞字段只有类型、次数和短指纹，不包含工具输出。
+Starting a task and `/reset` clear old events and restart numbering from 1. A stagnation warning stays in the event list even if the current state later clears it because of a new observation; the stagnation fields of an event contain only the type, count, and a short fingerprint, not tool output.
 
-## 核心概念：revision 查询与计划时间线
+## Core Concepts: Revision Queries and the Plan Timeline
 
-默认的 `build_trace(snapshot)` 继续返回全部 generation。`build_trace(snapshot, generation_id=1)` 仍只把 generation 1 作为主要展示范围。新增的 revision 查询使用仅限关键字参数，避免把两个稳定维度混在一个位置参数中：
+The default `build_trace(snapshot)` still returns all generations. `build_trace(snapshot, generation_id=1)` still shows only generation 1 as the main display scope. The new revision query uses keyword-only arguments, so the two stable dimensions are not mixed into one positional argument:
 
 ```python
 from mini_agent.trace import build_trace, render_trace
@@ -92,11 +92,11 @@ report = build_trace(snapshot, revision_id=2)
 print(render_trace(report))
 ```
 
-revision 视图包含目标、成功标准、parent、trigger、模型提交的 `reason`、Runtime 计算的结构差异、步骤进度、用户决定以及生效期间的调查、执行、失败、恢复和验证事实。`plan_timeline` 按 `sequence_id` 排列这些事件；若查询的 revision 来自重规划，旧 revision 中的失败或用户反馈作为 trigger 前因显示，但不会被归入新 revision 的执行期间。
+The revision view contains the goal, success criteria, parent, trigger, the `reason` the model submitted, the structural difference the Runtime computed, step progress, user decisions, and the investigation, execution, failure, recovery, and verification facts while it was in effect. `plan_timeline` orders these events by `sequence_id`; if the queried revision comes from a replan, the failure or user feedback in the old revision is shown as the trigger's cause but is not placed within the new revision's execution period.
 
-两个查询不能同时指定，非法 ID 抛出 `TraceQueryError`。记录损坏属于报告完整性问题：报告仍返回能定位的记录，并把相应因果边标成 `UNRESOLVED`。
+The two queries cannot be specified together, and an invalid ID raises `TraceQueryError`. Corrupted records are a report integrity problem: the report still returns the records it can locate and marks the matching causal edges as `UNRESOLVED`.
 
-CLI 对应入口是：
+The matching CLI entries are:
 
 ```text
 /trace
@@ -104,17 +104,17 @@ CLI 对应入口是：
 /trace revision <revision_id>
 ```
 
-三个入口都在执行新任务前拦截。Trace 不调用 LLM、工具 handler 或 PermissionGate，也不追加对话历史，不修改 State、预算和 generation。
+All three entries are intercepted before a new task runs. Trace does not call the LLM, a tool handler, or the PermissionGate, does not append to the conversation history, and does not change State, budgets, or generations.
 
-## 实现拆解
+## Implementation Breakdown
 
-`state.py` 在已有事实成功写入的位置追加事件。计划提交先写入 `plan_committed`，若解决活动 trigger，再追加 `trigger_resolved`；步骤进度、用户决定、恢复动作、执行结果、failure 和 verification 各自指向对应记录。一次执行结果派生出的 attempt、failure 和 verification 在同一把锁内按写入顺序追加，Trace 再用 ID 建立因果边。
+`state.py` appends events where existing facts are written successfully. A plan submission first writes `plan_committed`, and if it resolves an active trigger, then appends `trigger_resolved`; step progress, user decisions, recovery actions, execution results, failures, and verification each point to their own records. The attempt, failure, and verification derived from one execution result are appended in write order inside the same lock, and Trace then builds causal edges from the IDs.
 
-`trace.py` 先运行原有 generation 完整性检查，再处理计划记录。它检查 parent 是否存在且早于子 revision，步骤依赖是否存在且无环，`replaces` 是否只引用 parent 中移除的步骤，保存的 diff 是否等于两份快照重算结果。它还检查 progress 的 revision / step、生效区间和状态连续性，trigger 来源和唯一消费，以及 plan-only 决定是否指向当时待审批的当前 revision。
+`trace.py` first runs the existing generation integrity checks, then handles the plan records. It checks whether the parent exists and is earlier than the child revision, whether step dependencies exist and are acyclic, whether `replaces` references only steps removed from the parent, and whether the saved diff equals the result recomputed from the two snapshots. It also checks the progress revision / step, the active interval and status continuity, trigger sources and single consumption, and whether plan-only decisions point to the current revision that was awaiting approval at that time.
 
-计划事实的归属只接受顺序事件提供的 revision。没有事件时，报告可以显示 revision 自身的结构、parent 和 trigger 引用，但不会用 generation 或数组位置猜测一次 attempt 属于哪个 revision。事件序号缺口、悬空引用、错误 generation / revision 和跨 generation 验证都会进入 `integrity.issues`。
+Ownership of plan facts accepts only the revision provided by sequence events. Without events, the report can show the revision's own structure, parent, and trigger references, but it does not guess from the generation or array position which revision an attempt belongs to. Gaps in event numbers, dangling references, wrong generations / revisions, and cross-generation verification all go into `integrity.issues`.
 
-报告的计划因果边包括：
+The plan causal edges in the report include:
 
 ```text
 parent revision -> revision
@@ -122,28 +122,28 @@ failure / attempt / user decision -> trigger -> revision
 revision -> progress / decision / attempt / recovery / verification
 ```
 
-每条边都带 `resolved` 和 `status`。最终结论沿用 Runtime 保存的 `done`、`blocked` 或 `failed`，并附活动 revision 的步骤状态、当前 generation 的独立验证记录、`verification_required`、末次 failure、停滞摘要和终态摘要。Trace 只检查这些证据能否连起来，不重新决定终态。
+Every edge carries `resolved` and `status`. The final conclusion keeps the `done`, `blocked`, or `failed` saved by the Runtime, with the active revision's step statuses, the current generation's independent verification records, `verification_required`, the last failure, the stagnation summary, and the terminal summary attached. Trace only checks whether this evidence connects; it does not decide the terminal state again.
 
-## 为什么这样设计
+## Why This Design
 
-把顺序单独保存，代价是 State 多了一份很小的 append-only 记录，但换来了跨列表的确定性归属。事件只存索引而不复制输出，既能让报告找到事实，也不会扩大敏感数据暴露面。把 generation 查询和 revision 查询分开，则让“环境验证代次”和“方案版本”各自保持清晰。
+Storing order separately costs one more very small append-only record in State, but gives deterministic ownership across lists. Events store only indexes and do not copy output, so the report can find the facts without widening the exposure of sensitive data. Keeping generation queries and revision queries separate keeps "environment verification generation" and "approach version" each clear.
 
-报告对损坏数据选择不猜测，是因为补全一个看似合理的归属会把不确定性隐藏起来。相应的限制是，手工构造的旧计划 snapshot 如果没有事件，只能得到部分可验证报告；需要完整回放时必须从带 `trace_events` 的运行时快照开始。后续通过验证的 generation 也不会自动证明旧计划正确，旧 failure 是否真正解决仍须由已有事实和当前 Runtime 结论共同支持。
+The report chooses not to guess about corrupted data, because filling in a plausible-looking ownership would hide the uncertainty. The resulting limitation is that a hand-built old plan snapshot without events only gets a partially verifiable report; full replay must start from a runtime snapshot with `trace_events`. A later generation that passes verification also does not automatically prove the old plan correct; whether the old failure was really solved must still be supported jointly by the existing facts and the current Runtime conclusion.
 
-## 设计边界
+## Design Boundaries
 
-- Trace 只消费 `AgentState.snapshot()`，不访问私有原始参数、checkpoint 内容、LLM 或执行器。
-- 事件不推进 generation，不改变预算，不产生 verification evidence，也不替代 plan / attempt / failure / recovery 的写入来源。
-- `reason`、反馈、计划文本、路径和停滞指纹在 State 或报告边界内有界、脱敏；Trace 不重新读取工具输出判断“是否有进展”。
-- 没有计划数据的旧 snapshot 保持 v0.21 兼容；有计划数据但缺事件时返回不完整报告，并保留 unresolved 边。
+- Trace consumes only `AgentState.snapshot()` and does not access private original arguments, checkpoint content, the LLM, or the executor.
+- Events do not advance the generation, change budgets, or produce verification evidence, and they do not replace the write sources of plans / attempts / failures / recoveries.
+- `reason`, feedback, plan text, paths, and stagnation fingerprints are bounded and redacted within the State or report boundary; Trace does not reread tool output to judge "whether there was progress".
+- Old snapshots without plan data stay compatible with v0.21; those with plan data but missing events return an incomplete report and keep unresolved edges.
 
-## 本版特性、下一课与代码索引
+## Version Features, Next Lesson, and Code Index
 
-本版新增按顺序回放计划链、revision 查询、计划因果边、损坏快照完整性报告和 `/trace revision`。简单 Direct Path、旧 generation 查询、Repair Loop 和独立 verification 的边界继续有效。
+This version adds ordered replay of the plan chain, revision queries, plan causal edges, integrity reports for corrupted snapshots, and `/trace revision`. The boundaries of the simple Direct Path, the old generation query, the Repair Loop, and independent verification remain in effect.
 
-下一课尚未规划。固定代码快照索引如下，链接指向本课交付时的 `v0.25` tag：
+The next lesson is not planned yet. The pinned code snapshot index is below; the links point to the `v0.25` tag at the time this lesson was delivered:
 
-- [`state.py` 的 TraceEvent 与事实写入](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.25/src/mini_agent/state.py)
-- [`trace.py` 的只读回放与完整性检查](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.25/src/mini_agent/trace.py)
-- [`__main__.py` 的 Trace CLI 入口](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.25/src/mini_agent/__main__.py)
-- [`test_plan_trace_v025.py` 的验收链路](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.25/tests/test_plan_trace_v025.py)
+- [TraceEvent and fact writes in `state.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.25/src/mini_agent/state.py)
+- [Read-only replay and integrity checks in `trace.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.25/src/mini_agent/trace.py)
+- [The Trace CLI entry in `__main__.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.25/src/mini_agent/__main__.py)
+- [The acceptance chain in `test_plan_trace_v025.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.25/tests/test_plan_trace_v025.py)

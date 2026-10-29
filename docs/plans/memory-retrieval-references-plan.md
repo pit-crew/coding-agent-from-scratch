@@ -1,197 +1,196 @@
-# 阶段十一：轻量记忆、相关检索与资料引用实施计划
+# Stage 11: Lightweight Memory, Relevance Retrieval, and Reference Material Implementation Plan
 
-> 状态：`v0.40`–`v0.42` 已实现
-> 建议版本范围：`v0.40`–`v0.42`
-> 能力前置：阶段四的 State / Context 分离、阶段五的项目指令、阶段九的持久工具边界与崩溃恢复、阶段十的父子权限边界
-> 关联计划：`context-management-plan.md`、`session-persistence-resume-plan.md`、`subagent-delegation-plan.md`
+> Status: `v0.40`–`v0.42` implemented
+> Suggested version range: `v0.40`–`v0.42`
+> Capability prerequisites: State / Context separation from Stage 4, project instructions from Stage 5, durable tool boundaries and crash recovery from Stage 9, parent/child permission boundaries from Stage 10
+> Related plans: `context-management-plan.md`, `session-persistence-resume-plan.md`, `subagent-delegation-plan.md`
 
-本计划借鉴 OpenCode 将项目指令与按需读取的资料分开的做法，以及其 References 的具名目录、说明和普通工具权限边界；不声称 OpenCode 已提供与本文相同的持久 Memory。参考：[OpenCode Instructions](https://opencode.ai/v2/docs/instructions)、[OpenCode References](https://opencode.ai/v2/docs/references)。本阶段只实现本地、标准库驱动的能力，不引入向量数据库、embedding 服务或远程仓库缓存。
+This plan borrows from OpenCode's separation of project instructions from material read on demand, and from its References' named directories, descriptions, and ordinary tool permission boundaries; it does not claim that OpenCode already provides the same durable Memory as this document. References: [OpenCode Instructions](https://opencode.ai/v2/docs/instructions), [OpenCode References](https://opencode.ai/v2/docs/references). This stage implements only local, standard-library-driven capabilities and introduces no vector database, embedding service, or remote repository cache.
 
-## 1. 目标与定位
+## 1. Goal and Positioning
 
-阶段十后，`mini_agent` 能在单次任务内调查、委派、执行并恢复，但跨任务保留的 `history` 不是一份可维护的长期知识库。历史会被裁剪和压缩，`AgentState` 会随新任务重置，session 则是一次会话的恢复记录。项目指令 `AGENTS.md` 适合放必须遵守的规则，不适合不断追加普通发现。
+After Stage 10, `mini_agent` can investigate, delegate, execute, and recover within a single task, but the `history` kept across tasks is not a maintainable long-term knowledge base. History is trimmed and compacted, `AgentState` resets with new tasks, and a session is the recovery record of one session. The project instructions `AGENTS.md` suit rules that must be followed, not ever-growing ordinary findings.
 
-阶段十一要回答的问题是：**怎样让 Agent 在后续任务中找回少量有来源的项目知识，并按需查阅项目外资料，同时不把旧内容误当成当前指令或验证事实？**
+The question Stage 11 answers is: **how can the Agent find a small amount of sourced project knowledge in later tasks, and consult material outside the project on demand, without mistaking old content for current instructions or verification facts?**
 
-一句话目标：**建立按工作区隔离的轻量持久 Memory，提供有界的相关检索，并让具名本地 References 经过原有权限边界供 Agent 读取。**
+One-sentence goal: **build lightweight durable Memory isolated per workspace, provide bounded relevance retrieval, and let named local References be read by the Agent through the existing permission boundaries.**
 
-目标流程：
+Target flow:
 
 ```text
-明确写入请求 ──→ PermissionGate ──→ 工作区 Memory 文件
-                                        │
-新任务 ──→ 检索相关条目 ──→ 少量命中摘要 ──→ 父 Context
-                         └── 按 ID 读取原文 ──┘
+explicit write request ──→ PermissionGate ──→ workspace Memory file
+                                                 │
+new task ──→ retrieve relevant entries ──→ a few hit summaries ──→ parent Context
+                                └── read the original by ID ──┘
 
-本地 References 配置 ──→ 别名、说明、真实目录
-用户或模型按别名查阅 ──→ 路径与权限校验 ──→ 有界文件片段及来源
+local References configuration ──→ alias, description, real directory
+user or model consults by alias ──→ path and permission checks ──→ bounded file fragments and sources
 ```
 
-三个版本各讲一个概念：`v0.40` 解决「什么值得跨会话保存、怎样安全修改」，`v0.41` 解决「何时取回、如何说明命中来源」，`v0.42` 解决「怎样具名读取工作区外的本地资料」。三版均已实现。
+Each of the three versions teaches one concept: `v0.40` solves "what is worth saving across sessions and how to change it safely", `v0.41` solves "when to recall and how to explain hit sources", and `v0.42` solves "how to read local material outside the workspace by name". All three versions are implemented.
 
-## 2. 范围与非目标
+## 2. Scope and Non-Goals
 
-### 2.1 本阶段范围
+### 2.1 Scope of this stage
 
-- 每个规范化工作区拥有独立、持久的记忆集合；跨任务、跨会话可用，与 `/save` 是否开启无关。
-- 记忆支持查看、新增、修订和遗忘。所有修改由显式工具调用触发，经过既有权限与持久工具边界；不自动从对话提炼并写入。
-- 每条记忆至少含稳定 ID、标题、正文、标签、来源描述和更新时间；格式有 schema 版本与大小上限。
-- 采用标准库关键词匹配、字段加权和确定性排序，返回有界摘要；需要细节时按 ID 读取原文。
-- References 仅指配置好的本地目录。别名与说明帮助发现；列表、搜索、读取均给出可核查的路径和行号，遵守现有权限。
-- 检索和引用内容作为不可信材料进入 Context，不进入受保护项目指令、`verification_evidence` 或父子授权状态。
+- Each normalized workspace has its own independent, durable memory collection; it is available across tasks and sessions, regardless of whether `/save` is on.
+- Memories support viewing, adding, revising, and forgetting. All changes are triggered by explicit tool calls and go through the existing permission and durable tool boundaries; nothing is extracted from conversations and written automatically.
+- Each memory contains at least a stable ID, title, body, tags, source description, and update time; the format has a schema version and size limits.
+- Use standard-library keyword matching, field weighting, and deterministic ranking to return bounded summaries; read the original by ID when details are needed.
+- References mean only configured local directories. Aliases and descriptions help discovery; listing, searching, and reading all give checkable paths and line numbers and follow existing permissions.
+- Retrieved and referenced content enters the Context as untrusted material, not the protected project instructions, `verification_evidence`, or parent/child authorization state.
 
-### 2.2 本阶段不做
+### 2.2 Not in this stage
 
-- 不做向量库、embedding、语义相似度服务、全文索引服务或自动爬网。
-- 不做自动记忆提取、自动整理冲突、隐式写入、无用户可见依据的「自我学习」。
-- 不把 session history、State snapshot、Trace 或工具原文整批导入 Memory。
-- 不把 Memory 当作 `AGENTS.md` 的替代品；其中的命令式文本不能覆盖 system、项目指令、Plan 或 PermissionGate。
-- 不支持远程 Git References、后台刷新、联网下载或缓存仓库。若以后需要，另行定义网络权限、固定版本和刷新一致性。
-- 不借 References 扩大子代理白名单；阶段十一默认仅父 Agent 使用记忆和引用工具。
+- No vector store, embeddings, semantic similarity service, full-text index service, or automatic web crawling.
+- No automatic memory extraction, automatic conflict resolution, implicit writes, or "self-learning" without a basis visible to the user.
+- No bulk import of session history, State snapshots, Trace, or raw tool output into Memory.
+- Memory is not a replacement for `AGENTS.md`; imperative text in it cannot override the system prompt, project instructions, Plan, or PermissionGate.
+- No remote Git References, background refresh, network downloads, or cached repositories. If needed later, network permissions, pinned versions, and refresh consistency must be defined separately.
+- References do not expand the subagent allowlist; in Stage 11, only the parent Agent uses the memory and reference tools by default.
 
-## 3. 先冻结的架构决策
+## 3. Architecture Decisions to Freeze First
 
-### D1：Memory 是独立的持久资料，不是 State、Context 或 session 的新字段
+### D1: Memory is independent durable material, not a new field of State, Context, or the session
 
-Memory 按工作区长期保存；`AgentState` 仍只表示当前任务事实，`ContextManager` 仍构造每轮有限视图，session 仍保存任务恢复所需的 State、Context 和工具边界。`/save` 继续是 session 持久化的唯一入口，不控制 Memory 是否落盘。
+Memory is kept long-term per workspace; `AgentState` still represents only current task facts, `ContextManager` still builds a bounded view each round, and the session still stores the State, Context, and tool boundary needed for task recovery. `/save` remains the only entry for session persistence and does not control whether Memory is written to disk.
 
-默认存储根目录放在用户本地数据区，由规范化工作区路径派生不含路径明文的目录键，不写进项目工作树。显式配置可改变存储根目录，但配置加载时必须验证目标，且不得把真实 `BASE_URL`、`API_KEY`、`MODEL` 或认证头写入记忆元数据。工作区移动后视为新身份；迁移由用户显式操作，不暗中合并两份记忆。
+The default storage root is in the user's local data area, with a directory key derived from the normalized workspace path that contains no plaintext path, and it is not written into the project working tree. Explicit configuration can change the storage root, but the target must be validated when configuration loads, and the real `BASE_URL`, `API_KEY`, `MODEL`, or auth headers must not be written into memory metadata. A moved workspace is treated as a new identity; migration is an explicit user operation, and two memory sets are never merged silently.
 
-### D2：写入只能通过显式工具调用，修改始终算副作用
+### D2: Writes only through explicit tool calls; changes always count as side effects
 
-父 Agent 可以提出新增、修订或遗忘调用；Executor 先做参数、阶段和 PermissionGate 校验，再进入 handler。`remember`、`revise_memory`、`forget_memory` 均为 `effect_class=possible`，不能因内容只是文本而降为只读。用户可审阅标题、正文、来源和目标 ID；模型不得把一段对话自动批量转为 Memory。
+The parent Agent can propose add, revise, or forget calls; the Executor first checks arguments, phase, and the PermissionGate, and only then enters the handler. `remember`, `revise_memory`, and `forget_memory` are all `effect_class=possible` and cannot be downgraded to read-only just because the content is only text. The user can review the title, body, source, and target ID; the model must not turn a conversation into Memory in bulk automatically.
 
-在只读规划 `exploring`、恢复中的仅观察阶段和子代理 Runtime 中，记忆修改照现有规则拒绝。首版沿用 `effect_class=possible` 的 generation 预留和验证失效规则，不为记忆写入开特例；记忆写入本身不形成验证证据，也不能把「已记住」当成「代码已验证」。
+In the read-only planning `exploring` phase, the observation-only phase during recovery, and subagent Runtimes, memory changes are refused under the existing rules. The first version keeps the generation reservation and verification invalidation rules of `effect_class=possible` with no special case for memory writes; a memory write itself forms no verification evidence, and "remembered" cannot be taken as "the code is verified".
 
-### D3：使用小型版本化 JSON 存储，原子替换并防止并发丢更新
+### D3: Use a small versioned JSON store with atomic replacement and protection against lost concurrent updates
 
-首版用单个工作区 JSON 文件和标准库实现。写入前校验 schema、ID 唯一性、条目数、字段长度及总字节上限；先写同目录临时文件并 `fsync`，再原子替换，必要时同步目录。多进程写入需要同一工作区锁和有界等待，不能只靠进程内 `threading.Lock`。损坏或未知 schema 应返回明确错误、保留原文件，不静默重建为空集合。
+The first version uses a single per-workspace JSON file and the standard library. Before writing, validate the schema, ID uniqueness, entry count, field lengths, and the total byte limit; first write a temporary file in the same directory and `fsync` it, then replace atomically, syncing the directory when needed. Multi-process writes need a per-workspace lock with a bounded wait; an in-process `threading.Lock` alone is not enough. A corrupted file or unknown schema should return an explicit error and keep the original file, never silently rebuilding it as an empty collection.
 
-建议字段合同：
+Suggested field contract:
 
 ```text
-memory_id       # Runtime 分配，稳定且不含正文
-title           # 短标题
-body            # 有界正文
-tags            # 有界字符串列表
-source          # 用户说明或可核查的本地来源；不得伪称验证证据
+memory_id       # allocated by the Runtime, stable, contains no body text
+title           # short title
+body            # bounded body
+tags            # bounded list of strings
+source          # user note or checkable local source; must not pose as verification evidence
 created_at
 updated_at
 ```
 
-修订通过 `memory_id` 加预期版本或内容摘要做乐观并发校验，防止旧调用覆盖新内容；遗忘通过 ID 删除，返回明确结果。持久文件无需保存查询缓存和检索分数。
+A revision uses `memory_id` plus an expected version or content digest for optimistic concurrency checks, preventing an old call from overwriting new content; forgetting deletes by ID and returns an explicit result. The durable file does not need to store query caches or retrieval scores.
 
-### D4：Memory 写入与 schema 3 工具边界按现有崩溃语义衔接
+### D4: Memory writes connect to the schema 3 tool boundary with the existing crash semantics
 
-开启 `/save` 后，Memory 修改与普通副作用工具一样，必须先提交 `handler_admitted`，再调用 handler；每个 call 的 State、对应 `role=tool` 和 boundary 按模型顺序提交。提交失败不得进入后续 call 或下一次 LLM 请求。
+With `/save` on, Memory changes, like ordinary side-effect tools, must first commit `handler_admitted` before calling the handler; each call's State, matching `role=tool`, and boundary are committed in model order. A commit failure must not enter later calls or the next LLM request.
 
-若 Memory 文件已原子替换，而父工具结果尚未持久提交，恢复时该 call 是「已准入、结果不确定」：源 session 保持只读，不能自动重放，也不能因为当前文件恰好包含新内容就伪造旧调用已成功。用户可通过只读记忆查看核查当前事实，再按 `/resolve` 处理 issue。稳定 ID、内容摘要和可选调用关联信息仅用于核查或安全重试设计，不改变 v0.33 的恢复规则。
+If the Memory file has been replaced atomically but the parent tool result has not yet been committed durably, on recovery the call is "admitted, result uncertain": the source session stays read-only, it cannot be replayed automatically, and the old call cannot be forged as successful just because the current file happens to contain the new content. The user can check the current facts with read-only memory viewing, then handle the issue with `/resolve`. Stable IDs, content digests, and optional call association information are used only for checking or safe retry design and do not change the recovery rules of v0.33.
 
-### D5：检索提供候选和来源，不自动提升为事实或指令
+### D5: Retrieval provides candidates and sources; it does not promote them automatically to facts or instructions
 
-`v0.41` 使用 NFKC 与大小写归一、连续词元和中文双字片段匹配、标题与标签加权、来源和正文次级匹配；不依赖第三方分词包。相同查询和同一存储快照给出稳定顺序。显式搜索默认 5 条、最多 10 条；自动候选最多 4 条、资料区最多 2400 字符；空查询不返回全部正文。schema 1 的自由文本 `source` 在 v0.41 一律返回 `source_status="unverified"`，不访问来源字符串或声明文件新鲜度；来源变化检测留给 v0.42 References。
+`v0.41` uses NFKC and case normalization, contiguous token and CJK two-character fragment matching, title and tag weighting, and secondary matching on source and body; it does not depend on a third-party tokenizer package. The same query on the same store snapshot gives a stable order. Explicit search returns 5 entries by default and at most 10; automatic candidates are at most 4 entries with an information block of at most 2400 characters; an empty query does not return all bodies. In v0.41, the free-text `source` of schema 1 always returns `source_status="unverified"`; the source string is not accessed and file freshness is not claimed; source change detection is left to v0.42 References.
 
-检索结果包含 ID、标题、片段、来源、更新时间和分数或命中原因。模型需要具体细节时调用只读 `read_memory(memory_id)`。v0.41 对 schema 1 的自由文本 `source` 统一返回 `source_status="unverified"`，不访问其中可能出现的路径，也不声称文件仍然新鲜；结构化来源、观察摘要和变化检测留给 v0.42 References。Memory 内容在提示词中以资料区呈现，不能覆盖更高优先级指令。
+Retrieval results include the ID, title, excerpt, source, update time, and score or hit reason. When the model needs specific details, it calls the read-only `read_memory(memory_id)`. v0.41 uniformly returns `source_status="unverified"` for schema 1's free-text `source`, does not access paths that may appear in it, and does not claim the file is still fresh; structured sources, observation digests, and change detection are left to v0.42 References. Memory content is presented in the prompt as an information block and cannot override higher-priority instructions.
 
-### D6：Context 只接收有界的相关视图，历史与 State 不被 Memory 污染
+### D6: The Context receives only a bounded relevant view; history and State are not polluted by Memory
 
-`v0.40` 可先通过显式只读工具查看记忆，不必自动注入。`v0.41` 已在每次模型请求前的统一 Context 入口检索当前任务相关候选，选择少量摘要进入预算管理；每轮不重复全文、不过度挤占最近工具结果。检索失败只给出当前 Context 的可观察降级，不使父 Runtime 顶层 LLM 异常边界发生变化。
+`v0.40` can first view memories through explicit read-only tools without automatic injection. `v0.41` already retrieves candidates relevant to the current task at the single Context entry before each model request and selects a few summaries into budget management; it does not repeat full text every round or squeeze out recent tool results. A retrieval failure only produces an observable degradation of the current Context and does not change the parent Runtime's top-level LLM exception boundary.
 
-Memory 命中只属于当轮上下文视图，不写入 `AgentState` 的权威事实字段、不填充 `verification_evidence`，也不改写历史消息。Trace 可显示检索操作及无敏感内容的来源摘要，但不能把只读 Trace & Replay 变成一次真实检索或文件访问。
+Memory hits belong only to that round's context view; they are not written into the authoritative fact fields of `AgentState`, do not fill `verification_evidence`, and do not rewrite history messages. Trace can show the retrieval operation and a source summary without sensitive content, but it cannot turn read-only Trace & Replay into a real retrieval or file access.
 
-### D7：References 是具名本地目录；别名不授予权限
+### D7: References are named local directories; an alias grants no permission
 
-配置项给每个引用定义 `alias`、本地 `path`、可选 `description`。相对路径以配置文件所在位置为基准解析；启动时冻结规范化真实目录。`description` 可作为有界发现提示，但目录内容不自动读入 system prompt。无效别名、重复别名、缺失路径及非目录路径应明确拒绝。
+Configuration entries define an `alias`, a local `path`, and an optional `description` for each reference. A relative path is resolved based on the location of the configuration file; the normalized real directory is frozen at startup. The `description` can serve as a bounded discovery hint, but the directory contents are not read into the system prompt automatically. Invalid aliases, duplicate aliases, missing paths, and non-directory paths should be refused explicitly.
 
-引用工具只接受别名和该目录内的相对路径。每次实际访问都校验真实路径和符号链接目标仍在获准目录内，并按现有 PermissionGate 判断读取；配置一个引用不等于自动批准读取或编辑该目录。首版引用工具不提供写入。若文件在列出与读取之间变化，以本次读取的真实内容、路径、行号及可选摘要为准，不把旧检索命中当作固定快照。
+Reference tools accept only an alias and a relative path inside that directory. Every actual access validates that the real path and symlink target are still inside the approved directory and decides reading through the existing PermissionGate; configuring a reference does not automatically approve reading or editing the directory. The first version of the reference tools provides no writes. If a file changes between listing and reading, the real content, path, line numbers, and optional digest of this read prevail; an old retrieval hit is not treated as a fixed snapshot.
 
-### D8：子代理与敏感路径维持更窄边界
+### D8: Subagents and sensitive paths keep narrower boundaries
 
-阶段十一不把 Memory 或 References 工具加入子代理固定白名单。即使父 Agent 使用引用得到路径，向子代理传递的仍只能是经过现有 selected facts 和 scope gate 的有界调查材料；子结果也不能把 Memory 命中升级为父任务 verification。Memory 写入与 References 读取均须阻止凭据文件、session 存储和记忆存储等敏感路径经显式路径或符号链接绕过。阶段十计划中记录的 ScopeGate 敏感路径验收问题应先复核，不能借新别名扩大缺口。
+Stage 11 does not add Memory or References tools to the subagent's fixed allowlist. Even if the parent Agent gets a path through a reference, what it passes to a subagent can still only be bounded investigation material that went through the existing selected facts and scope gate; a child result also cannot upgrade a Memory hit into parent task verification. Memory writes and References reads must both prevent sensitive paths such as credential files, session storage, and memory storage from being bypassed through explicit paths or symlinks. The ScopeGate sensitive path acceptance issue recorded in the Stage 10 plan should be rechecked first; new aliases must not widen the gap.
 
-## 4. 版本切片与实施任务
+## 4. Version Slices and Implementation Tasks
 
-### 4.1 `v0.40`：轻量持久 Memory
+### 4.1 `v0.40`: Lightweight durable Memory
 
-目标是让一条经过明确工具调用写入的项目知识在进程重启后仍可查看、修订和遗忘。
+The goal is that a piece of project knowledge written through an explicit tool call can still be viewed, revised, and forgotten after a process restart.
 
-1. 新增 `memory.py`：工作区身份、schema 校验、大小限制、原子存取、跨进程锁及错误类型；不引入第三方依赖。
-2. 新增父 Runtime 专用记忆工具；在 `tools/__init__.py` 注册，并经现有 Executor、PermissionGate、planning gate 和 durable tool boundary 执行。工具名称与参数在实现时冻结并写入教程；建议为 `list_memories`、`read_memory`、`remember`、`revise_memory`、`forget_memory`。
-3. CLI 创建或恢复父 Runtime 时绑定同一工作区 MemoryStore；session 中最多保留不含敏感路径的存储身份摘要，不复制 Memory 全文。
-4. 覆盖新增、并发修订冲突、遗忘、重启后读取、文件损坏、写入失败、权限拒绝及 handler 已执行但父提交失败的恢复场景。
+1. Add `memory.py`: workspace identity, schema validation, size limits, atomic load/save, a cross-process lock, and error types; no third-party dependencies.
+2. Add parent-Runtime-only memory tools; register them in `tools/__init__.py`, executed through the existing Executor, PermissionGate, planning gate, and durable tool boundary. Tool names and arguments are frozen at implementation and written into the tutorial; suggested: `list_memories`, `read_memory`, `remember`, `revise_memory`, `forget_memory`.
+3. When the CLI creates or resumes the parent Runtime, it binds the same workspace MemoryStore; the session keeps at most a storage identity summary without sensitive paths and does not copy the full Memory.
+4. Cover adding, concurrent revision conflicts, forgetting, reading after restart, file corruption, write failures, permission denials, and recovery when the handler ran but the parent commit failed.
 
-验收：未开启 `/save` 也能跨进程读取已提交的记忆；被拒绝或校验失败的调用不改变文件；崩溃恢复不自动重放已准入的记忆修改。
+Acceptance: committed memories can be read across processes without `/save`; rejected or invalid calls do not change the file; crash recovery does not automatically replay admitted memory changes.
 
-### 4.2 `v0.41`：相关检索与有界上下文（已实现）
+### 4.2 `v0.41`: Relevance retrieval and bounded context (implemented)
 
-目标是从多条记忆中找出与当前任务有关的少量候选，而不是把全部记忆重新塞入提示词。
+The goal is to find a few candidates relevant to the current task among many memories, instead of stuffing all memories back into the prompt.
 
-1. 在 `memory.py` 或独立 `retrieval.py` 实现标准库检索、确定性排序、条数和字符预算；支持中英文最基本的关键词/短语查询。
-2. 提供显式 `search_memories(query, limit)`，返回 ID、短片段、来源及过期提示；原文继续由 `read_memory` 读取。
-3. 在 `ContextManager.prepare_messages()` 的预算流程接入可关闭的相关候选视图，按“基础 Context trim/compact → 单次检索 → 候选适配 → 最终 trim”执行，明确何时刷新、如何去重，以及预算不足时如何丢弃低排名候选。一次 prepare 只读取一个 Memory 快照并产生至多一个检索事件；默认上限保持很小，不得修改 `history` 或 `AgentState`。
-4. 覆盖相关性、同分排序、中文查询、空查询、大量条目、来源未核验、预算挤压、检索失败降级和 session 恢复后结果的可解释性。
+1. Implement standard-library retrieval, deterministic ranking, and entry count and character budgets in `memory.py` or a separate `retrieval.py`; support the most basic keyword/phrase queries in both Chinese and English.
+2. Provide an explicit `search_memories(query, limit)` that returns the ID, a short excerpt, the source, and a staleness hint; the original is still read with `read_memory`.
+3. Connect a switchable relevant candidate view to the budget flow of `ContextManager.prepare_messages()`, running "base Context trim/compact → single retrieval → candidate fitting → final trim", stating explicitly when it refreshes, how it deduplicates, and how low-ranked candidates are dropped when the budget is short. One prepare reads only one Memory snapshot and produces at most one retrieval event; the default limits stay very small, and `history` or `AgentState` must not be changed.
+4. Cover relevance, tie ordering, Chinese queries, empty queries, many entries, unverified sources, budget pressure, retrieval failure degradation, and the explainability of results after session recovery.
 
-实现边界：新增 `retrieval.py` 与 `MemoryStore.snapshot()`，父侧注册只读
-`search_memories`，并在 `ContextManager.prepare_messages()` 中按任务描述和最近用户消息
-刷新最多 4 条候选。资料区是 ephemeral system view，拥有独立的 `memory` token 桶和两类
-不泄露正文/路径的 Context 事件；它不进入 history、State、session、Plan、Trace 或
-`verification_evidence`。恢复时从当前工作区 store 重新绑定 retriever，不恢复旧候选；子
-Runtime 不绑定 retriever。失败只注入有界提示并在下一次请求重试。
+Implementation boundary: adds `retrieval.py` and `MemoryStore.snapshot()`, registers the read-only
+`search_memories` on the parent side, and in `ContextManager.prepare_messages()` refreshes at most 4 candidates from the task description and the latest user message. The information block is an ephemeral system view with its own `memory` token bucket and two kinds of
+Context events that leak no bodies/paths; it does not enter history, State, session, Plan, Trace, or
+`verification_evidence`. On recovery, the retriever is rebound from the current workspace store, and old candidates are not restored; the child
+Runtime binds no retriever. A failure only injects a bounded notice and retries on the next request.
 
-验收边界：v0.41 不实现来源文件变化检测、References、向量检索、embedding、自动记忆
-提取、查询缓存或远程资料读取。
+Acceptance boundary: v0.41 does not implement source file change detection, References, vector retrieval, embeddings, automatic memory
+extraction, query caching, or remote material reads.
 
-验收：一个跨会话新任务能看到相关记忆摘要并按 ID 读取原文；无关条目不会批量进入 Context；旧文件变化时来源标记不会宣称仍然新鲜。
+Acceptance: a new task across sessions can see relevant memory summaries and read the original by ID; irrelevant entries do not enter the Context in bulk; when an old file changes, the source marker does not claim it is still fresh.
 
-### 4.3 `v0.42`：本地 References（已实现）
+### 4.3 `v0.42`: Local References (implemented)
 
-目标是让工作区外的本地资料以稳定别名被发现和读取，同时保持工具权限与路径边界。
+The goal is to let local material outside the workspace be discovered and read by stable aliases while keeping tool permission and path boundaries.
 
-1. 在普通配置中增加本地引用映射；真实模型服务配置仍只在 `config_local.py`。引用配置的真实根路径不额外写入 State、session、Trace 元数据；实际访问的相对路径仍可能随工具结果保存在 Context 和 session 中。
-2. 新增 `references.py` 解析别名、说明和真实目录；实现具名列表、搜索和分段读取。复用文件工具的输出限制或建立等价上限，输出别名、相对路径、行号与内容摘要。
-3. 在父工具视图注册只读引用能力；每次操作分别经过 PermissionGate、真实路径检查和敏感路径排除。不把引用目录接入 `write_file` / `edit_file`，不放宽子代理白名单。
-4. 覆盖相对路径解析、目录缺失、遍历与符号链接逃逸、权限拒绝、文件变化、搜索上限和多个别名互不串读。
+1. Add local reference mappings to ordinary configuration; real model service configuration still goes only in `config_local.py`. The real root path of reference configuration is not additionally written into State, session, or Trace metadata; the relative paths actually accessed may still be saved with tool results in the Context and session.
+2. Add `references.py` to resolve aliases, descriptions, and real directories; implement named listing, searching, and segmented reading. Reuse the output limits of the file tools or set equivalent limits, and output the alias, relative path, line numbers, and a content digest.
+3. Register read-only reference capabilities in the parent tool view; each operation separately goes through the PermissionGate, real path checks, and sensitive path exclusion. Do not connect reference directories to `write_file` / `edit_file`, and do not widen the subagent allowlist.
+4. Cover relative path resolution, missing directories, traversal and symlink escape, permission denials, file changes, search limits, and multiple aliases not reading across each other.
 
-实现边界：配置项为 `REFERENCES = [{"alias", "path", "description"}]`，相对
-`config_local.py` 所在目录解析，并在父 Runtime 创建时冻结真实目录。父侧提供
-`list_references()`、`search_reference(alias, query, path=".", include="*", limit=20)`
-和 `read_reference(alias, path, offset=0, limit=200)`；列表默认允许，搜索和读取默认
-询问，权限 pattern 为 `alias:relative_path`，`always` 只记住精确 pattern。搜索是大小写
-不敏感的字面量匹配，读取和搜索都返回 alias 内相对路径、行号及本次读取计算的
-SHA-256；单文件最多 1 MiB，搜索最多访问 2,000 个文件、10,000 个目录项并读取 64 MiB
-正文，保留 100 条命中，输出按 JSON 字节上限安全裁剪；展示裁剪与 `scan_truncated`
-分别表示结果集合裁剪和资料扫描未完成。
+Implementation boundary: the configuration entry is `REFERENCES = [{"alias", "path", "description"}]`, resolved relative to the directory of
+`config_local.py`, with the real directory frozen when the parent Runtime is created. The parent side provides
+`list_references()`, `search_reference(alias, query, path=".", include="*", limit=20)`,
+and `read_reference(alias, path, offset=0, limit=200)`; listing is allowed by default, and search and read ask by default;
+the permission pattern is `alias:relative_path`, and `always` remembers only the exact pattern. Search is case-insensitive
+literal matching, and both read and search return the relative path within the alias, line numbers, and the
+SHA-256 computed for this read; a single file is at most 1 MiB, and search accesses at most 2,000 files and 10,000 directory entries and reads 64 MiB of
+content, keeping 100 hits, with output trimmed safely by a JSON byte limit; display trimming and `scan_truncated`
+separately mean that the result set was trimmed and that the material scan did not finish.
 
-References 的真实根只存在于进程内 `ReferenceCatalog`。`config_local.py`、Memory
-根目录、默认 session 根目录、越界路径、目录符号链接逃逸和非 UTF-8/特殊文件都会被
-拒绝或跳过；正文只作为普通 tool history 结果存在，State/Trace excerpt 仅保留来源
-摘要。访问失败由 handler 抛出并由 Executor 记录为 `outcome="failed"`、
-`error_kind="reference_access_error"`；文件打开从冻结根目录 fd 逐段复核 canonical
-路径，竞态变化拒绝读取。它不进入自动 Context 检索、Memory、verification evidence 或 Subagent 白名单，
-也不改变 session schema。Memory schema 1 的自由文本 `source` 仍统一返回
-`source_status="unverified"`，本版没有迁移这一边界。
+The real roots of References exist only in the in-process `ReferenceCatalog`. `config_local.py`, the Memory
+root directory, the default session root directory, out-of-bounds paths, directory symlink escapes, and non-UTF-8/special files are all
+refused or skipped; bodies exist only as ordinary tool history results, and State/Trace excerpts keep only source
+summaries. Access failures are raised by the handler and recorded by the Executor as `outcome="failed"`,
+`error_kind="reference_access_error"`; file opens recheck the canonical
+path segment by segment from the frozen root directory fd, and refuse to read on race changes. It does not enter automatic Context retrieval, Memory, verification evidence, or the Subagent allowlist,
+and does not change the session schema. The free-text `source` of Memory schema 1 still uniformly returns
+`source_status="unverified"`; this version did not migrate that boundary.
 
-验收：配置好的本地资料可按别名查找并引用具体文件位置；未授权目录、越界路径和敏感文件不能因 Reference 配置而读出。
+Acceptance: configured local material can be found by alias and specific file locations cited; unauthorized directories, out-of-bounds paths, and sensitive files cannot be read through Reference configuration.
 
-## 5. 文件与边界映射
+## 5. File and Boundary Mapping
 
-| 位置 | 预计变化 | 责任 |
+| Location | Expected change | Responsibility |
 |---|---|---|
-| `src/mini_agent/memory.py` | 新增 | 版本化持久存储、并发控制、记录合同与检索基础 |
-| `src/mini_agent/retrieval.py` | 视实现规模新增 | 相关性排序和有界结果，不参与 LLM 调用 |
-| `src/mini_agent/references.py` | `v0.42` 新增 | 本地别名配置、路径校验、读取来源 |
-| `src/mini_agent/tools/` | 各版增量 | 工具 schema、handler 和只读/副作用分类 |
-| `src/mini_agent/context.py` | `v0.41` 修改 | 把候选作为可裁剪视图纳入预算 |
-| `src/mini_agent/__main__.py`、`config.py` | 增量修改 | 父 Runtime 组装、工作区身份和本地引用配置 |
-| `src/mini_agent/state.py`、`session.py` | 尽量不改 schema | 只复用现有副作用、工具边界和恢复合同；若必须新增字段，先证明旧会话兼容 |
-| `docs/tutorials/`、操作手册、README、CHANGELOG | 每版同步 | 一版一个教学主线、配置与恢复说明 |
+| `src/mini_agent/memory.py` | New | Versioned durable storage, concurrency control, record contract, and retrieval basics |
+| `src/mini_agent/retrieval.py` | New depending on implementation size | Relevance ranking and bounded results; takes no part in LLM calls |
+| `src/mini_agent/references.py` | New in `v0.42` | Local alias configuration, path validation, read sources |
+| `src/mini_agent/tools/` | Incremental per version | Tool schemas, handlers, and read-only/side-effect classification |
+| `src/mini_agent/context.py` | Changed in `v0.41` | Brings candidates into the budget as a trimmable view |
+| `src/mini_agent/__main__.py`, `config.py` | Incremental changes | Parent Runtime assembly, workspace identity, and local reference configuration |
+| `src/mini_agent/state.py`, `session.py` | Avoid schema changes | Only reuse the existing side-effect, tool boundary, and recovery contracts; if a field must be added, first prove old sessions stay compatible |
+| `docs/tutorials/`, the operation manual, README, CHANGELOG | Synced per version | One teaching thread per version, configuration and recovery notes |
 
-## 6. 横向验收与交付
+## 6. Cross-Cutting Acceptance and Delivery
 
-- 记忆 CRUD、检索、引用读取均有相关单测；副作用写入有权限拒绝、持久边界失败和崩溃恢复测试。
-- 记忆与引用内容不能注入受保护指令，不能创建 Plan 进度或验证证据，不能使只读规划阶段执行写入。
-- 默认安装和核心路径仍仅依赖标准库；原有 `http.client`、`Accept-Encoding: identity` 和父子 model binding 不受影响。
-- `v0.40`–`v0.42` 各有独立教程、变更记录、操作手册说明及可复现验收场景；完成对应版本时同步中英文 README、教程索引与版本信息。Git tag 只由用户本人手动操作。
-- 每版至少运行改动相关测试；交付前运行 `PYTHONPATH=src python -m pytest -q`、`PYTHONPATH=src python scripts/check_tutorials.py`、`PYTHONPATH=src python scripts/check_readme.py`，或说明无法运行的原因。
+- Memory CRUD, retrieval, and reference reads all have related unit tests; side-effect writes have tests for permission denial, durable boundary failure, and crash recovery.
+- Memory and reference content cannot be injected into protected instructions, cannot create Plan progress or verification evidence, and cannot make the read-only planning phase perform writes.
+- The default install and core paths still depend only on the standard library; the existing `http.client`, `Accept-Encoding: identity`, and parent/child model bindings are unaffected.
+- `v0.40`–`v0.42` each have their own tutorial, change record, operation manual notes, and reproducible acceptance scenarios; when completing each version, sync the README, the tutorial index, and the version information. Git tags are operated only manually by the user.
+- Each version runs at least the tests related to its changes; before delivery, run `PYTHONPATH=src python -m pytest -q`, `PYTHONPATH=src python scripts/check_tutorials.py`, and `PYTHONPATH=src python scripts/check_readme.py`, or state why they cannot run.
 
-阶段十一完成后，Agent 可以跨会话保留少量可修订的项目知识，在任务相关时取回有来源的片段，并按别名查阅本地参考目录。记忆与引用仍只是供模型判断的材料；当前任务的权限、执行事实和完成验证继续由既有 Runtime 边界负责。
+After Stage 11, the Agent can keep a small amount of revisable project knowledge across sessions, recall sourced fragments when relevant to the task, and consult local reference directories by alias. Memories and references are still only material for the model to judge; the current task's permissions, execution facts, and completion verification remain the responsibility of the existing Runtime boundaries.

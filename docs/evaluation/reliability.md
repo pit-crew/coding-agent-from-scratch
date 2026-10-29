@@ -1,183 +1,183 @@
-# v0.52 故障注入与恢复评测
+# v0.52 Fault Injection and Recovery Evaluation
 
-`reliability-boundaries@1.6` 在固定任务中注入受控故障，分别记录运行时边界和 Agent 是否完成恢复后的任务。边界测试回答“危险行为有没有被拦住”；独立 grader 回答“Agent 最终留下的工作是否正确”。离线 fixture 只测试边界驱动器和运行时组件，不代表模型完成任务。
+`reliability-boundaries@1.6` injects controlled faults into fixed tasks and records separately the runtime boundaries and whether the Agent completes the task after recovery. Boundary tests answer "was the dangerous action stopped"; the independent grader answers "is the work the Agent finally left correct". Offline fixtures test only boundary drivers and runtime components and do not represent the model completing the task.
 
-2026-09-30 当前 binding 的新 [21 槽位 live 批次](baselines/v0.52/live-20260930-01/report.json)已完成：17 次故障触发，不变量 15 通过、2 失败、4 不完整，严格恢复 6/14；没有基础设施错误。进程等待超时和崩溃后恢复各仅 1/3 触发，故 v0.52 live 基线仍未达到每场景三次可评分触发的门槛。逐场景、预算诊断和原始证据见[基线说明](baselines/v0.52/README.md)。
+The new [21-slot live batch](baselines/v0.52/live-20260930-01/report.json) with the current binding on 2026-09-30 is complete: 17 fault triggers, invariants 15 passed, 2 failed, 4 incomplete, and strict recovery 6/14; no infrastructure errors. Process wait timeout and recovery after crash each triggered only 1/3 times, so the v0.52 live baseline still does not reach the threshold of three gradable triggers per scenario. For per-scenario results, budget diagnostics, and raw evidence, see the [baseline notes](baselines/v0.52/README.md).
 
-当前可执行候选为 suite 1.6：验证修复场景新增获准的 `list_dir`、`grep`，仍限定在 trial 工作区。生产运行时拒绝非法恢复编号时不再建立无效因果引用；收尾使用应用生成的专用提示，项目指令和用户纠正保持完整。工作请求仍保留完整工具规则，验证与正常完成要求不变。此候选尚无 live 成绩，详情见[修复记录](baselines/v0.52/live-failure-repair-20261008.md)。
+The current executable candidate is suite 1.6: the verification repair scenario adds approved `list_dir` and `grep`, still limited to the trial workspace. When the production runtime refuses an illegal recovery ID, it no longer creates an invalid causal reference; finishing uses a dedicated application-generated prompt, keeping project instructions and user corrections complete. Working requests still keep the full tool rules, and verification and normal completion requirements are unchanged. This candidate has no live score yet; for details see the [fix record](baselines/v0.52/live-failure-repair-20261008.md).
 
-## 冻结场景
+## Frozen scenarios
 
-场景顺序、任务、可见工具、逐项权限、预算、故障驱动、恢复步骤、反馈策略和 grader ID 都在 `tests/fixtures/evaluation/reliability/suite.json` 与场景材料中冻结。suite 和材料有 SHA-256 摘要；加载会拒绝未知字段、摘要漂移、路径越界、符号链接以及任意 Python grader 代码。
+The scenario order, tasks, visible tools, per-item permissions, budgets, fault drivers, recovery steps, feedback policies, and grader IDs are all frozen in `tests/fixtures/evaluation/reliability/suite.json` and the scenario material. The suite and material have SHA-256 digests; loading refuses unknown fields, digest drift, out-of-bounds paths, symlinks, and arbitrary Python grader code.
 
-| 场景 | 注入与验收重点 | 离线参数变体 | Live |
+| Scenario | Injection and acceptance focus | Offline parameter variants | Live |
 |---|---|---:|---|
-| `tool-handler-exception` | 第一次文件 handler 调用前抛异常；错误结果回灌，后续合法调用可继续。 | 1 | 是 |
-| `permission-denied` | 明确拒绝 `src/locked.py` 写入；handler 不执行、文件不变，父任务安全终止。此场景只评分边界。 | 1 | 是 |
-| `verification-repair` | 初始公开测试真实失败；修复后须有当前 generation 的验证证据，隐藏 grader 通过。 | 1 | 是 |
-| `process-wait-timeout` | fixture 进程超出短等待时间；超时仍显示运行，Agent 交接、同步并清理。 | 1 | 是 |
-| `crash-before-admission` | 已保存 pending 工具回合、尚未准入；恢复补入未执行结果，不调用 handler。 | 1 | 否 |
-| `crash-after-admission` | `handler_admitted` 已提交、handler 未运行；新 session 记录不确定事实，不重放。 | 1 | 否 |
-| `crash-after-handler` | handler 已产生副作用、结果未提交；新进程恢复，副作用只发生一次并逐项处理 issue。 | 1 | 是 |
-| `durable-commit-failure` | 分别令准入、逐 call 结果、整轮提交失败；不运行 handler、后续 call、LLM 或后台 worker。 | 3 个提交边界 | 否 |
-| `recovery-user-decisions` | 先尝试未调查 issue 的 `continue`，再合法调查；另一个变体选择 `block`。 | 2 个反馈策略 | 否 |
-| `mcp-disconnect` | 首次 `tools/call` 断连；连接失效、不重试，可使用公开本地材料。 | stdio、显式允许的 loopback HTTP | 是，仅 stdio |
-| `mcp-remote-error` | Server 返回整数码 JSON-RPC error；检查类别、脱敏和无误分类。 | stdio、显式允许的 loopback HTTP | 否 |
-| `mcp-is-error` | Server 返回有效 result 且 `isError=true`；不混同 JSON-RPC error。 | stdio、显式允许的 loopback HTTP | 否 |
-| `mcp-call-timeout` | Server 在 `tools/call` 不响应；检查有界超时、连接失效和关闭结果。 | stdio、显式允许的 loopback HTTP | 否 |
-| `subagent-timeout` | 子模型调用在 provider I/O 前被明确 timeout 注入；父侧领取并结算一次，再自行调查和验证。 | 1 | 是 |
-| `subagent-cancel` | 子 worker 在受控屏障等待时被请求取消；有界收束后仍可领取最终结果。 | 1 | 否 |
-| `subagent-unclaimed` | 子任务已结束但结果未领取；阻止完成和安全点，重复领取结果稳定且只结算一次。 | 1 | 否 |
-| `subagent-interrupted` | 启动确认和整轮边界已提交后停止父 worker；恢复记为 `interrupted`，不恢复旧 worker。 | 1 | 否 |
-| `followup-incompatible` | 领取成功结果后替换冻结 Skill；新子 LLM 请求前拒绝续接，其他会话不受影响。 | 1 | 否 |
+| `tool-handler-exception` | An exception is raised before the first file handler call; the error result is fed back, and later legal calls can continue. | 1 | Yes |
+| `permission-denied` | Writing `src/locked.py` is explicitly refused; the handler does not run, the file is unchanged, and the parent task ends safely. This scenario grades only the boundary. | 1 | Yes |
+| `verification-repair` | The initial public tests really fail; after the fix there must be verification evidence of the current generation, and the hidden grader passes. | 1 | Yes |
+| `process-wait-timeout` | The fixture process exceeds a short wait time; after the timeout it still shows running, and the Agent hands off, syncs, and cleans up. | 1 | Yes |
+| `crash-before-admission` | A pending tool turn is saved but not yet admitted; recovery adds a not-executed result without calling the handler. | 1 | No |
+| `crash-after-admission` | `handler_admitted` is committed but the handler did not run; the new session records an uncertain fact without replay. | 1 | No |
+| `crash-after-handler` | The handler produced a side effect but the result was not committed; a new process recovers, the side effect happens only once, and issues are handled one by one. | 1 | Yes |
+| `durable-commit-failure` | Admission, per-call result, and whole-turn commits fail respectively; no handler, later call, LLM, or background worker runs. | 3 commit boundaries | No |
+| `recovery-user-decisions` | First tries `continue` on an uninvestigated issue, then investigates legally; another variant chooses `block`. | 2 feedback policies | No |
+| `mcp-disconnect` | The first `tools/call` disconnects; the connection is invalidated with no retry, and public local material can be used. | stdio, explicitly allowed loopback HTTP | Yes, stdio only |
+| `mcp-remote-error` | The Server returns a JSON-RPC error with an integer code; checks category, redaction, and no misclassification. | stdio, explicitly allowed loopback HTTP | No |
+| `mcp-is-error` | The Server returns a valid result with `isError=true`; not confused with a JSON-RPC error. | stdio, explicitly allowed loopback HTTP | No |
+| `mcp-call-timeout` | The Server does not respond to `tools/call`; checks the bounded timeout, connection invalidation, and shutdown result. | stdio, explicitly allowed loopback HTTP | No |
+| `subagent-timeout` | The child model call gets an explicit timeout injection before provider I/O; the parent side claims and settles once, then investigates and verifies on its own. | 1 | Yes |
+| `subagent-cancel` | The child worker is asked to cancel while waiting at a controlled barrier; after finishing within bounds, the final result can still be claimed. | 1 | No |
+| `subagent-unclaimed` | The child task has ended but the result is not claimed; completion and safe points are blocked, and repeated claims return a stable result settled only once. | 1 | No |
+| `subagent-interrupted` | The parent worker is stopped after the start confirmation and whole-turn boundary are committed; recovery records `interrupted` and does not restore the old worker. | 1 | No |
+| `followup-incompatible` | A frozen Skill is replaced after a successful result is claimed; continuation is refused before the new child LLM request, and other sessions are not affected. | 1 | No |
 
-完整离线矩阵按冻结顺序有 50 个槽位，每个参数变体运行两次。Live 子集为前表七个“是”场景，每场景三次、共 21 个槽位；`mcp-disconnect` 的 live 参数固定为 stdio。失败、未触发、基础设施错误或中断槽位不会自动补跑或替换。
+The full offline matrix has 50 slots in frozen order, and each parameter variant runs twice. The live subset is the seven "Yes" scenarios in the table above, three times each, 21 slots in total; the live parameter of `mcp-disconnect` is fixed to stdio. Failed, untriggered, infrastructure-error, or interrupted slots are not made up or replaced automatically.
 
-## 评分与分母
+## Grading and denominators
 
-每个 `trial.json` 使用独立格式 `mini_agent.reliability`、schema 1，不复用编码题的 TrialResult。它分开记录：
+Each `trial.json` uses the separate format `mini_agent.reliability`, schema 1, and does not reuse the TrialResult of coding tasks. It records separately:
 
-- `fault_status`：`triggered`、`not_triggered` 或 `injection_error`。只有记录到实际命中点才算触发。
-- `invariant_status`：`passed`、`failed` 或 `incomplete`，并逐条列出不变量证据状态。
-- `recovery_status`：`succeeded`、`failed`、`not_applicable`、`not_triggered` 或 `incomplete`。
-- `grader_passed`：Agent 停止后由独立 grader 检查工作区；离线组件探针不运行 Agent，因此此字段为 `null`。
-- Agent 停止原因、State 终态、清理结果、来源一致性、阶段用量和证据引用。
+- `fault_status`: `triggered`, `not_triggered`, or `injection_error`. Only a recorded actual hit point counts as triggered.
+- `invariant_status`: `passed`, `failed`, or `incomplete`, listing the evidence state of each invariant.
+- `recovery_status`: `succeeded`, `failed`, `not_applicable`, `not_triggered`, or `incomplete`.
+- `grader_passed`: the independent grader checks the workspace after the Agent stops; offline component probes do not run the Agent, so this field is `null`.
+- Agent stop reason, State terminal state, cleanup result, source consistency, phase usage, and evidence references.
 
-`recovery_success_rate` 只对 live 恢复 trial 计算。分母要求故障确已触发、来源一致、边界证据与恢复流程可判定、grader 已运行且没有评测基础设施错误。六个恢复场景中的模型超时、权限拒绝、预算耗尽和恢复失败仍留在分母。`permission-denied` 专门验收安全终止，`grader_passed=null`、`recovery_status=not_applicable`，不进入任务或恢复评分分母。分子还要求不变量通过、恢复步骤完成、Agent 正常以 `done` 收束、grader 通过、清理完成。Fixture 只报告边界结果；任务成功和恢复成功率保持 `null`，不会把 Runtime 单测算作模型成绩。
+`recovery_success_rate` is computed only for live recovery trials. The denominator requires the fault to have actually triggered, sources to be consistent, boundary evidence and the recovery flow to be decidable, the grader to have run, and no evaluation infrastructure errors. Model timeouts, permission refusals, budget exhaustion, and recovery failures in the six recovery scenarios stay in the denominator. `permission-denied` specifically accepts safe termination, with `grader_passed=null` and `recovery_status=not_applicable`, and does not enter the task or recovery grading denominators. The numerator also requires invariants to pass, recovery steps to be complete, the Agent to close normally with `done`, the grader to pass, and cleanup to be complete. Fixtures report only boundary results; task success and the recovery success rate stay `null`, and Runtime unit tests are not counted as model scores.
 
-Fixture 中若只验证了故障 seam、没有驱动 Agent 完成后续规划、授权、替代任务或独立验证，对应 `recovery_status` 会保留 `incomplete`。这表示该离线槽位没有声称完整任务恢复，不等同于不变量失败；属于 live 子集的场景会在 live trial 中单独验收完整恢复和任务结果。
+If a fixture only verified the fault seam without driving the Agent to complete later planning, authorization, a replacement task, or independent verification, the matching `recovery_status` stays `incomplete`. This means that offline slot does not claim full task recovery, which is not the same as an invariant failure; scenarios in the live subset accept full recovery and task results separately in live trials.
 
-故障未触发、注入错误、证据不完整、来源不一致、基础设施错误和未运行槽位独立列出。`subagent-timeout` 的父模型调用是真实绑定；子模型调用由 timeout fault driver 替代，在 trial 中标记 `source="injected"`、`counted_as_real=false`，不算真实子模型请求。未观测 token 不填零，价格快照缺失时成本为 `null`。
+Untriggered faults, injection errors, incomplete evidence, inconsistent sources, infrastructure errors, and unrun slots are listed separately. The parent model call of `subagent-timeout` is a real binding; the child model call is replaced by the timeout fault driver, marked in the trial with `source="injected"` and `counted_as_real=false`, and not counted as a real child model request. Unobserved tokens are not filled with zero, and cost is `null` when the price snapshot is missing.
 
-## 命令
+## Commands
 
-先校验完整任务和成功标准。该命令不读取真实 provider 凭据、不调用模型；输出包括所有场景、精确工具与权限、预算、反馈策略、grader ID 和材料摘要：
+First validate the full tasks and success criteria. This command does not read real provider credentials or call the model; the output includes all scenarios, exact tools and permissions, budgets, feedback policies, grader IDs, and material digests:
 
 ```bash
 PYTHONPATH=src python -m mini_agent.evaluation validate-reliability tests/fixtures/evaluation/reliability/suite.json
 ```
 
-离线自测执行 50 个槽位，包含 stdio 和显式 loopback HTTP MCP fixtures，不发送真实 API 请求：
+The offline self-test runs 50 slots, including stdio and explicit loopback HTTP MCP fixtures, and sends no real API requests:
 
 ```bash
 PYTHONPATH=src python -m mini_agent.evaluation self-test-reliability --output /private/tmp/mini-agent-reliability-offline
 ```
 
-Live 前应审阅校验输出中的完整任务、权限、反馈与预算，再显式传入 `--live`。命令固定运行七个场景各三次；执行一次，不自动重试：
+Before live, review the full tasks, permissions, feedback, and budgets in the validation output, then pass `--live` explicitly. The command runs the seven scenarios three times each; it runs once, with no automatic retries:
 
 ```bash
 PYTHONPATH=src python -m mini_agent.evaluation run-reliability tests/fixtures/evaluation/reliability/suite.json --live --repeats 3 --output docs/evaluation/baselines/v0.52/live-<run-id>
 PYTHONPATH=src python -m mini_agent.evaluation report-reliability docs/evaluation/baselines/v0.52/live-<run-id>
 ```
 
-运行器在首次 trial 前冻结并核对全部七个本地 model binding；真实 provider/profile 只从本地配置装配，不写入 fixture 或结果。缺少配置时创建带明确 infrastructure error 的未评分 live 槽位，不发模型请求。输出目录必须不存在；每次批次使用独立目录。
+Before the first trial, the runner freezes and checks all seven local model bindings; the real provider/profile is assembled only from local configuration and is not written into fixtures or results. When configuration is missing, it creates ungraded live slots with an explicit infrastructure error and sends no model requests. The output directory must not exist; each batch uses its own directory.
 
-## 原始证据与报告
+## Raw evidence and reports
 
-Run 目录包含冻结 suite 与场景副本、按固定顺序预先建立的 `suite-run.json`、每个已启动 trial 的 `trial.json`、fault/feedback/recovery 事件、State/Trace 摘要、受限日志、差异和必要的 MCP/持久化记录。崩溃恢复保留源 session 与派生 session 的关联摘要；源文件必须逐字节不变。worker 请求只持久化无凭据来源引用；provider endpoint、model ID、API key 和认证头不能写入请求、日志、State、Trace 或报告。Live runner 在发布前再对生成的文本 artifact 做脱敏。
+The run directory contains copies of the frozen suite and scenarios, a `suite-run.json` created in advance in fixed order, the `trial.json` of each started trial, fault/feedback/recovery events, State/Trace summaries, bounded logs, diffs, and the needed MCP/persistence records. Crash recovery keeps an association summary of the source session and the derived session; the source file must stay byte-for-byte unchanged. Worker requests persist only credential-free source references; provider endpoints, model IDs, API keys, and auth headers cannot be written into requests, logs, State, Trace, or reports. The live runner redacts generated text artifacts again before publishing.
 
-`report-reliability` 只读核对冻结 suite、槽位顺序、trial 身份和 SHA-256 evidence 引用，再从原始 trial 重建逐场景与 fixture/live 汇总。普通 `report` 会跳过这种独立结果格式并提示使用专用命令；原编码题 schema 1/2 读取方式和指标不变。报告损坏或来源断链时保留 unreadable/incomplete 项，不补猜结论。
+`report-reliability` checks the frozen suite, slot order, trial identity, and SHA-256 evidence references read-only, then rebuilds per-scenario and fixture/live summaries from the raw trials. The ordinary `report` skips this separate result format and suggests using the dedicated command; the read path and metrics of coding task schema 1/2 are unchanged. When a report is corrupted or a source chain is broken, unreadable/incomplete items are kept, and conclusions are not guessed.
 
-## 首批 Live 结果（suite 1.5，预算定点修复前）
+## First live results (suite 1.5, before the targeted budget fix)
 
-批次[`live-20260929-07/`](baselines/v0.52/live-20260929-07/)按固定顺序执行 21 个槽位：19 个产生可评分 trial，2 个以 `provider_protocol_error` 结束。两条 provider 错误没有状态码或详情，脱敏诊断只显示响应调用校验位置；根因未知，不能由此判断为 HTTP 400。所有来源和摘要一致，无证据断链、清理失败或人工复核项。没有重试、补跑或替换。
+Batch [`live-20260929-07/`](baselines/v0.52/live-20260929-07/) ran 21 slots in fixed order: 19 produced gradable trials, and 2 ended with `provider_protocol_error`. The two provider errors have no status code or details, and the redacted diagnostics show only the response call validation location; the root cause is unknown and cannot be judged as HTTP 400 from this. All sources and digests are consistent, with no broken evidence chains, cleanup failures, or manual review items. No retries, make-up runs, or replacements.
 
-17 个进入报告评分的已触发故障 trial 中，不变量 17/17 通过；两个基础设施错误 trial 的原始材料也记录了故障触发和不变量通过，但它们不进入评分 cohort。权限拒绝 3/3 是边界专用 trial，不计入任务恢复。严格恢复成功为 5/14（35.7%）。分层任务结果为：16 个任务 trial、10 个文件结果正确、5 个通过当前 generation 验证、5 个模型正常完成，且这 5 个同时满足全部条件。
+Of the 17 triggered fault trials that entered report grading, invariants passed 17/17; the raw material of the two infrastructure-error trials also records fault triggers and invariant passes, but they do not enter the grading cohort. Permission denial 3/3 are boundary-only trials and do not count toward task recovery. Strict recovery success was 5/14 (35.7%). The layered task results are: 16 task trials, 10 with correct file results, 5 passing current-generation verification, and 5 with normal model completion, and these 5 meet all conditions at the same time.
 
-| 场景 | 故障触发 | 不变量 | Grader | 恢复成功 |
+| Scenario | Fault triggered | Invariants | Grader | Recovery success |
 |---|---:|---:|---:|---:|
-| `tool-handler-exception` | 2/3 纳入评分；另 1 个基础设施错误 trial 也触发 | 2/2 通过；基础设施 trial 通过 | 2/2 纳入评分 | 0/2 |
-| `permission-denied` | 3/3 | 3/3 通过 | 边界专用 | 不适用 |
-| `verification-repair` | 3/3 | 3/3 通过 | 3/3 | 3/3 |
-| `process-wait-timeout` | 2/3（1 次未触发） | 2 通过、1 不完整 | 0/3 | 0/2 |
-| `crash-after-handler` | 1/3 纳入评分；1 次未触发；另 1 个基础设施错误 trial 也触发 | 1 通过、1 不完整；基础设施 trial 通过 | 1/2 纳入评分 trial | 0/1 |
-| `mcp-disconnect` | 3/3 | 3/3 通过 | 2/3 | 2/3 |
-| `subagent-timeout` | 3/3 | 3/3 通过 | 2/3 | 0/3 |
+| `tool-handler-exception` | 2/3 graded; 1 more infrastructure-error trial also triggered | 2/2 passed; infrastructure trial passed | 2/2 graded | 0/2 |
+| `permission-denied` | 3/3 | 3/3 passed | Boundary only | Not applicable |
+| `verification-repair` | 3/3 | 3/3 passed | 3/3 | 3/3 |
+| `process-wait-timeout` | 2/3 (1 not triggered) | 2 passed, 1 incomplete | 0/3 | 0/2 |
+| `crash-after-handler` | 1/3 graded; 1 not triggered; 1 more infrastructure-error trial also triggered | 1 passed, 1 incomplete; infrastructure trial passed | 1/2 graded trials | 0/1 |
+| `mcp-disconnect` | 3/3 | 3/3 passed | 2/3 | 2/3 |
+| `subagent-timeout` | 3/3 | 3/3 passed | 2/3 | 0/3 |
 
-预算诊断有 130 个请求决策：117 个 provider 响应、11 个因受保护上下文无法放入剩余任务预算而拒绝、2 个 provider 协议错误。114/117 个响应的实际输入高于原始估算；没有输入超过校准预留、没有输出超过分配上限，观测预算超额为 0。保守拒绝仍会使 Agent 无法继续调查或完成收尾。三项场景未达到每场景 3 个已触发且可评分样本，故 suite 1.5 live 基线**未完成**；详细试次、冻结审阅清单和逐请求原始证据见[基线记录](baselines/v0.52/README.md)。
+Budget diagnostics have 130 request decisions: 117 provider responses, 11 refused because the protected context could not fit into the remaining task budget, and 2 provider protocol errors. The actual input of 114/117 responses was higher than the raw estimate; no input exceeded the calibrated reservation, no output exceeded the allocated limit, and observed budget overruns were 0. Conservative refusals still leave the Agent unable to keep investigating or finish. Three scenarios did not reach 3 triggered and gradable samples per scenario, so the suite 1.5 live baseline is **not complete**; for detailed trials, the frozen review manifest, and per-request raw evidence, see the [baseline record](baselines/v0.52/README.md).
 
-## 定点修复后的 Live 批次（suite 1.5）
+## Live batches after the targeted fix (suite 1.5)
 
-重新校验后的 suite 摘要仍为 `833eefa4cb6e108439fb407c0981383fcd8b04724887e42c40ba9bcd65baa3a7`，Runtime 指纹改为 `a32092e178ce86eb106f46a082801dca8b44c9b80d03d69d06661d2aee592a72`。首个批次[`live-20260929-08/`](baselines/v0.52/live-20260929-08/)的 21 个槽位全为 `provider_http_503`；没有可评分 trial，恢复分母为 0。
+The re-validated suite digest is still `833eefa4cb6e108439fb407c0981383fcd8b04724887e42c40ba9bcd65baa3a7`, and the Runtime fingerprint changed to `a32092e178ce86eb106f46a082801dca8b44c9b80d03d69d06661d2aee592a72`. All 21 slots of the first batch [`live-20260929-08/`](baselines/v0.52/live-20260929-08/) were `provider_http_503`; no gradable trials, and the recovery denominator is 0.
 
-provider 修复后，第二个独立批次[`live-20260929-09/`](baselines/v0.52/live-20260929-09/)记录 20 个 `provider_connection_error` 和 1 个没有触发故障的 trial。连接错误的原始异常类型为 19 个 `ProviderConnectionError`、1 个 `ProviderTimeoutError`；唯一获得模型响应的 trial 在故障触发前以 `token_limit` 停止。三个 `verification-repair` 试次已命中注入点，但其模型请求随后失败，作为基础设施错误排除。21 个 trial 均清理完成；恢复分母仍为 0，不能据此判断修复后的恢复率。
+After the provider recovered, the second separate batch [`live-20260929-09/`](baselines/v0.52/live-20260929-09/) recorded 20 `provider_connection_error`s and 1 trial that did not trigger the fault. The raw exception types of the connection errors were 19 `ProviderConnectionError` and 1 `ProviderTimeoutError`; the only trial that got model responses stopped with `token_limit` before the fault triggered. Three `verification-repair` trials hit the injection point, but their model requests then failed, so they were excluded as infrastructure errors. All 21 trials completed cleanup; the recovery denominator is still 0, and the post-fix recovery rate cannot be judged from this.
 
-两批均没有重试或替换槽位；重建报告与归档报告逐字节一致。所有证据和槽位详情见[基线说明](baselines/v0.52/README.md)。
+Neither batch retried or replaced slots; the rebuilt reports are byte-identical to the archived reports. For all evidence and slot details, see the [baseline notes](baselines/v0.52/README.md).
 
-## suite 1.5 后的预算定点修复
+## Targeted budget fix after suite 1.5
 
-当前工作请求已可使用验证和计划推进额度，后续无工具最终回复单独预留。预算拒绝新增受保护上下文下限、裁剪前大小、输入额度、收尾预留和阻塞项。完整 Chat 响应的工具参数校验错误新增无正文诊断，保留已报告用量；完整非流式非法参数和明确 length 停止的输出作为任务失败，来源不明的流式拼装错误仍独立保留。历史 trial 不重分类。
+The current working request can now use the verification and plan progress quota, and the later tool-free final reply is reserved separately. Budget refusals add the protected context floor, pre-trim size, input quota, finishing reservation, and blockers. Tool argument validation errors of complete Chat responses add body-free diagnostics and keep reported usage; illegal arguments of complete non-streaming responses and output with an explicit length stop are task failures, and streaming assembly errors of unknown source are still kept separate. Historical trials are not reclassified.
 
-具体修改、离线验收与证据限制见[定点修复记录](baselines/v0.52/stage-budget-repair.md)。修复后的两个 live 批次都被 provider 基础设施错误挡住，没有产生恢复分母；此前 suite 1.5 的 5/14 是修复前历史成绩，基线仍未完成。
+For the specific changes, offline acceptance, and evidence limits, see the [targeted fix record](baselines/v0.52/stage-budget-repair.md). Both post-fix live batches were blocked by provider infrastructure errors and produced no recovery denominator; the earlier suite 1.5 5/14 is a pre-fix historical score, and the baseline is still not complete.
 
-## #09 后的离线估算修正（2026-09-30）
+## Offline estimate correction after #09 (2026-09-30)
 
-#09 的唯一模型响应显示单次输入超出旧预留，任务总额度仍充足。候选 Runtime 已按完整 OpenAI Chat 请求 JSON 的 UTF-8 大小建立带明确余量的代理估算，并在容量不足时裁剪历史工具回合，保留用户纠正和受保护事实；历史预留与新估算器的校准样本隔离。该代理不等于 provider token 数，实际超预留后的工具阻止逻辑保持有效。详见[离线修复说明](baselines/v0.52/estimator-offline-repair.md)。本轮未发送探针或启动新 live，suite 1.5 的历史分母和成绩不变。
+The only model response of #09 showed that a single input exceeded the old reservation, while the task's total quota was still sufficient. The candidate Runtime now builds a proxy estimate with an explicit margin from the UTF-8 size of the full OpenAI Chat request JSON, and when capacity is insufficient it trims historical tool rounds, keeping user corrections and protected facts; calibration samples of historical reservations and the new estimator are isolated. This proxy is not the provider token count, and the tool blocking logic after an actual over-reservation stays in effect. See the [offline fix notes](baselines/v0.52/estimator-offline-repair.md) for details. This round sent no probes and started no new live; the historical denominators and scores of suite 1.5 are unchanged.
 
-## 历史套件 1.2
+## Historical suite 1.2
 
-Suite 1.2 摘要为 `127fc54a543693630e23b602e2d3db460030b54746aa66fc67c0c9d70f7600a4`。第三批 1.1 live 复核后，崩溃任务改为准确描述注入前与恢复后的阶段；子代理超时固定 `child_budget`，单次 max_tokens=32000，其他字段由任务和预检完整公开。只有实际到达子请求前才记录 timeout 注入；错误合同仍经正常校验拒绝，不能据启动确认推断故障已触发。该 fixture 只允许一次注入调查，不发送真实子 provider 请求。
+The suite 1.2 digest is `127fc54a543693630e23b602e2d3db460030b54746aa66fc67c0c9d70f7600a4`. After review of the third 1.1 live batch, crash tasks were changed to describe the phases before injection and after recovery accurately; subagent timeout fixes the `child_budget`, with a single max_tokens=32000, and the other fields are fully published by the task and pre-check. The timeout injection is recorded only when the child request is actually reached; a wrong contract is still refused by normal validation, and a fault trigger cannot be inferred from the start confirmation. This fixture allows only one injected investigation and sends no real child provider requests.
 
-复杂场景补齐父侧目录与搜索工具。未触发目标故障时，相关不变量为 `incomplete`，Agent 的前置失败仍由 `pre_injection_stop_reason`、State 和评分结果保留。权限、预算和独立验证规则保持正式 Runtime 合同。
+Complex scenarios add parent-side directory and search tools. When the target fault does not trigger, the related invariants are `incomplete`, and the Agent's earlier failure is still kept by `pre_injection_stop_reason`, State, and the grading result. Permissions, budgets, and independent verification rules keep the formal Runtime contract.
 
-OpenAI Chat 普通和流式响应保留有界 `reasoning_content` 字段，并通过后续请求原样回传；不输出为终端正文。suite 1.2 live 已验证没有再出现 HTTP 400；新批次单独评分，历史 artifact 保留，新合同不继承旧成绩。
+OpenAI Chat ordinary and streaming responses keep a bounded `reasoning_content` field and send it back as is in later requests; it is not output as terminal body text. Suite 1.2 live verified that HTTP 400 no longer appeared; the new batch is graded separately, historical artifacts are kept, and the new contract does not inherit old scores.
 
-历史 suite 1.2 离线矩阵已完成 50/50 槽位，故障和不变量全部通过；完整 pytest 为 749 passed。独立 live 批次完成 21 个槽位、无基础设施错误，恢复成功 5/16；但进程等待超时只触发 1/3 次，live 基线仍未完成。逐场景数据和原始证据见[基线说明](baselines/v0.52/README.md)。
+The historical suite 1.2 offline matrix completed 50/50 slots, with all faults and invariants passing; full pytest was 749 passed. The separate live batch completed 21 slots with no infrastructure errors and recovery success 5/16; but process wait timeout triggered only 1/3 times, so the live baseline is still not complete. For per-scenario data and raw evidence, see the [baseline notes](baselines/v0.52/README.md).
 
-## 历史评测器修正（2026-09-29，suite 1.1）
+## Historical evaluator corrections (2026-09-29, suite 1.1)
 
-当时冻结套件为 `reliability-boundaries@1.1`，摘要 `53180d91b153c480aa580c433491b361120de3d1f120a5032632b89e8bcb7f05`。1.0 的历史结果保留，不能用它们判断修正版的任务成功率。修正包括：
+The suite frozen at that time was `reliability-boundaries@1.1`, digest `53180d91b153c480aa580c433491b361120de3d1f120a5032632b89e8bcb7f05`. The historical results of 1.0 are kept and cannot be used to judge the task success rate of the corrected version. The corrections include:
 
-- 六个恢复场景的 initial 和 known_good 均提供非空公开 unittest；预检和 live 使用同一套公开测试与独立行为评分，必须拒绝 initial、接受 known_good。Live 运行器在解析凭据前完成预检。
-- 独立评分器在有界子进程中调用函数检查数值行为，接受等价正确实现；不限定函数只能有一条乘法 return。
-- 权限拒绝按正式 Runtime 的 failed 终止合同验收；通过规范参数摘要匹配拒绝 attempt，不再访问不存在的 `ExecutionAttempt.arguments`。
-- 进程 fixture 持续运行至显式终止，等待阶段不产生输出；绑定 State 的 ProcessManager，避免模型响应时间超过 0.8 秒后故障已消失。
-- 预算预检查包含下一次请求的上下文和工具 schema 估算；worker 保留运行阶段、代码位置、脱敏 provider 状态/详情和工具 schema 摘要，避免评分阶段异常被报告为未启动。
+- The initial and known_good of the six recovery scenarios all provide non-empty public unittests; the pre-check and live use the same public tests and independent behavior grading, which must refuse initial and accept known_good. The live runner completes the pre-check before resolving credentials.
+- The independent grader calls functions in a bounded child process to check numeric behavior and accepts equivalent correct implementations; it does not require the function to have only one multiplication return.
+- Permission denial is accepted by the formal Runtime's failed termination contract; refused attempts are matched by normalized argument digests, no longer accessing the nonexistent `ExecutionAttempt.arguments`.
+- The process fixture keeps running until explicit termination and produces no output in the wait phase; it binds the State's ProcessManager, so the fault does not disappear when the model response time exceeds 0.8 seconds.
+- The budget pre-check includes the context and tool schema estimate of the next request; the worker keeps the run phase, code location, redacted provider status/details, and tool schema digest, so that exceptions in the grading phase are not reported as not started.
 
-完整 worker 的固定响应回归与组件探针分别验收；它们均不发送真实 provider 请求。当时 HTTP 400 的服务端原因尚未确认，只补了诊断。后续 1.1 批次确认 UUID schema 与 reasoning_content 兼容问题；修正状态见上文当前套件及基线说明。
+Fixed-response regressions of the full worker and component probes are accepted separately; neither sends real provider requests. The server-side cause of the HTTP 400 at that time was not confirmed yet, and only diagnostics were added. Later 1.1 batches confirmed the UUID schema and reasoning_content compatibility problems; for the correction status, see the current suite above and the baseline notes.
 
-修正版离线矩阵已完成 50/50 槽位，故障全部触发、不变量全部通过，无基础设施错误或断链证据。运行 ID 为 `0326a821-b347-460a-8ec6-4ffd1c491c89`，原始结果位于本机 `/private/tmp/mini-agent-reliability-v052-suite11-fix-escalated/`。沙箱限制下的独立尝试有 8 个 loopback 注入错误，保留于 `/private/tmp/mini-agent-reliability-v052-suite11-fix/`；未逐槽替换。这些均为离线边界证据，不计作模型成绩。
+The corrected offline matrix completed 50/50 slots, with all faults triggered and all invariants passing, and no infrastructure errors or broken evidence chains. The run ID is `0326a821-b347-460a-8ec6-4ffd1c491c89`, and raw results are in the local `/private/tmp/mini-agent-reliability-v052-suite11-fix-escalated/`. A separate attempt under sandbox limits had 8 loopback injection errors, kept in `/private/tmp/mini-agent-reliability-v052-suite11-fix/`; slots were not replaced one by one. These are all offline boundary evidence and are not counted as model scores.
 
-## 历史状态（suite 1.0）
+## Historical status (suite 1.0)
 
-截至 2026-09-28，suite 摘要 `8ea1fab57ec079a86b22fab140614dada88cc1e22e8e37f527e5c36b9d08904f` 的脱敏修复候选离线矩阵已在[`offline-20260928-security-redaction/`](baselines/v0.52/offline-20260928-security-redaction/)完成 50/50 槽位：故障全部触发，不变量 50/50 通过，无基础设施错误、断链证据或未运行槽位。受限沙箱尝试因不能绑定 loopback HTTP fixture 而有 8 个不完整槽位，已单独保存在[`offline-20260928-sandbox-loopback-limited/`](baselines/v0.52/offline-20260928-sandbox-loopback-limited/)，不计入通过结果。
+As of 2026-09-28, the offline matrix of the redaction fix candidate with suite digest `8ea1fab57ec079a86b22fab140614dada88cc1e22e8e37f527e5c36b9d08904f` completed 50/50 slots in [`offline-20260928-security-redaction/`](baselines/v0.52/offline-20260928-security-redaction/): all faults triggered, invariants 50/50 passed, and no infrastructure errors, broken evidence chains, or unrun slots. A restricted sandbox attempt had 8 incomplete slots because it could not bind the loopback HTTP fixture; it is saved separately in [`offline-20260928-sandbox-loopback-limited/`](baselines/v0.52/offline-20260928-sandbox-loopback-limited/) and not counted as a passing result.
 
-首批[`live-20260928-01/`](baselines/v0.52/live-20260928-01/)和中间合同批次[`live-20260928-02/`](baselines/v0.52/live-20260928-02/)继续保留。同一历史 suite 的前一批[`live-20260928-03/`](baselines/v0.52/live-20260928-03/)记录 8 个 trial、13 个基础设施错误；5 次故障触发，3 个不变量通过，0 个 grader 通过，恢复成功率 0/5。脱敏修复后的批次[`live-20260928-04/`](baselines/v0.52/live-20260928-04/)保留 21 个终态槽位：17 个 trial、4 个基础设施错误；9 次故障触发，7 个不变量通过，1 个 grader 通过，恢复成功率 0/9。`tool-handler-exception` 与 `mcp-disconnect` 各 3/3 触发且不变量通过；`verification-repair` 3/3 触发，1 个不变量与 grader 通过、2 个失败；`permission-denied` 两次未触发且不变量失败，另一次 `AttributeError`；`process-wait-timeout` 和 `crash-after-handler` 各 3 次未触发；`subagent-timeout` 三槽因 provider HTTP 400 未评分。所有来源一致且证据可读，但四个场景没有各自达到 3 个可评分触发样本，live 基线仍未完成。没有自动重试、补跑或替换失败槽位。
+The first batch [`live-20260928-01/`](baselines/v0.52/live-20260928-01/) and the intermediate contract batch [`live-20260928-02/`](baselines/v0.52/live-20260928-02/) are still kept. The previous batch of the same historical suite, [`live-20260928-03/`](baselines/v0.52/live-20260928-03/), recorded 8 trials and 13 infrastructure errors; 5 fault triggers, 3 invariants passed, 0 graders passed, and recovery success rate 0/5. The batch after the redaction fix, [`live-20260928-04/`](baselines/v0.52/live-20260928-04/), keeps 21 terminal slots: 17 trials and 4 infrastructure errors; 9 fault triggers, 7 invariants passed, 1 grader passed, and recovery success rate 0/9. `tool-handler-exception` and `mcp-disconnect` each triggered 3/3 with invariants passing; `verification-repair` triggered 3/3, with 1 invariant and grader passing and 2 failing; `permission-denied` did not trigger twice with invariants failing, and once hit `AttributeError`; `process-wait-timeout` and `crash-after-handler` each did not trigger 3 times; the three `subagent-timeout` slots were not graded because of provider HTTP 400. All sources are consistent and evidence is readable, but four scenarios did not each reach 3 gradable trigger samples, so the live baseline is still not complete. Failed slots were not retried, made up, or replaced automatically.
 
-`live-20260928-03/` 复现出 live 请求 artifact 曾持久化本地 provider 脱敏值的问题。相同字段也存在于前三批 live 请求文件；这些历史目录的请求副本都已清除敏感字段，原始 SHA-256 与脱敏复现说明分别保存在各自的 `artifact-security-findings.json`。修复后 `live-20260928-04/` 的 21 个请求均无 `redactions` 字段，扫描所有生成 artifact 未发现 provider 敏感值。Runner 不持久化脱敏值，并在发布前再次清理文本 artifact。修复后的完整离线矩阵通过；live 基线仍因故障触发及独立任务验收不足而未完成。Suite 1.1 的编码基线仍单独未完成，v0.51 的争议成绩继续保留。
+`live-20260928-03/` reproduced the problem that live request artifacts once persisted local provider redacted values. The same fields also exist in the request files of the first three live batches; the request copies in these historical directories have all had the sensitive fields removed, and the original SHA-256 and the redaction reproduction notes are saved in each `artifact-security-findings.json`. After the fix, none of the 21 requests of `live-20260928-04/` have a `redactions` field, and scanning all generated artifacts found no provider sensitive values. The Runner does not persist redacted values and cleans text artifacts again before publishing. The full offline matrix after the fix passed; the live baseline is still not complete because of insufficient fault triggers and independent task acceptance. The suite 1.1 coding baseline is still separately not complete, and the disputed v0.51 scores are still kept.
 
-## 历史套件 1.3：评测隔离与诊断
+## Historical suite 1.3: Evaluation isolation and diagnostics
 
-当前摘要为 `38e9a5ffd8aafdf897928bd0c3f51c84797f0a5f1dee4c18f5a9e2521dae4893`。进程相对 cwd 按 trial 工作区解析，非法目录在 handler 准入前拒绝；崩溃前后共用评测受保护提示词，避免恢复时额外导入上层项目 AGENTS.md。正式指令发现、安全与完成规则不变。
+The digest at that time is `38e9a5ffd8aafdf897928bd0c3f51c84797f0a5f1dee4c18f5a9e2521dae4893`. Relative process cwds are resolved against the trial workspace, and illegal directories are refused before handler admission; before and after the crash, the evaluation protected prompt is shared, to avoid importing the upper-level project AGENTS.md during recovery. Formal instruction discovery, safety, and completion rules are unchanged.
 
-原始 trial 的 `state_summary.tool_diagnostics` 提供有界异常类型、代码位置、参数 hash 和 errno；`phases` 下的 `request_diagnostics` 记录逐请求数字诊断。`message_groups` 将消息估算分为 system、state、notice、summary 和 history，工具 schema 单列；`reasoning_tokens_subset_estimated` 属于消息总量的子集，不能再次相加。`usage_source` 区分 provider、estimated 与 unobserved；实际输入与预留估算之比帮助判断估算偏差。恢复阶段计入 `prior_phase_tokens`，拒绝请求记录原因且观测用量保持 null。诊断不包含消息、推理或工具参数正文。
+The `state_summary.tool_diagnostics` of raw trials provides bounded exception types, code locations, argument hashes, and errno; `request_diagnostics` under `phases` records per-request numeric diagnostics. `message_groups` splits message estimates into system, state, notice, summary, and history, with tool schemas listed separately; `reasoning_tokens_subset_estimated` is a subset of the message total and cannot be added again. `usage_source` distinguishes provider, estimated, and unobserved; the ratio of actual input to the reservation estimate helps judge estimate error. The recovery phase counts `prior_phase_tokens`, refused requests record the reason, and observed usage stays null. Diagnostics contain no message, reasoning, or tool argument bodies.
 
-总预算未提高；这些诊断用于区分上下文开销、模型调查用量与估算偏差。Suite 1.3 的 21 槽历史成绩为恢复 8/17，进程超时触发 2/3，样本基线未完成。Suite 1.4 首个 live 批次完成 21/21，七个场景均 3/3 触发且可评分，达到样本覆盖门槛；恢复成功 1/18，无基础设施错误。128 个已响应请求都未超过校准预留，16 个请求在发送前因预算不足被拒；没有 live provider 响应超额，因此响应后阻止工具/完成的分支尚未由真实响应触发。保守拒绝与重复上下文问题可能有关，执行顺序与上下文效率仍待修复。不同合同的成绩不合并，详见[基线说明](baselines/v0.52/README.md)。
+The total budget was not raised; these diagnostics are used to distinguish context overhead, model investigation usage, and estimate error. The 21-slot historical score of suite 1.3 is recovery 8/17, with process timeout triggered 2/3, and the sample baseline is not complete. The first suite 1.4 live batch completed 21/21, with all seven scenarios triggered 3/3 and gradable, reaching the sample coverage threshold; recovery success 1/18, with no infrastructure errors. None of the 128 responded requests exceeded the calibrated reservation, and 16 requests were refused before sending for insufficient budget; no live provider response exceeded its quota, so the branch that blocks tools/completion after a response has not yet been triggered by a real response. Conservative refusals may be related to repeated context problems, and execution order and context efficiency still need fixing. Scores of different contracts are not merged; see the [baseline notes](baselines/v0.52/README.md) for details.
 
-## 历史套件 1.4：请求预算预留
+## Historical suite 1.4: Request budget reservation
 
-套件摘要为 `ae49963f8385f27caaa2521a8ac167d0aa2c193f5368fb636eabb95763791365`，冻结材料与预检公开 `request_budget_policy`。输入估算以初始 2 倍系数加 256 tokens 预留；根据本 trial 纯 provider 输入/原估算的最高比例加 10% 余量上调，恢复继承崩溃前的校准，不重置累计预算。输出上限从同一次预留的余额计算，至少需容纳 256 输出 tokens（较小配置上限除外）才发送请求。
+The suite digest is `ae49963f8385f27caaa2521a8ac167d0aa2c193f5368fb636eabb95763791365`, and the frozen material and pre-check publish `request_budget_policy`. The input estimate is reserved with an initial factor of 2 plus 256 tokens; it is raised by the highest ratio of pure provider input/original estimate in this trial plus a 10% margin, and recovery inherits the calibration from before the crash without resetting the cumulative budget. The output limit is computed from the balance of the same reservation, and a request is sent only if it can fit at least 256 output tokens (except for a smaller configured limit).
 
-`budget_refusal_reason` 区分 `budget_already_exceeded`、`budget_exhausted`、`insufficient_request_budget`。实际超额响应不能执行工具 handler 或完成任务，所有工具调用仍逐项回灌预算错误；实际计数照实保留。无 provider 用量时保留估算来源、不用于校准。预估不是精确 tokenizer，未知偏差仍可能造成已发送请求超额，因此不能宣称绝对预算保证。Suite 1.4 的 21 槽 live 结果、请求拒绝诊断和未覆盖分支见[基线记录](baselines/v0.52/README.md)。
+`budget_refusal_reason` distinguishes `budget_already_exceeded`, `budget_exhausted`, and `insufficient_request_budget`. An actual over-limit response cannot run tool handlers or complete the task, and all tool calls still get budget errors fed back one by one; actual counts are kept as is. Without provider usage, the estimate source is kept and not used for calibration. The estimate is not an exact tokenizer, and unknown error can still make a sent request exceed its quota, so no absolute budget guarantee can be claimed. For the 21-slot live results of suite 1.4, request refusal diagnostics, and uncovered branches, see the [baseline record](baselines/v0.52/README.md).
 
-## 历史候选 1.5：累计预算与完成证据
+## Historical candidate 1.5: Cumulative budget and completion evidence
 
-Suite 摘要为 `833eefa4cb6e108439fb407c0981383fcd8b04724887e42c40ba9bcd65baa3a7`。Live 显式启用正式 `TaskBudgetController`，主请求、同 binding 摘要和恢复会话共享 64,000 父 token 上限。评测只记录控制器的准入提案，不能另行发放额度。子代理沿用独立及聚合预算，不重复计入父模型账本。
+The suite digest is `833eefa4cb6e108439fb407c0981383fcd8b04724887e42c40ba9bcd65baa3a7`. Live explicitly enables the formal `TaskBudgetController`, and main requests, same-binding summaries, and recovery sessions share a 64,000 parent token limit. The evaluation only records the controller's admission proposals and cannot grant quota separately. Subagents keep the separate and aggregate budgets and are not counted twice in the parent model ledger.
 
-各请求按 binding、工具 schema 和 work/summary/final 类别独立校准。前两次 provider 观测前采用 `2 × raw + 256`；之后采用最近八次最大正误差，再加 10% 和 256。主执行、摘要、收尾输出分别最多 1024/512/512 tokens；最低准入输出为 256，较小模型上限除外。未知用量按整个预留计费、不参与校准；真实超额照实记录并停止 handler 或完成。
+Each request is calibrated independently by binding, tool schema, and work/summary/final category. Before two provider observations, `2 × raw + 256` is used; after that, the largest positive error of the last eight, plus 10% and 256. The outputs of main execution, summaries, and finishing are at most 1024/512/512 tokens; the minimum admission output is 256, except for a smaller model limit. Unknown usage is charged the whole reservation and does not take part in calibration; real overruns are recorded as is and stop handlers or completion.
 
-每次请求前把唯一预留持久提交，返回后把结算提交；提交失败即停止。恢复中的未知 pending 请求只计费一次，不能重置上限。新请求视图保留用户消息、受保护指令、当前 State 与最近两轮完整工具协议；入选推理字段不改写。摘要只有估计总成本更低且能获得额度时才请求模型；不足时用有界视图，保护内容仍放不下则明确阻塞。
+Before each request, a unique reservation is committed durably, and after the return, the settlement is committed; a commit failure stops immediately. An unknown pending request during recovery is charged only once and cannot reset the limit. The new request view keeps user messages, protected instructions, the current State, and the complete tool protocol of the last two rounds; selected reasoning fields are not rewritten. A summary requests the model only when its estimated total cost is lower and quota is available; otherwise a bounded view is used, and when protected content still does not fit, it blocks explicitly.
 
-只有当前代已验证或活动计划全部完成，并且没有其他完成阻塞时，才使用无工具 schema 的收尾请求。最终回复仍须真实没有 tool calls，并经过原有完成校验；收尾返回工具调用会逐项回灌拒绝结果、阻塞任务。不会自动完成计划、运行验证或宣告成功。
+Only when the current generation is verified or the active plan is fully complete, and there are no other completion blockers, is a finishing request without tool schemas used. The final reply must still really have no tool calls and pass the original completion checks; if finishing returns tool calls, refusal results are fed back one by one and the task is blocked. The plan is not completed automatically, verification is not run, and success is not declared.
 
-新 trial 的 `state_summary.completion_evidence` 保留 `artifact_correct`、`current_generation_verified`、`model_completed` 和阻塞项。新报告 `completion_layers` 分别计数，`recovery_success_rate` 的严格分子不变；历史报告不补推新证据。Suite 1.5 live 结果为 5/14 严格恢复成功，但三个场景未达到样本门槛，基线未完成；逐场景和请求诊断见上节及[基线](baselines/v0.52/README.md)。历史成本回放不推断恢复结果。
+The `state_summary.completion_evidence` of new trials keeps `artifact_correct`, `current_generation_verified`, `model_completed`, and blockers. The new report's `completion_layers` counts them separately, and the strict numerator of `recovery_success_rate` is unchanged; historical reports do not infer new evidence after the fact. The suite 1.5 live result is 5/14 strict recovery success, but three scenarios did not reach the sample threshold, so the baseline is not complete; for per-scenario and request diagnostics, see the section above and the [baseline](baselines/v0.52/README.md). The historical cost replay does not infer recovery results.
 
-## 2026-09-30 独立 provider 探针
+## 2026-09-30 Separate provider probes
 
-当前 binding 作为独立组运行了至多三次、无重试的计费和协议探针：第一请求成功，第二工具请求出现 `ProviderProtocolError`，因此第三请求没有发送。结果与 08/09 及恢复评分分开；保守费用上界低于用户批准的 1 USD。原始数字记录和证据限制见[基线说明](baselines/v0.52/README.md)及[探针复核](baselines/v0.52/provider-probe-20260930-01/review.json)。当前仍不能启动新的 21 槽位 live。
+The current binding ran a separate group of at most three billing and protocol probes with no retries: the first request succeeded, the second tool request hit `ProviderProtocolError`, so the third request was not sent. The results are separate from 08/09 and recovery grading; the conservative cost upper bound is below the user-approved 1 USD. For the raw numeric records and evidence limits, see the [baseline notes](baselines/v0.52/README.md) and the [probe review](baselines/v0.52/provider-probe-20260930-01/review.json). A new 21-slot live still cannot be started.
 
-后续独立诊断 02/03 将错误定位到流式工具调用字段校验，8,192 输出额度单独不能消除错误。适配器忽略后续空工具名和 `null` 参数片段后，探针 04 完成三请求工具回灌链路；四组累计保守费用上界 0.42294812 USD，均未触及 live 槽位。证据和历史归因限制见[基线说明](baselines/v0.52/README.md)。小请求协议已通过定点检查；#09 大输入预留与 Agent 恢复仍需单独验收，v0.52 live 基线未完成。
+Later separate diagnostics 02/03 located the error in streaming tool call field validation, and an 8,192 output quota alone could not remove the error. After the adapter ignores later empty tool names and `null` argument fragments, probe 04 completed a three-request tool feedback chain; the cumulative conservative cost upper bound of the four groups is 0.42294812 USD, with no live slots touched. For evidence and historical attribution limits, see the [baseline notes](baselines/v0.52/README.md). The small-request protocol passed the targeted check; the #09 large-input reservation and Agent recovery still need separate acceptance, and the v0.52 live baseline is not complete.
 
-另一次合成大输入请求在当前 binding 上实报 5,124 输入 token，低于 7,084 的代理估算和 14,424 的冷启动预留；所有探针累计保守费用上界 0.42367052 USD。其字节形状接近 #09 的事后重建，但原请求未保存且 binding 不同，不能将此结果写作 #09 的复现或通用预算保证。见[原始数字](baselines/v0.52/provider-large-input-20260930-01/probe.json)与[复核](baselines/v0.52/provider-large-input-20260930-01/review.json)。
+Another synthetic large-input request reported 5,124 input tokens on the current binding, below the 7,084 proxy estimate and the 14,424 cold-start reservation; the cumulative conservative cost upper bound of all probes is 0.42367052 USD. Its byte shape is close to the after-the-fact rebuild of #09, but the original request was not saved and the binding differs, so this result cannot be written as a reproduction of #09 or a general budget guarantee. See the [raw numbers](baselines/v0.52/provider-large-input-20260930-01/probe.json) and the [review](baselines/v0.52/provider-large-input-20260930-01/review.json).
 
-修正后的探针 05 又在 suite 的 1,024 输出上限下完成三步工具协议；六组独立探针累计保守费用上界 0.42375368 USD。离线故障矩阵 50/50 边界不变量通过，无基础设施错误；这不是 live 恢复成绩。详情见[综合验收](baselines/v0.52/provider-validation-20260930.json)，v0.52 live 基线仍未完成。
+The corrected probe 05 then completed a three-step tool protocol under the suite's 1,024 output limit; the cumulative conservative cost upper bound of the six separate probe groups is 0.42375368 USD. The offline fault matrix passed 50/50 boundary invariants with no infrastructure errors; this is not a live recovery score. For details, see the [combined acceptance](baselines/v0.52/provider-validation-20260930.json); the v0.52 live baseline is still not complete.

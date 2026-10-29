@@ -1,26 +1,26 @@
-# 依赖政策
+# Dependency Policy
 
-## 约束内容
+## Constraint
 
-项目区分核心运行时依赖和外围体验依赖：核心流程只使用 Python 标准库；必要且主要改善用户体验的外围能力可以通过可选第三方依赖增强。
+The project separates core runtime dependencies from peripheral user-experience dependencies: core flows use only the Python standard library; peripheral capabilities that are necessary and mainly improve the user experience may be enhanced with optional third-party dependencies.
 
-核心流程包括 LLM HTTP 调用、agent loop、工具执行、权限闸门、AgentState、ContextManager、协议处理和验证闭环。外围能力包括终端编辑、显示增强和其他不改变执行语义的交互体验。
+Core flows include LLM HTTP calls, the agent loop, tool execution, the permission gate, AgentState, ContextManager, protocol handling, and the verification loop. Peripheral capabilities include terminal editing, display enhancements, and other interaction features that do not change execution semantics.
 
-## 允许条件
+## Allowed Conditions
 
-可选依赖必须同时满足：
+An optional dependency must meet all of these conditions:
 
-- 不进入默认安装依赖；
-- 没有该依赖时有标准库回退或功能降级；
-- 不改变工具调用协议、权限边界、状态模型或核心错误语义；
-- 在 `pyproject.toml` 中声明明确的 extra 和版本范围；
-- 在操作手册中说明安装方式与回退行为；
-- 默认测试套件不要求联网安装该依赖，增强路径使用隔离测试覆盖。
+- It is not part of the default install dependencies;
+- Without it, a standard-library fallback or a degraded feature exists;
+- It does not change the tool call protocol, permission boundaries, state model, or core error semantics;
+- It is declared in `pyproject.toml` with an explicit extra and version range;
+- The operation manual describes how to install it and how the fallback behaves;
+- The default test suite does not need a network install of it; the enhanced path is covered by isolated tests.
 
-## 违反后果
+## Consequences of a Violation
 
-如果核心模块直接导入外围依赖，或默认安装因体验功能引入第三方依赖，则破坏自包含部署、离线 smoke test 和教学版本的可复现性。此类改动必须先调整本政策和 `AGENTS.md`，再实施代码变更。
+If a core module imports a peripheral dependency directly, or the default install pulls in a third-party dependency for a user-experience feature, this breaks self-contained deployment, offline smoke tests, and the reproducibility of teaching versions. Such a change must first update this policy and `AGENTS.md`, and only then change the code.
 
-## 当前案例
+## Current Case
 
-`prompt_toolkit` 仅用于 CLI 多行输入。它位于输入适配层，通过 `interactive` extra 安装；未安装时回退到标准库 `input()`，核心 Agent 不感知该依赖。
+`prompt_toolkit` is used only for multiline CLI input. It lives in the input adapter layer and is installed through the `interactive` extra; without it, input falls back to the standard library `input()`, and the core Agent does not know about the dependency.

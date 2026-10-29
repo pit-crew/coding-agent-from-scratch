@@ -1,31 +1,31 @@
-# 第 37 课：给子代理加上生命周期和总预算
+# Lesson 37: Adding lifecycles and a total budget to subagents
 
-上一课：[让父子 Agent 使用不同的模型服务](36-multi-provider.md) · [教程总览](README.md) · 下一课：[有界并行子代理](38-parallel-delegation.md)
+Previous: [Letting parent and child Agents use different model services](36-multi-provider.md) · [Tutorial overview](README.md) · Next: [Bounded parallel subagents](38-parallel-delegation.md)
 
-> 代码快照：`v0.37` · 相邻差异：`v0.36..v0.37` · 命令环境：Bash/zsh
+> Code snapshot: `v0.37` · Adjacent diff: `v0.36..v0.37` · Shell: Bash/zsh
 
-> 运行要求：Python 3.10+。核心运行时仍只使用标准库；模型连接从本地 `config_local.py` 读取。
+> Requirements: Python 3.10+. The core runtime still uses only the standard library; model connections are read from the local `config_local.py`.
 
-## 本课目标
+## Lesson Goals
 
-第 36 课的子代理能返回结果，但父任务还不清楚它处在什么阶段，也不能把多次委派的资源消耗放进同一本账。本课给每次委派一个可追踪的生命周期，并让父任务在启动子代理前检查总预算。
+The subagent of Lesson 36 can return results, but the parent task does not clearly know what stage it is in, and it cannot put the resource use of several delegations into one ledger. This lesson gives each delegation a traceable lifecycle and has the parent task check the total budget before starting a subagent.
 
-读完后，你应能解释：
+After reading, you should be able to explain:
 
-- 为什么“子代理失败了”和“父侧已经收到失败结果”是两件事；
-- 为什么预算要先预留，结束后再按实际用量结算；
-- 为什么取消是协作式的，不能假装立即杀死网络请求；
-- 为什么子代理没收束时，`/new`、`/reset` 和退出不能直接清空旧任务。
+- Why "the subagent failed" and "the parent side has received the failure result" are two different things;
+- Why the budget is reserved first and settled by actual usage afterwards;
+- Why cancellation is cooperative and cannot pretend to kill a network request immediately;
+- Why, while a subagent has not finished, `/new`, `/reset`, and exit cannot simply clear the old task.
 
-## 上一版的问题
+## Problems in the Previous Version
 
-v0.36 的管理器用一个活动标记防止重复启动，却不能回答“是哪次委派在运行”“结果是否已经交给父 Agent”“取消是否已经完成”。如果多次委派都重新取得完整额度，父任务也可能超出总的模型调用、工具调用或 token 限制。
+The v0.36 manager used one active flag to prevent duplicate starts, but it could not answer "which delegation is running", "has the result been handed to the parent Agent", or "has the cancellation finished". If every delegation got a full budget again, the parent task could also exceed its total limits on model calls, tool calls, or tokens.
 
-这还关系到 CLI 的任务边界：用户输入 `/new`、`/reset`、EOF 或 `exit` 时，子代理可能仍在同步请求中。程序必须先取消并等待；等待没有收束时，要保留旧任务并明确报告原因，不能把它写成干净退出。
+This also affects the CLI's task boundaries: when the user enters `/new`, `/reset`, EOF, or `exit`, a subagent may still be in a synchronous request. The program must cancel and wait first; when the wait does not finish, it must keep the old task and report the reason clearly, instead of recording a clean exit.
 
-## 前置条件与版本切换
+## Prerequisites and Version Checkout
 
-需要第 36 课，并理解 `DelegatedTask`、`SubagentResult`、`AgentRuntime.run()` 和 model binding。命令使用 Bash/zsh：
+You need Lesson 36 and should understand `DelegatedTask`, `SubagentResult`, `AgentRuntime.run()`, and the model binding. Commands use Bash/zsh:
 
 ```bash
 git checkout v0.36
@@ -34,60 +34,60 @@ git diff v0.36..v0.37 -- src/mini_agent/config.py src/mini_agent/state.py src/mi
 git checkout v0.37
 ```
 
-本课的状态和取消回归不需要真实 API；若运行 CLI，仍需按第 36 课配置本地模型。
+This lesson's state and cancellation regressions need no real API; if you run the CLI, configure a local model as in Lesson 36.
 
-## 新增与改动文件
+## New and Changed Files
 
-文件沿着“记账 → 运行 → 交付 → 任务边界清理”排列：
+The files are ordered along "accounting → running → delivery → task boundary cleanup":
 
-| 文件 | 作用 |
+| File | Purpose |
 |---|---|
-| [`src/mini_agent/state.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.37/src/mini_agent/state.py) | 保存委派记录、预算账本、状态转换和安全点检查。 |
-| [`src/mini_agent/delegation.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.37/src/mini_agent/delegation.py) | 管理当前任务、取消事件、预算预留和子代理边界。 |
-| [`src/mini_agent/runtime.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.37/src/mini_agent/runtime.py) | 在父工具结果提交后推进委派记录。 |
-| [`src/mini_agent/context.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.37/src/mini_agent/context.py) | 向父模型展示有限的活动委派和剩余额度。 |
-| [`src/mini_agent/session.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.37/src/mini_agent/session.py) | 拒绝保存活动或待提交的委派安全点。 |
-| [`src/mini_agent/__main__.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.37/src/mini_agent/__main__.py) | 让 `/new`、`/reset`、EOF、`exit` 和异常退出先清理子代理。 |
+| [`src/mini_agent/state.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.37/src/mini_agent/state.py) | Stores delegation records, the budget ledger, state transitions, and safe point checks. |
+| [`src/mini_agent/delegation.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.37/src/mini_agent/delegation.py) | Manages the current task, cancellation events, budget reservations, and subagent boundaries. |
+| [`src/mini_agent/runtime.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.37/src/mini_agent/runtime.py) | Advances the delegation record after the parent tool result is committed. |
+| [`src/mini_agent/context.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.37/src/mini_agent/context.py) | Shows the parent model a bounded view of active delegations and remaining budget. |
+| [`src/mini_agent/session.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.37/src/mini_agent/session.py) | Refuses to save safe points with active or uncommitted delegations. |
+| [`src/mini_agent/__main__.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.37/src/mini_agent/__main__.py) | Makes `/new`, `/reset`, EOF, `exit`, and abnormal exits clean up subagents first. |
 
-## 版本变更定位
+## Version Change Map
 
-图例：`[旧]` v0.36 已有，`[+]` v0.37 新增，`[~]` v0.37 修改，`[C]` 主要消费者，`[B]` 本课边界。
+Legend: `[old]` already in v0.36, `[+]` new in v0.37, `[~]` changed in v0.37, `[C]` main consumer, `[B]` boundary of this lesson.
 
-v0.36 主要记录“工具调用返回了什么”：
+v0.36 mainly records "what the tool call returned":
 
 ```text
-[C] 父 Agent
-      -> [旧] delegate_task
-      -> [旧] DelegationManager(_active: bool)
-      -> [旧] SubagentRunner
-      -> [C] 父 role=tool 结果
-      [B] 没有完整的生命周期和父任务总账本
+[C] parent Agent
+      -> [old] delegate_task
+      -> [old] DelegationManager(_active: bool)
+      -> [old] SubagentRunner
+      -> [C] parent role=tool result
+      [B] no complete lifecycle and no total ledger for the parent task
 ```
 
-v0.37 把运行过程写成父侧可审计的记录：
+v0.37 writes the run process down as parent-side auditable records:
 
 ```text
-[C] 父 Agent
+[C] parent Agent
       -> [+] State.reserve_delegation()
       -> [+] DelegationRecord: created -> running
-      -> [~] 子 Runner 检查取消和单次预算
-      -> [+] result_ready + 实际 usage 结算
-      -> [~] 父 Context 写入 role=tool
+      -> [~] the child Runner checks cancellation and the per-run budget
+      -> [+] result_ready + actual usage settlement
+      -> [~] the parent Context writes role=tool
       -> [+] DelegationRecord: committed
-      -> [C] 下一次父 LLM
+      -> [C] next parent LLM request
 
-[B] v0.37 仍只有一个同步子代理；v0.38 才并行
+[B] v0.37 still has only one synchronous subagent; parallelism comes in v0.38
 ```
 
-这里的“交付”表示父 State、父消息和必要的 durable 边界已经共同记录，不只是子模型输出了一段文字。
+"Delivery" here means the parent State, the parent messages, and the necessary durable boundary have all recorded it together, not just that the child model output some text.
 
-## 核心概念与数据结构
+## Core Concepts and Data Structures
 
-### 1. 执行结果和交付状态是两条轴
+### 1. The execution result and the delivery status are two axes
 
-`outcome` 回答“子代理做得怎样”，例如 `completed`、`failed`、`timed_out`、`cancelled` 或 `budget_exhausted`。`delivery_status` 回答“父侧是否已经把这次调用收口”。两者不能混为一谈：子代理即使超时，也必须给父模型一个失败结果。
+`outcome` answers "how did the subagent do", for example `completed`, `failed`, `timed_out`, `cancelled`, or `budget_exhausted`. `delivery_status` answers "has the parent side closed this call". The two must not be confused: even if a subagent times out, the parent model must get a failure result.
 
-生命周期可以这样读：
+The lifecycle reads like this:
 
 ```text
 created -> running -> result_ready -> committed
@@ -96,11 +96,11 @@ created -> running -> result_ready -> committed
                                       | cancelled | budget_exhausted
 ```
 
-`result_ready` 表示结果已经通过校验、可以交给父侧；`committed` 表示对应的父 `role=tool` 和 State 事实也已经提交。只有到 `committed`，父 Runtime 才能继续请求下一轮模型。`DelegationRecord` 保存 ID、合同 hash、状态、结果 ID/hash、usage 和简短原因，不保存子代理完整 history。
+`result_ready` means the result passed validation and can be handed to the parent side; `committed` means the matching parent `role=tool` and State facts are also committed. Only at `committed` can the parent Runtime go on to request the next model round. `DelegationRecord` stores the IDs, contract hash, status, result ID/hash, usage, and a short reason; it does not store the subagent's full history.
 
-### 2. 预算要先预留，再结算
+### 2. The budget is reserved first, then settled
 
-父任务的聚合预算包括最大子代理数、并发数、LLM 调用数、工具调用数和 token 数。v0.37 并发数固定为 1，但仍先在 State 锁内检查剩余额度，并把本次允许的单次上限放入 reserved 账本：
+The parent task's aggregate budget includes the maximum number of subagents, concurrency, LLM calls, tool calls, and tokens. In v0.37 concurrency is fixed at 1, but it still checks the remaining budget inside the State lock first and puts this run's allowed per-run limit into the reserved ledger:
 
 ```python
 MAX_SUBAGENTS = 1
@@ -110,81 +110,81 @@ MAX_TOTAL_TOOL_CALLS = 24
 MAX_TOTAL_TOKENS = 32_000
 ```
 
-预算不足时，子 LLM 请求不会发生。子代理结束后释放未用预留，按实际 usage 结算；服务商没给 usage 时使用保守估算并标记 `estimated`。若真实 usage 超过预留，账本记录真实超额，后续委派看到更少的剩余额度，不能借重新生成合同来重置预算。
+When the budget is insufficient, no child LLM request happens. After the subagent ends, the unused reservation is released and the actual usage is settled; when the provider gives no usage, a conservative estimate is used and marked `estimated`. If the real usage exceeds the reservation, the ledger records the real overrun, and later delegations see less remaining budget; regenerating a contract cannot reset the budget.
 
-### 3. 取消是协作式的
+### 3. Cancellation is cooperative
 
-Manager 保存一个属于当前父任务的 `threading.Event`。CLI 调用 `cancel(task_id, reason)` 时只是设置事件，不强行关闭正在进行的 HTTP/socket。子 Runtime 会在请求模型前、收到响应后、工具回合准入前和结果边界后检查它。
+The Manager keeps a `threading.Event` that belongs to the current parent task. When the CLI calls `cancel(task_id, reason)`, it only sets the event; it does not forcibly close an ongoing HTTP/socket. The child Runtime checks it before requesting the model, after receiving a response, before admitting a tool round, and after the result boundary.
 
-因此，快速返回的请求可以很快变成 `cancelled`；阻塞中的网络请求可能暂时没有收束。CLI 会有界等待，若仍未结束，就保留旧任务并报告 delegation ID 和原因。取消不是成功证明，也不能把未收束任务写成 clean safe point。
+So a request that returns quickly can become `cancelled` quickly; a blocked network request may not finish for a while. The CLI waits boundedly; if it still has not ended, it keeps the old task and reports the delegation ID and the reason. Cancellation is not proof of success, and an unfinished task cannot be written as a clean safe point.
 
-## 关键流程
+## Key Flow
 
-正常路径：
+The normal path:
 
 ```text
-父 assistant: delegate_task
-  -> 合同 / 阶段 / 权限检查
-  -> State 锁内预留聚合预算，记录 created
-  -> 标记 running，进入子 Runtime
-  -> 子代理执行并检查取消/预算
-  -> 生成并校验 SubagentResult
-  -> 标记 result_ready，结算实际 usage
-  -> 父 Context 追加恰好一个 role=tool
-  -> 标记 committed
-  -> 父 Runtime 才能请求下一轮 LLM
+parent assistant: delegate_task
+  -> contract / phase / permission checks
+  -> reserve the aggregate budget inside the State lock, record created
+  -> mark running, enter the child Runtime
+  -> the subagent runs and checks cancellation/budget
+  -> produce and validate the SubagentResult
+  -> mark result_ready, settle the actual usage
+  -> the parent Context appends exactly one role=tool
+  -> mark committed
+  -> only then can the parent Runtime request the next LLM round
 ```
 
-失败也要闭合协议：
+Failures must also close the protocol:
 
 ```text
-子模型异常 / timeout / cancel / budget_exhausted
-  -> 生成唯一、有界的失败 SubagentResult
-  -> result_ready(outcome=失败类)
-  -> 父 role=tool 仍然提交
+child model exception / timeout / cancel / budget_exhausted
+  -> produce a single, bounded failure SubagentResult
+  -> result_ready(outcome=a failure kind)
+  -> the parent role=tool is still committed
   -> committed
 ```
 
-如果任务边界命令在子调用中到达，CLI 先取消并有界等待；等待失败时跳过 clean 保存和任务切换，旧 State 继续保留。
+If a task boundary command arrives during a child call, the CLI first cancels and waits boundedly; when the wait fails, it skips the clean save and the task switch, and the old State is kept.
 
-## 运行与观察
+## Run and Observe
 
-在已配置模型后，用 Bash/zsh 启动 CLI：
+After configuring a model, start the CLI with Bash/zsh:
 
 ```bash
 PYTHONPATH=src python -m mini_agent
 ```
 
-父状态摘要应显示剩余额度、活动委派和近期已提交委派，但不显示子代理完整 history。正常结束时父模型收到 `outcome=completed` 的结构化结果；超时、取消或预算不足时，仍收到对应失败类 JSON。输入 `/new <任务>` 或 `/reset` 时，先观察取消和有界等待，再观察任务是否能安全切换；未收束时旧任务不应被清空。命令行首条任务处理后，CLI 仍会进入交互循环。
+The parent state summary should show the remaining budget, active delegations, and recently committed delegations, but not the subagent's full history. On a normal finish, the parent model receives a structured result with `outcome=completed`; on a timeout, cancellation, or insufficient budget, it still receives the matching failure-kind JSON. When you enter `/new <task>` or `/reset`, first observe the cancellation and bounded wait, then whether the task can switch safely; when it has not finished, the old task should not be cleared. After the command-line first task is handled, the CLI still enters the interactive loop.
 
-## 实现拆解
+## Implementation Breakdown
 
-`AgentState.reserve_delegation()`、`delegation_result_ready()` 和 `commit_delegation()` 在同一把 State 锁内完成预算与状态转换。`DelegationManager` 保存当前父任务 ID、取消事件、预留记录和完成事件，不再只用布尔 `_active`。`SubagentRunner` 仍只负责组装独立的子 State、Context、工具视图和策略，然后进入第 35 课的唯一 `AgentRuntime.run()`。
+`AgentState.reserve_delegation()`, `delegation_result_ready()`, and `commit_delegation()` complete budget and state transitions inside the same State lock. `DelegationManager` keeps the current parent task ID, the cancellation event, reservation records, and completion events, instead of only a boolean `_active`. `SubagentRunner` is still only responsible for assembling the independent child State, Context, tool view, and policy, then entering the single `AgentRuntime.run()` of Lesson 35.
 
-父 Runtime 在追加 `role=tool` 后推进委派记录；父完成判定会检查是否仍有未提交委派。safe point 拒绝活动或 `result_ready` 委派，已提交记录的 usage 随 State 保存和恢复，不会恢复出新的预算。
+The parent Runtime advances the delegation record after appending `role=tool`; the parent completion decision checks whether any delegations are still uncommitted. Safe points refuse active or `result_ready` delegations, and the usage of committed records is saved and restored with State; no new budget is created on resume.
 
-## 为什么这样设计
+## Why This Design
 
-把 `outcome` 和 `delivery_status` 分开，既能把“调查失败”告诉父模型，又能保证每个 assistant tool call 都有对应的 tool result。它还允许重复 commit 做幂等处理，不会产生第二条消息。
+Separating `outcome` from `delivery_status` both tells the parent model that "the investigation failed" and guarantees that every assistant tool call has a matching tool result. It also lets repeated commits be idempotent, without producing a second message.
 
-预留账本让预算拒绝发生在第一次子 LLM 请求之前；按实际用量结算又不会永久吞掉未使用的额度。代价是服务商的真实 usage 往往要到响应后才知道，已经发生的超额请求不能撤销，只能阻止后续请求。
+The reservation ledger lets budget rejection happen before the first child LLM request; settling by actual usage keeps unused budget from being swallowed permanently. The cost is that a provider's real usage is often known only after the response, and an overrun request that already happened cannot be undone; only later requests can be stopped.
 
-协作式取消保留了标准库 HTTP 客户端的简单边界，避免强行关闭 socket 后无法判断 provider 请求到底发生了什么。代价是网络调用不会总能立即停下，所以任务边界必须有界等待并保留旧任务。
+Cooperative cancellation keeps the standard-library HTTP client's boundary simple and avoids being unable to tell what actually happened to a provider request after forcibly closing a socket. The cost is that network calls cannot always stop immediately, so task boundaries must wait boundedly and keep the old task.
 
-## 设计边界
+## Design Boundaries
 
-- v0.37 只有一个同步、单层、只读子代理，`max_concurrency=1`。
-- 子代理不能写文件、运行 shell、管理进程、修改父计划、改变 generation、提供权威验证或决定父任务完成。
-- 取消只在同步检查点生效；不会强行杀死进行中的 HTTP/socket。
-- safe point 拒绝活动或 `result_ready` 委派；已提交 usage 会随 State 保存，不会重置预算。
-- 本版不自动重跑未收束的子代理，也不持久化跨进程可恢复的原始子结果；这留给第 39 课。
-- 第 38 课才增加多个子代理并行和按模型顺序交付。
+- v0.37 has only one synchronous, single-level, read-only subagent, `max_concurrency=1`.
+- The subagent cannot write files, run shell, manage processes, change the parent plan, change the generation, provide authoritative verification, or decide parent task completion.
+- Cancellation takes effect only at synchronous checkpoints; it does not forcibly kill an ongoing HTTP/socket.
+- Safe points refuse active or `result_ready` delegations; committed usage is saved with State and does not reset the budget.
+- This version does not automatically rerun unfinished subagents, nor does it persist raw child results that can be recovered across processes; that is left to Lesson 39.
+- Lesson 38 adds parallel subagents and delivery in model order.
 
-## 本版特性、下一课与代码索引
+## Version Features, Next Lesson, and Code Index
 
-本课完成单子代理的生命周期、协作式取消、父任务聚合预算、usage 结算、状态摘要和安全点边界。下一课会让多个只读子代理同时运行，同时仍保证父 `role=tool` 结果按模型调用顺序提交。
+This lesson completes the single-subagent lifecycle, cooperative cancellation, the parent task aggregate budget, usage settlement, the state summary, and the safe point boundary. The next lesson lets several read-only subagents run at the same time while still guaranteeing that parent `role=tool` results are committed in the model's call order.
 
-核心源码：
+Core source:
 
 - [`src/mini_agent/state.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.37/src/mini_agent/state.py)
 - [`src/mini_agent/delegation.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.37/src/mini_agent/delegation.py)

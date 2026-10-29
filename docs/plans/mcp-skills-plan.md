@@ -1,186 +1,186 @@
-# 阶段十二：MCP 与 Skills 实施计划
+# Stage 12: MCP and Skills Implementation Plan
 
-> 状态：`v0.46` 已实现
-> 建议版本范围：`v0.43`–`v0.46`
-> 能力前置：统一 Tool / PermissionGate / AgentRuntime、阶段九的持久工具边界与崩溃恢复、阶段十的父子能力隔离、阶段十一的 Context 与不可信资料边界
-> 关联计划：`reliable-execution-plan.md`、`session-persistence-resume-plan.md`、`subagent-delegation-plan.md`、`memory-retrieval-references-plan.md`
+> Status: `v0.46` implemented
+> Suggested version range: `v0.43`–`v0.46`
+> Capability prerequisites: unified Tool / PermissionGate / AgentRuntime, durable tool boundaries and crash recovery from Stage 9, parent/child capability isolation from Stage 10, Context and untrusted material boundaries from Stage 11
+> Related plans: `reliable-execution-plan.md`, `session-persistence-resume-plan.md`, `subagent-delegation-plan.md`, `memory-retrieval-references-plan.md`
 
-本计划参考 [MCP `2025-11-25` 生命周期](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle)、[Tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)、[Resources](https://modelcontextprotocol.io/specification/2025-11-25/server/resources)、[Prompts](https://modelcontextprotocol.io/specification/2025-11-25/server/prompts) 与 [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)，以及 [OpenCode MCP](https://opencode.ai/v2/docs/mcp-servers) 和 [OpenCode Skills](https://opencode.ai/v2/docs/skills) 的按需能力组织方式。它是有意裁剪的教学实现，不声称兼容所有 MCP Server 或复刻 OpenCode。
+This plan references the [MCP `2025-11-25` lifecycle](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle), [Tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools), [Resources](https://modelcontextprotocol.io/specification/2025-11-25/server/resources), [Prompts](https://modelcontextprotocol.io/specification/2025-11-25/server/prompts), and [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports), as well as the on-demand capability organization of [OpenCode MCP](https://opencode.ai/v2/docs/mcp-servers) and [OpenCode Skills](https://opencode.ai/v2/docs/skills). It is a deliberately trimmed teaching implementation and does not claim compatibility with all MCP Servers or to replicate OpenCode.
 
-## 1. 目标与定位
+## 1. Goal and Positioning
 
-阶段十一后，`mini_agent` 已能按需读取工作区 Memory 和具名本地 References，但外部标准能力仍不能通过统一 Tool 边界接入；重复的多步工作流也只能依赖普通项目指令或用户临时提示。
+After Stage 11, `mini_agent` can read workspace Memory and named local References on demand, but external standard capabilities still cannot be connected through the unified Tool boundary; repeated multi-step workflows can only rely on ordinary project instructions or temporary user prompts.
 
-阶段十二要回答的问题是：**怎样接入标准外部能力、按需加载可复用工作流，同时不绕过已有的权限、执行、恢复和 Context 边界？** v0.46 完成了本计划限定的 JSON-only HTTP、文本 Resource 和文本 Prompt 子集。
+The question Stage 12 answers: **how to connect standard external capabilities and load reusable workflows on demand without bypassing the existing permission, execution, recovery, and Context boundaries?** v0.46 completes the JSON-only HTTP, text Resource, and text Prompt subset this plan defines.
 
-一句话目标：**让父 Agent 通过 MCP 接入受控外部能力，通过 Skills 按需加载本地工作流说明，并继续复用已有 Tool、PermissionGate、Context 和 AgentRuntime。**
+One-sentence goal: **let the parent Agent connect controlled external capabilities through MCP and load local workflow instructions on demand through Skills, while continuing to reuse the existing Tool, PermissionGate, Context, and AgentRuntime.**
 
-两条主线必须分开：
+The two main threads must stay separate:
 
 ```text
 MCP Server → MCP Client / Adapter → Tool Registry → ToolExecutor / PermissionGate → AgentRuntime
 
-Skill 目录 → name + description 发现提示 → skill(name) → SKILL.md 正文
-                                                    ↓
-                                         普通 tool history / Context
-                                                    ↓
-                                         现有 Tools / MCP Tools 执行
+Skill directory → name + description discovery hints → skill(name) → SKILL.md body
+                                                              ↓
+                                                   ordinary tool history / Context
+                                                              ↓
+                                                   run by existing Tools / MCP Tools
 ```
 
-**MCP 给 Agent 新能力；Skill 教 Agent 怎样组合已获准的能力。** Skill 正文不是新的执行权限，也不升级为 system instruction。
+**MCP gives the Agent new capabilities; a Skill teaches the Agent how to combine approved capabilities.** A Skill body is not a new execution permission and is not upgraded to a system instruction.
 
-四个版本分别讲一个问题：`v0.43` 认识 MCP 协议和 stdio 生命周期；`v0.44` 已把外部 Tool 安全接入父 Runtime；`v0.45` 已实现 Skill 与 Tool 的区别及按需加载；`v0.46` 在严格限定范围内补上远程传输、Resource 和 Prompt。
+Each of the four versions covers one question: `v0.43` introduces the MCP protocol and the stdio lifecycle; `v0.44` has connected external Tools safely to the parent Runtime; `v0.45` has implemented the difference between Skills and Tools and on-demand loading; `v0.46` adds remote transport, Resources, and Prompts within a strictly limited scope.
 
-## 2. 范围与非目标
+## 2. Scope and Non-Goals
 
-### 2.1 本阶段范围
+### 2.1 Scope of this stage
 
-`v0.43` 只包含独立的 stdio Client 和演示 CLI；`v0.44` 在此基础上把显式启用的
-本地 MCP Tool 接入父 Runtime；`v0.45` 增加本地 Skills 的固定目录发现和按需加载；`v0.46`
-增加下文限定的 JSON-only HTTP、Resource 和 Prompt 子集。
+`v0.43` contains only a standalone stdio Client and a demo CLI; on top of that, `v0.44` connects explicitly enabled
+local MCP Tools to the parent Runtime; `v0.45` adds fixed-directory discovery and on-demand loading of local Skills; `v0.46`
+adds the JSON-only HTTP, Resource, and Prompt subset defined below.
 
-- 固定 MCP `2025-11-25` 握手式协议，先实现本地 stdio Server 的 `initialize → notifications/initialized → tools/list → tools/call`，拒绝不受支持的协商版本。
-- 仅由本地配置启用 MCP Server；父 Runtime 创建时冻结工具目录，外部 Tool 通过既有 Registry、Executor、PermissionGate、Plan gate、Failure、Trace 和持久工具边界执行。
-- 外部 MCP Tool 默认 `effect_class="possible"`；只有本地配置精确指认的工具可标为 `none`。服务端名称、描述、schema、annotations 和结果不决定安全等级。
-- 从项目级和全局本地目录发现 `SKILL.md`；向父模型有界展示 `name + description`，通过普通只读 `skill(name)` Tool 按需加载正文。
-- 为 Skill 加载定义确定性的同名优先级、大小上限、路径边界和权限规则；正文只作为不可信工作流材料进入普通 tool history，并由现有 Context 裁剪。
-- `v0.46` 增加仅适用于返回 JSON 响应的 Streamable HTTP Server 的教学子集，以及有界 UTF-8 文本 Resource 和文本 Prompt 的显式应用侧/用户侧入口。
+- Pin the handshake-style MCP `2025-11-25` protocol, first implementing `initialize → notifications/initialized → tools/list → tools/call` for local stdio Servers and refusing unsupported negotiated versions.
+- MCP Servers are enabled only by local configuration; the tool catalog is frozen when the parent Runtime is created, and external Tools run through the existing Registry, Executor, PermissionGate, Plan gate, Failure, Trace, and durable tool boundary.
+- External MCP Tools default to `effect_class="possible"`; only tools named exactly in local configuration can be marked `none`. Server names, descriptions, schemas, annotations, and results do not decide the safety level.
+- Discover `SKILL.md` from project-level and global local directories; show the parent model a bounded `name + description`, and load the body on demand through an ordinary read-only `skill(name)` Tool.
+- Define deterministic same-name priority, size limits, path boundaries, and permission rules for Skill loading; the body enters ordinary tool history only as untrusted workflow material and is trimmed by the existing Context.
+- `v0.46` adds a teaching subset for Streamable HTTP Servers that return JSON responses only, plus explicit application-side/user-side entries for bounded UTF-8 text Resources and text Prompts.
 
-### 2.2 本阶段不做
+### 2.2 Not in this stage
 
-- 不开发 MCP Server 框架、Marketplace、插件系统、OAuth 管理、Skill 商店、在线 Skill 目录、自动生成 Skill 或 embedding 检索。
-- 不实现 `2026-07-28` modern lifecycle、自动协议探测或多版本 fallback；不实现服务端发起的 sampling、elicitation、roots、tasks 等交互。
-- 不实现 MCP 目录热刷新、订阅、变化通知处理、resource templates、补全、二进制/图片/音频内容，或 Streamable HTTP 的 SSE 响应、GET 监听、断线恢复与重投递。
-- 不把 MCP Resource / Prompt 伪装成可由模型自主调用的普通 Tool；不把 MCP server instructions 自动注入受保护 system prompt。
-- 不让 Skill 自动执行脚本、隐式授予工具权限或直接推进 Plan / verification；不默认向 Subagent 开放 MCP 或 Skills。
-- 不引入第三方核心依赖。MCP stdio、JSON-RPC、HTTP 客户端、frontmatter 的受限解析和生命周期管理均使用标准库；LLM 传输继续遵守现有 `http.client` 与 `Accept-Encoding: identity` 约束。
+- No MCP Server framework, Marketplace, plugin system, OAuth management, Skill store, online Skill catalog, automatic Skill generation, or embedding retrieval.
+- No `2026-07-28` modern lifecycle, automatic protocol detection, or multi-version fallback; no server-initiated sampling, elicitation, roots, tasks, or similar interactions.
+- No MCP catalog hot refresh, subscriptions, change notification handling, resource templates, completion, binary/image/audio content, or Streamable HTTP SSE responses, GET listening, reconnect recovery, and redelivery.
+- MCP Resources / Prompts are not disguised as ordinary Tools the model can call autonomously; MCP server instructions are not injected into the protected system prompt automatically.
+- Skills do not run scripts automatically, implicitly grant tool permissions, or directly advance the Plan / verification; MCP and Skills are not opened to Subagents by default.
+- No third-party core dependencies. MCP stdio, JSON-RPC, the HTTP client, restricted frontmatter parsing, and lifecycle management all use the standard library; LLM transport keeps following the existing `http.client` and `Accept-Encoding: identity` constraints.
 
-## 3. 先冻结的架构决策
+## 3. Architecture Decisions to Freeze First
 
-### D1：协议版本固定，完整实现已选择的经典握手
+### D1: The protocol version is pinned, and the chosen classic handshake is implemented completely
 
-客户端只请求 `2025-11-25`。`initialize` 响应必须有可接受的版本、server 信息和能力声明；版本不符、协议响应不合法或缺少所需能力时明确失败，不隐式回退。收到成功响应后必须发送 `notifications/initialized`，然后才能列工具或发调用。`tools/list` 的分页必须读取到终点，且受页数、工具数和响应字节上限约束；不得把第一页误当完整目录。
+The client requests only `2025-11-25`. The `initialize` response must have an acceptable version, server information, and capability declarations; a version mismatch, an invalid protocol response, or missing required capabilities fail explicitly with no implicit fallback. After a successful response, `notifications/initialized` must be sent before listing tools or sending calls. The pagination of `tools/list` must be read to the end, bounded by page count, tool count, and response byte limits; the first page must never be mistaken for the complete catalog.
 
-`v0.43` 可用独立 client 与测试用本地 Server 演示 JSON-RPC 请求 ID、响应配对、通知、错误与关闭，不把尚未受权限管理的 MCP Tool 暴露给模型。stdio 的 stdout 只承载协议消息；stderr 有界排空并与协议输出隔离。无响应、超大行/消息、坏 JSON、错误 ID、提前退出和超时均产生明确失败，不无限等待。
+`v0.43` can use a standalone client and a local test Server to demonstrate JSON-RPC request IDs, response pairing, notifications, errors, and shutdown, without exposing MCP Tools that are not yet under permission management to the model. stdio's stdout carries only protocol messages; stderr is drained within bounds and isolated from protocol output. No response, oversized lines/messages, bad JSON, wrong IDs, early exit, and timeouts all produce explicit failures with no infinite waiting.
 
-### D2：Tool Adapter 只连接既有执行链，不复制 Agent Loop
+### D2: The Tool Adapter only connects to the existing execution chain and does not copy the Agent Loop
 
-`v0.44` 将已发现的 MCP Tool 注册为普通 `Tool`，并由现有 `AgentRuntime.run()` 触发。建议外显名为 `mcp_<server>_<tool>`；名称规范化、长度限制及碰撞检查在注册前完成，任何两个外部工具或外部/内置工具规范化后同名都拒绝，绝不静默覆盖。内部保留精确的原始 server/tool 名，用于真正的 `tools/call`，不把外显名反向猜回原始名。
+`v0.44` registers discovered MCP Tools as ordinary `Tool`s, triggered by the existing `AgentRuntime.run()`. The suggested external name is `mcp_<server>_<tool>`; name normalization, length limits, and collision checks are done before registration, and any two external tools, or an external and a built-in tool, that have the same name after normalization are refused, never silently overwritten. Internally the exact original server/tool names are kept for the real `tools/call`; the original name is never guessed back from the external name.
 
-MCP `inputSchema` 是外部 JSON Schema，而当前 `validate_arguments()` 只支持一个子集。Adapter 必须显式列出支持的字段与关键字；不能正确校验的 schema 或参数在注册/准入阶段拒绝，不能悄悄丢弃约束后直传远端。转换结果须保留有界文本与可解释的来源；不支持的内容类型明确标记或拒绝，不把二进制当文本。JSON-RPC error、`tools/call` 的 `isError=true`、断连、超时和协议错误都应转成可区分的 `ExecutionResult` 失败事实，且每个模型 call 仍收到对应 `role=tool` 结果。
+The MCP `inputSchema` is external JSON Schema, while the current `validate_arguments()` supports only a subset. The Adapter must list the supported fields and keywords explicitly; schemas or arguments that cannot be validated correctly are refused at registration/admission, never passed through to the remote side after quietly dropping constraints. The conversion result must keep bounded text and an explainable source; unsupported content types are marked or refused explicitly, and binary data is never treated as text. JSON-RPC errors, `isError=true` from `tools/call`, disconnects, timeouts, and protocol errors must all become distinguishable `ExecutionResult` failure facts, and every model call still gets its matching `role=tool` result.
 
-### D3：外部 Tool 默认可能有副作用，本地配置才可降级
+### D3: External Tools may have side effects by default; only local configuration can downgrade them
 
-所有 MCP Tool 默认 `effect_class="possible"`，默认权限为 `ask`。服务端 `readOnlyHint` 等 annotations、名称、描述或 `outputSchema` 只是外部元数据，不能改变本地副作用等级或授权；MCP 规范也要求将非可信服务端的 annotations 视为不可信。仅本地配置中对**精确 server/tool 身份**的显式声明可将其设为 `none`，不能用服务端提供的自由文本或宽泛通配推断只读。
+All MCP Tools default to `effect_class="possible"` and default permission `ask`. Server `readOnlyHint` and other annotations, names, descriptions, or `outputSchema` are only external metadata and cannot change the local side-effect level or authorization; the MCP specification also requires treating annotations from untrusted servers as untrusted. Only an explicit declaration in local configuration for an **exact server/tool identity** can set it to `none`; read-only status cannot be inferred from free text the server provides or broad wildcards.
 
-降级为 `none` 只影响既有 planning/generation 分类，不等于无风险、免权限或自动成为验证证据。默认 `possible` 的 MCP 调用在 `exploring` 中拒绝；若确需只读规划调查，须先精确配置且仍经过 PermissionGate。权限规则可按外显 server/tool 名配置；授权提示必须同时显示 server、原始 tool 名和有界、脱敏的参数摘要，避免仅凭规范化名称误认调用。`always` 不得因外部参数内的通配符扩大授权范围。
+Downgrading to `none` only affects the existing planning/generation classification; it does not mean no risk, no permission, or automatically becoming verification evidence. MCP calls with the default `possible` are refused in `exploring`; if read-only planning investigation is really needed, the tool must first be configured exactly and still go through the PermissionGate. Permission rules can be configured by the external server/tool name; the authorization prompt must show the server, the original tool name, and a bounded, redacted argument summary at the same time, so a call is never misidentified by its normalized name alone. `always` must not expand the authorization scope because of wildcards in external arguments.
 
-### D4：MCP 连接是 Runtime 基础设施，不是任务后台 Process
+### D4: The MCP connection is Runtime infrastructure, not a task background Process
 
-stdio Server 由本地显式配置启动，不由模型通过 `start_process` 创建，也不登记为当前任务的后台进程；连接本身不能被模型复用来写 stdin 或控制 PID。进程启动、环境变量、工作目录和远程 URL/header 的配置必须有明确边界；敏感值只从本地配置或环境读取，不进入 State、Context、session、Trace、工具结果、授权提示或终端错误。可以记录无凭据的 server alias、transport、协议版本和配置指纹。
+stdio Servers are started by explicit local configuration, not created by the model through `start_process`, and not registered as background processes of the current task; the connection itself cannot be reused by the model to write stdin or control the PID. Configuration of process start, environment variables, working directory, and remote URL/headers must have clear boundaries; sensitive values are read only from local configuration or the environment and never enter State, Context, session, Trace, tool results, authorization prompts, or terminal errors. The credential-free server alias, transport, protocol version, and configuration fingerprint can be recorded.
 
-Server 连接、PID、管道、HTTP session ID 不写入 session。Runtime/CLI 正常退出、异常退出、`/new`、`/reset` 与 EOF 时有界关闭 stdio Server；清理失败报告具体 server 与原因，不能悄悄遗留进程。重新创建 Runtime 或恢复任务时，从当前本地配置重新连接并发现目录；旧 session 中的配置或目录只可作历史事实，不可作为执行授权。配置启动本身可能运行外部代码，因此只允许用户明确配置并启用的 Server，不能根据模型或 Skill 文本动态启动。
+Server connections, PIDs, pipes, and HTTP session IDs are not written to the session. On normal Runtime/CLI exit, abnormal exit, `/new`, `/reset`, and EOF, stdio Servers are closed within bounds; a cleanup failure reports the specific server and reason, never quietly leaving processes behind. When the Runtime is recreated or a task resumes, it reconnects and rediscovers the catalog from the current local configuration; the configuration or catalog in an old session can serve only as historical fact, not as execution authorization. Starting from configuration can itself run external code, so only Servers the user explicitly configured and enabled are allowed; they cannot be started dynamically based on model or Skill text.
 
-### D5：副作用、持久工具边界与崩溃恢复继续由父 Runtime 管
+### D5: Side effects, durable tool boundaries, and crash recovery stay managed by the parent Runtime
 
-MCP `tools/call` 与其他 Tool 一样，在 handler 前完成参数、阶段和权限校验。开启 `/save` 后，`possible` 调用必须先提交 schema 3 的 `handler_admitted`，再向 Server 发请求；每个 call 的 State、对应 `role=tool` 和工具边界仍按模型顺序原子提交，整轮 committed 前不得请求下一轮 LLM。提交失败不得发远程请求、进入后续 call 或请求 LLM。
+An MCP `tools/call`, like any other Tool, completes argument, phase, and permission checks before the handler. With `/save` on, a `possible` call must first commit schema 3's `handler_admitted` before sending the request to the Server; each call's State, matching `role=tool`, and tool boundary are still committed atomically in model order, and the next LLM round must not be requested before the whole round is committed. A commit failure must not send the remote request, enter later calls, or request the LLM.
 
-请求已发出却未持久记录结果时，恢复分类为「已准入、结果不确定」，不能因重新连接成功而重放、补发或猜测成功。连接断开和超时也不能证明远端没有执行副作用。恢复中的调查、逐项 `/resolve`、重新规划、重新授权与独立验证沿用 v0.33 合同。外部 Tool 结果、Resource 和 Skill 内容都不能自行创建 verification evidence 或推进 Plan。
+When a request has been sent but its result was not recorded durably, recovery classifies it as "admitted, result uncertain"; it cannot be replayed, resent, or guessed as successful just because reconnecting succeeded. A disconnect or timeout cannot prove the remote side did not perform side effects either. Investigation during recovery, per-item `/resolve`, replanning, reauthorization, and independent verification follow the v0.33 contract. External Tool results, Resources, and Skill content cannot create verification evidence or advance the Plan on their own.
 
-### D6：Skill 以元数据发现，以普通 Tool 结果加载
+### D6: Skills are discovered by metadata and loaded as ordinary Tool results
 
-首版只发现固定的项目级和全局本地 `skills/<name>/SKILL.md`，不递归扫描任意目录，不从网络下载。目录 ID、frontmatter `name` 与调用参数采用同一稳定、受限的名称合同；同名时项目级优先于全局，重复来源、无效名称或不一致元数据必须可观察，不依赖文件遍历顺序。v0.45 的受限 frontmatter 仅解析 `name` 与 `description` 两个单行字符串，不声称支持完整 YAML；解析规则、未知字段处理及 UTF-8/大小上限在实现时固定并测试。
+The first version discovers only the fixed project-level and global local `skills/<name>/SKILL.md`, does not scan arbitrary directories recursively, and does not download from the network. The directory ID, frontmatter `name`, and call argument use the same stable, restricted name contract; on a name conflict, the project level takes priority over the global level, and duplicate sources, invalid names, or inconsistent metadata must be observable, never depending on file traversal order. v0.45's restricted frontmatter parses only the two single-line strings `name` and `description` and does not claim to support full YAML; parsing rules, unknown field handling, and UTF-8/size limits are fixed and tested at implementation.
 
-父模型平时只看到有界的 ID、`name` 和 `description` 目录提示；不得把全部正文常驻 system prompt。`skill(name)` 是父侧只读 Tool，权限 pattern 是 Skill ID，默认 `ask`；`deny` 的 Skill 不向模型展示，也拒绝直接调用。授权后重新核查目标文件的规范路径、符号链接终点、文件身份、编码与大小，再将正文作为该次调用的普通 `role=tool` 结果。加载结果受 Context 裁剪，可在后续轮次再次按需加载；不新增权威 `active_skills` State，也不把正文当成持久 system 指令。开启 `/save` 时，已加载正文可能随普通 history 进入 session，因此只承诺不额外复制整份 Skill 目录，不承诺 session 绝无正文。
+Normally the parent model sees only bounded ID, `name`, and `description` catalog hints; all bodies must not stay resident in the system prompt. `skill(name)` is a parent-side read-only Tool whose permission pattern is the Skill ID, defaulting to `ask`; a `deny`ed Skill is not shown to the model, and direct calls to it are refused. After authorization, the target file's canonical path, symlink target, file identity, encoding, and size are rechecked, and then the body becomes that call's ordinary `role=tool` result. Loaded results are subject to Context trimming and can be loaded again on demand in later rounds; no authoritative `active_skills` State is added, and the body is not treated as a durable system instruction. With `/save` on, loaded bodies may enter the session with ordinary history, so the only promise is not to copy the whole Skill directory additionally, not that the session contains no bodies.
 
-Skill 内引用的脚本、模板和其他文件首版不自动执行或读取；如要访问，仍须走现有工具和权限。Skill 不能覆盖 system、`AGENTS.md`、PermissionGate、Plan 或用户明确要求；它只提供低优先级的工作流建议。
+Scripts, templates, and other files referenced inside a Skill are not run or read automatically in the first version; access still goes through the existing tools and permissions. A Skill cannot override the system prompt, `AGENTS.md`, the PermissionGate, the Plan, or explicit user requests; it provides only low-priority workflow suggestions.
 
-### D7：Resources 与 Prompts 保持各自的控制权
+### D7: Resources and Prompts keep their own control
 
-MCP Tools 是模型控制的动作；Resources 是应用选择、附加的资料；Prompts 是用户选择的模板。`v0.46` 的 Resource 列表/读取与 Prompt 列表/获取由 CLI/Host 显式入口触发，不注册成模型可自行调用的 Tool。资源正文作为有界、不可信资料进入当前 Context；用户选定并审阅的 Prompt 作为用户侧输入进入会话，但仍不能替代 system/项目指令或批准任何工具调用。可见的来源为 server alias 加 URI/Prompt 名，不将敏感 endpoint 或认证头带入 Context。
+MCP Tools are actions controlled by the model; Resources are material chosen and attached by the application; Prompts are templates chosen by the user. In `v0.46`, Resource listing/reading and Prompt listing/getting are triggered by explicit CLI/Host entries and are not registered as Tools the model can call on its own. Resource bodies enter the current Context as bounded, untrusted material; a Prompt chosen and reviewed by the user enters the session as user-side input but still cannot replace the system/project instructions or approve any tool call. The visible source is the server alias plus the URI/Prompt name; sensitive endpoints or auth headers are not brought into the Context.
 
-只接收文本 Resource 与文本 Prompt；URI、参数、内容长度、返回消息角色和数量均受限制。服务端返回的 Prompt 消息不能伪造 system、tool 或授权事件；不支持的内容类型或角色明确拒绝。资源读取与 Prompt 获取同样经过本地权限策略和来源校验，不因 Server 已连接而自动授权。Server instructions 不自动注入受保护 system prompt。
+Only text Resources and text Prompts are accepted; URIs, arguments, content length, returned message roles, and counts are all limited. Prompt messages returned by the server cannot forge system, tool, or authorization events; unsupported content types or roles are refused explicitly. Resource reads and Prompt gets also go through the local permission policy and source validation and are not authorized automatically just because the Server is connected. Server instructions are not injected into the protected system prompt automatically.
 
-### D8：远程 HTTP 是显式限定的教学子集，不冒称完整传输兼容
+### D8: Remote HTTP is an explicitly limited teaching subset and does not claim full transport compatibility
 
-`v0.46` 继续使用固定 `2025-11-25` 握手。在标准库 `http.client` 上实现受限的 Streamable HTTP POST：逐请求 JSON-RPC、必要的 `Accept` 和协议版本 header、初始化后的会话 header、认证 header 的本地注入、超时与响应大小限制。仅支持返回 `application/json` 的 Server；若 Server 返回 `text/event-stream`，明确报告不支持，不尝试把 SSE 当 JSON，也不声称兼容一般 Streamable HTTP Server。HTTP 认证失败、重定向、会话失效和网络中断不得触发会重放 `tools/call` 的自动重试。
+`v0.46` keeps using the pinned `2025-11-25` handshake. It implements a restricted Streamable HTTP POST on top of the standard library `http.client`: per-request JSON-RPC, the necessary `Accept` and protocol version headers, the session header after initialization, local injection of auth headers, and timeout and response size limits. Only Servers that return `application/json` are supported; if a Server returns `text/event-stream`, it reports explicitly that this is unsupported, never tries to treat SSE as JSON, and never claims compatibility with general Streamable HTTP Servers. HTTP auth failures, redirects, session invalidation, and network interruptions must not trigger automatic retries that would replay `tools/call`.
 
-远程 URL 需由用户本地配置显式列出，默认 HTTPS；若允许回环地址 HTTP，必须单独配置并记录其安全取舍。认证 token、真实 endpoint、HTTP session ID 均不进入持久化摘要。Remote 只是 Transport 变化，不改变 Tool 的默认 `possible`、权限、持久边界和子代理隔离。
+Remote URLs must be listed explicitly in the user's local configuration, defaulting to HTTPS; if loopback HTTP is allowed, it must be configured separately with its security trade-off recorded. Auth tokens, real endpoints, and HTTP session IDs never enter durable summaries. Remote is only a Transport change; it does not change Tools' default `possible`, permissions, durable boundaries, or subagent isolation.
 
-### D9：子代理与 Context 预算不因外部能力自动放宽
+### D9: Subagents and the Context budget are not relaxed automatically by external capabilities
 
-阶段十二只给父 Runtime 注册 MCP、Skills 和用户/应用侧内容入口；子代理仍维持现有四工具白名单，不继承父 MCP 连接、Skill 目录、授权、Resource 或 Prompt 内容。父代理若要传递外部调查事实，只能通过既有有界 selected facts；子结果不升级为父验证证据。
+Stage 12 registers MCP, Skills, and user/application-side content entries only for the parent Runtime; subagents keep the existing four-tool allowlist and do not inherit the parent's MCP connections, Skill catalog, authorizations, Resources, or Prompt content. If the parent Agent wants to pass on external investigation facts, it can do so only through the existing bounded selected facts; child results are not upgraded to parent verification evidence.
 
-MCP 工具目录、描述、Skill 目录提示、普通工具结果和显式 Resource/Prompt 输入均须有独立的长度/数量上限，并纳入现有 Context 预算。目录过大时采取确定性裁剪或明确拒绝，不悄悄挤掉受保护指令；所有外部正文都是不可信材料。Trace & Replay 只消费当时记录的结构化事实，不重新连接 Server、加载 Skill 或读取 Resource。
+MCP tool catalogs, descriptions, Skill catalog hints, ordinary tool results, and explicit Resource/Prompt inputs must each have their own length/count limits and count toward the existing Context budget. An oversized catalog is trimmed deterministically or refused explicitly, never quietly squeezing out protected instructions; all external bodies are untrusted material. Trace & Replay consumes only the structured facts recorded at the time and does not reconnect Servers, load Skills, or read Resources.
 
-## 4. 版本切片与实施任务
+## 4. Version Slices and Implementation Tasks
 
-### 4.1 `v0.43`：最小 stdio MCP Client（已实现）
+### 4.1 `v0.43`: Minimal stdio MCP Client (implemented)
 
-目标是独立跑通一次受限、本地、可关闭的 MCP 会话，而不是立即给 Agent 加工具。
+The goal is to run one restricted, local, closable MCP session independently, not to add tools to the Agent right away.
 
-1. 新增 MCP client / stdio transport，使用标准库启动单个明确配置的 Server，完成 JSON-RPC 请求 ID 管理、响应/通知区分、stderr 排空、超时和有界关闭。
-2. 固定 `2025-11-25`：按 `initialize → notifications/initialized → tools/list → tools/call` 运行，校验能力与版本；工具列表处理分页并冻结快照。
-3. 提供测试用最小本地 Server fixture，不引入 MCP SDK 作为运行时依赖；覆盖正常调用、服务端错误、`isError`、坏协议、错 ID、未响应、分页、提前退出和清理。
-4. 仅以测试/手动演示入口观察协议结果，不将 Tool 注册到父模型，也不为服务端调用开权限旁路。
+1. Add an MCP client / stdio transport that uses the standard library to start a single explicitly configured Server and handles JSON-RPC request ID management, response/notification distinction, stderr draining, timeouts, and bounded shutdown.
+2. Pin `2025-11-25`: run `initialize → notifications/initialized → tools/list → tools/call` in order and validate capabilities and version; the tool list handles pagination and freezes a snapshot.
+3. Provide a minimal local Server fixture for tests, with no MCP SDK as a runtime dependency; cover normal calls, server errors, `isError`, bad protocol, wrong IDs, no response, pagination, early exit, and cleanup.
+4. Observe protocol results only through a test/manual demo entry; do not register Tools for the parent model and do not open a permission bypass for server calls.
 
-验收已完成：本地 stdio Server 可以完成握手、列出所有分页工具、调用一次文本工具并可靠退出；不受支持版本与异常消息明确失败，且能力没有进入模型工具目录。
+Acceptance completed: a local stdio Server can complete the handshake, list all paged tools, call one text tool, and exit reliably; unsupported versions and abnormal messages fail explicitly, and the capability did not enter the model's tool catalog.
 
-### 4.2 `v0.44`：MCP Tool 接入 Agent Runtime（已实现）
+### 4.2 `v0.44`: MCP Tools connected to the Agent Runtime (implemented)
 
-目标是让外部 Tool 对 Agent 来说仍是普通 Tool，同时复用所有现有执行边界。实现已
-完成，核心落点是 `mcp/adapter.py`、`mcp/schema.py`、`tools/base.py`、
-`tools/__init__.py`、`permission.py` 与 CLI/恢复生命周期。
+The goal is that external Tools are still ordinary Tools to the Agent while reusing all existing execution boundaries. The implementation is
+complete; the core lands in `mcp/adapter.py`, `mcp/schema.py`, `tools/base.py`,
+`tools/__init__.py`, `permission.py`, and the CLI/recovery lifecycle.
 
-1. 在父 Registry 装配阶段接入已冻结的 MCP 目录；建立命名、原始身份映射、schema 子集校验和冲突拒绝。不给模型暴露未经验证的工具定义。
-2. 将 `tools/call` handler 经过 ToolExecutor、PermissionGate、Plan gate 和 Runtime；默认 `possible` / `ask`，精确本地配置才允许只读降级。区分协议错误、服务端 `isError`、超时和断连，并保持完整的 `role=tool` 回灌。
-3. 接入 CLI 生命周期与 schema 3 持久工具边界；连接与 PID 不写 session，恢复时重新装配，已准入调用不自动重放。外部结果的 State/Trace excerpt 默认只留有界、脱敏摘要，不复制大段远端正文。
-4. 覆盖权限拒绝、`exploring` gate、并列工具调用顺序、handler 前提交失败、远端已执行但结果提交失败、恢复交接、子代理不可见和进程清理；离线验收见 `tests/test_mcp_v044.py`。
+1. Connect the frozen MCP catalog during parent Registry assembly; establish naming, original identity mapping, schema subset validation, and conflict refusal. Do not expose unvalidated tool definitions to the model.
+2. Route the `tools/call` handler through the ToolExecutor, PermissionGate, Plan gate, and Runtime; default `possible` / `ask`, with read-only downgrade allowed only by exact local configuration. Distinguish protocol errors, server `isError`, timeouts, and disconnects, and keep `role=tool` feedback complete.
+3. Connect to the CLI lifecycle and the schema 3 durable tool boundary; connections and PIDs are not written to the session, reassembly happens on recovery, and admitted calls are not replayed automatically. State/Trace excerpts of external results keep only bounded, redacted summaries by default and do not copy large remote bodies.
+4. Cover permission denials, the `exploring` gate, the order of parallel tool calls, a commit failure before the handler, a remote call that ran but whose result commit failed, the recovery handoff, invisibility to subagents, and process cleanup; offline acceptance is in `tests/test_mcp_v044.py`.
 
-验收已完成：父模型可像使用 `read_file` 一样调用一个获准的 `mcp_<server>_<tool>`；拒绝或提交失败时远端没有收到调用；已发出而结果不确定的调用在崩溃恢复后不重放。
+Acceptance completed: the parent model can call an approved `mcp_<server>_<tool>` just like `read_file`; on denial or commit failure, the remote side receives no call; a call that was sent but whose result is uncertain is not replayed after crash recovery.
 
-### 4.3 `v0.45`：本地 Skills 的发现与按需加载（已实现）
+### 4.3 `v0.45`: Discovery and on-demand loading of local Skills (implemented)
 
-目标是让模型按元数据选择工作流，而不是把所有 Skill 正文塞进提示词。已按本节合同实现。
+The goal is to let the model choose workflows by metadata instead of stuffing all Skill bodies into the prompt. Implemented according to this section's contract.
 
-1. 新增项目级/全局 Skill catalog：固定目录、受限 frontmatter、确定性优先级、同名处理、文件身份和大小校验；只发布有界的 ID、名称、描述。
-2. 注册父侧 `skill(name)` 只读 Tool；加载前按 Skill ID 走 PermissionGate，拒绝项不展示，正文以普通 Tool 结果进入 history/Context。明确 Skill 的来源、信任等级和可裁剪行为。
-3. 覆盖同名覆盖、描述缺失、无效 frontmatter、符号链接逃逸、目录变化、读取竞态、超大正文、拒绝加载、session 恢复和子代理不可见。
-4. 用一个只指导现有 Tools / MCP Tools 的示例 Skill 演示“工作流指导不等于执行授权”，不让 Skill 自动执行脚本或跳过批准。
+1. Add a project-level/global Skill catalog: fixed directories, restricted frontmatter, deterministic priority, same-name handling, and file identity and size validation; publish only bounded IDs, names, and descriptions.
+2. Register the parent-side `skill(name)` read-only Tool; before loading, go through the PermissionGate by Skill ID, do not show denied items, and let the body enter history/Context as an ordinary Tool result. Make the Skill's source, trust level, and trimmable behavior explicit.
+3. Cover same-name overrides, missing descriptions, invalid frontmatter, symlink escape, directory changes, read races, oversized bodies, refused loading, session recovery, and invisibility to subagents.
+4. Use an example Skill that only guides existing Tools / MCP Tools to demonstrate "workflow guidance is not execution authorization", without letting the Skill run scripts automatically or skip approval.
 
-验收：模型在未加载时只见元数据；调用 `skill(name)` 后才见完整正文；Skill 中即使写有执行命令，后续副作用 Tool 仍独立请求权限，且 Skill 正文不能进入受保护 system 指令。
+Acceptance: before loading, the model sees only metadata; only after calling `skill(name)` does it see the full body; even if a Skill contains commands to run, later side-effect Tools still request permission independently, and the Skill body cannot enter the protected system instructions.
 
-### 4.4 `v0.46`：MCP 能力扩展与阶段收口（已实现）
+### 4.4 `v0.46`: MCP capability extension and stage wrap-up (implemented)
 
-目标是展示同一 MCP Client 在远程传输、资料和模板上的扩展，而不追求生产级远程 MCP 平台。
+The goal is to show the extension of the same MCP Client to remote transport, material, and templates, without pursuing a production-grade remote MCP platform.
 
-1. 增加显式配置的远程 HTTP transport，仅处理 `application/json` 响应；复用握手、请求配对、会话和 Tool adapter，SSE 响应明确报不支持。测试使用本地 HTTP fixture，不依赖公网服务。
-2. 增加有界文本 `resources/list` / `resources/read` 与 `prompts/list` / `prompts/get`；分别提供应用侧选择和用户侧选择入口，实施来源、内容类型、角色与权限校验，不注册为模型自主 Tool。
-3. 把 Skill 目录提示、MCP Tool 目录和显式 Resource/Prompt 内容纳入现有 Context 预算与安全提示；核查远程认证、session、Trace、恢复及不可信内容边界。
-4. 完成四课的协议范围说明和跨版本端到端示例；明确 JSON-only 远程子集、未实现能力及与 OpenCode/MCP 完整实现的差异。
+1. Add an explicitly configured remote HTTP transport that handles only `application/json` responses; reuse the handshake, request pairing, session, and Tool adapter, and report SSE responses explicitly as unsupported. Tests use a local HTTP fixture and depend on no public service.
+2. Add bounded text `resources/list` / `resources/read` and `prompts/list` / `prompts/get`; provide application-side and user-side selection entries respectively, enforce source, content type, role, and permission validation, and do not register them as autonomous model Tools.
+3. Bring Skill catalog hints, the MCP Tool catalog, and explicit Resource/Prompt content into the existing Context budget and safety notices; check remote authentication, session, Trace, recovery, and untrusted content boundaries.
+4. Complete the protocol scope notes and cross-version end-to-end examples of the four lessons; make explicit the JSON-only remote subset, unimplemented capabilities, and differences from OpenCode/full MCP implementations.
 
-验收：可连接一个返回 JSON 的受控远程测试 Server，使用其 Tool，并由用户/应用显式选取文本 Resource/Prompt；返回 SSE、不支持的内容或需要 OAuth 的 Server 给出明确能力边界，不自动 fallback 或重试副作用调用。
+Acceptance: can connect to a controlled remote test Server that returns JSON, use its Tools, and let the user/application explicitly choose text Resources/Prompts; Servers that return SSE, unsupported content, or require OAuth get explicit capability boundaries, with no automatic fallback or retry of side-effect calls.
 
-## 5. 文件与边界映射
+## 5. File and Boundary Mapping
 
-| 位置 | 预计变化 | 责任 |
+| Location | Expected change | Responsibility |
 |---|---|---|
-| `src/mini_agent/mcp/` | `v0.43`–`v0.46` 新增 | JSON-RPC、stdio/受限 HTTP transport、协议 client、分页目录快照与有界错误 |
-| `src/mini_agent/tools/` | `v0.44`–`v0.46` 增量 | MCP Tool adapter 与 `skill(name)`；Resource/Prompt 保持 CLI 入口并继续使用父 Runtime 边界 |
-| `src/mini_agent/skills.py` | `v0.45` 新增 | 本地发现、受限 frontmatter、优先级与安全读取 |
-| `src/mini_agent/permission.py` | 增量修改 | MCP server/tool 与 Skill ID 权限 pattern、脱敏提示 |
-| `src/mini_agent/context.py`、`prompt.py` | 增量修改 | 有界目录提示、低优先级 Skill/Resource/Prompt 材料、预算与信任说明 |
-| `src/mini_agent/__main__.py`、`config.py` | 增量修改 | 父 Runtime 装配、显式本地配置、CLI 内容入口与连接清理 |
-| `src/mini_agent/state.py`、`session.py`、`runtime.py` | 尽量不改协议 | 复用既有工具边界、完成判定与恢复；如必须改 schema，先证明旧会话兼容 |
-| `tests/`、`docs/tutorials/`、操作手册、`README.md`、`CHANGELOG.md` | 每版同步 | 协议 fixture、失效/安全验收、一版一个教学主线 |
+| `src/mini_agent/mcp/` | New in `v0.43`–`v0.46` | JSON-RPC, stdio/restricted HTTP transport, protocol client, paged catalog snapshots, and bounded errors |
+| `src/mini_agent/tools/` | Incremental in `v0.44`–`v0.46` | MCP Tool adapter and `skill(name)`; Resources/Prompts stay CLI entries and keep using the parent Runtime boundaries |
+| `src/mini_agent/skills.py` | New in `v0.45` | Local discovery, restricted frontmatter, priority, and safe reads |
+| `src/mini_agent/permission.py` | Incremental changes | MCP server/tool and Skill ID permission patterns, redacted prompts |
+| `src/mini_agent/context.py`, `prompt.py` | Incremental changes | Bounded catalog hints, low-priority Skill/Resource/Prompt material, budget and trust notes |
+| `src/mini_agent/__main__.py`, `config.py` | Incremental changes | Parent Runtime assembly, explicit local configuration, CLI content entries, and connection cleanup |
+| `src/mini_agent/state.py`, `session.py`, `runtime.py` | Avoid protocol changes | Reuse the existing tool boundary, completion decision, and recovery; if a schema change is required, first prove old sessions stay compatible |
+| `tests/`, `docs/tutorials/`, the operation manual, `README.md`, `CHANGELOG.md` | Synced per version | Protocol fixtures, failure/security acceptance, one teaching thread per version |
 
-## 6. 横向验收与交付
+## 6. Cross-Cutting Acceptance and Delivery
 
-- 每版均有不依赖外网的协议/行为测试；除成功路径外，覆盖错误 ID、异常输出、分页上限、超时、断连、命名冲突、schema 不支持、权限拒绝、版本不符和清理失败。
-- MCP Tool 的默认副作用等级、`handler_admitted` 提交、顺序回灌、恢复不重放、Plan 只读阶段与子代理白名单在整个阶段保持一致；任何外部结果都不能冒充 verification evidence。
-- Skill、Resource、Prompt 和 Server instructions 不得覆盖受保护指令或 PermissionGate；认证 header、真实 endpoint、PID、HTTP session ID 不进入 State、session、Trace 或用户可见错误。普通 tool history 中的 Skill/Resource 正文可能随 `/save` 保存，须明确披露并控制大小。
-- 默认安装与核心运行继续仅依赖标准库；LLM HTTP 仍使用 `http.client` 并显式设置 `Accept-Encoding: identity`，MCP HTTP 实现不改变该约束。
-- `v0.43`–`v0.46` 每版有独立教程、变更记录、操作手册说明和可复现验收场景；完成相应版本时同步 README、教程索引和版本信息。Git tag 仅由用户本人手动操作。
-- 修改实现后至少运行相关测试；交付前运行 `PYTHONPATH=src python -m pytest -q`、`PYTHONPATH=src python scripts/check_tutorials.py`、`PYTHONPATH=src python scripts/check_readme.py`，或说明无法运行的原因。
+- Each version has protocol/behavior tests that do not depend on the external network; besides the success path, cover wrong IDs, abnormal output, pagination limits, timeouts, disconnects, name conflicts, unsupported schemas, permission denials, version mismatches, and cleanup failures.
+- The default side-effect level of MCP Tools, the `handler_admitted` commit, ordered feedback, no replay on recovery, the read-only Plan phase, and the subagent allowlist stay consistent throughout the stage; no external result can pose as verification evidence.
+- Skills, Resources, Prompts, and Server instructions must not override protected instructions or the PermissionGate; auth headers, real endpoints, PIDs, and HTTP session IDs never enter State, session, Trace, or user-visible errors. Skill/Resource bodies in ordinary tool history may be saved with `/save`, which must be disclosed clearly and kept bounded in size.
+- The default install and core runtime still depend only on the standard library; LLM HTTP still uses `http.client` and sets `Accept-Encoding: identity` explicitly, and the MCP HTTP implementation does not change this constraint.
+- `v0.43`–`v0.46` each have their own tutorial, change record, operation manual notes, and reproducible acceptance scenarios; when completing each version, sync the README, the tutorial index, and the version information. Git tags are operated only manually by the user.
+- After changing the implementation, run at least the related tests; before delivery, run `PYTHONPATH=src python -m pytest -q`, `PYTHONPATH=src python scripts/check_tutorials.py`, and `PYTHONPATH=src python scripts/check_readme.py`, or state why they cannot run.
 
-v0.46 完成后，父 Agent 能使用经本地授权的 MCP Tool，并由主 CLI 按需选择远程文本 Resource 或经确认的 Prompt；MCP 与 Skills 都不改变谁有权执行、何时必须授权、什么事实可用于恢复和验证。
+After v0.46, the parent Agent can use locally authorized MCP Tools, and the main CLI can choose remote text Resources or confirmed Prompts on demand; neither MCP nor Skills changes who has the right to execute, when authorization is required, or which facts can be used for recovery and verification.

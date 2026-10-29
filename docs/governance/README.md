@@ -1,14 +1,14 @@
-# 治理文档（governance）
+# Governance Documents
 
-存放项目约束、编码规范、关键决策记录。
+This directory holds project constraints, coding rules, and key decision records.
 
-## 约束来源
-- `AGENTS.md` 保存直接影响运行时行为、安全和代码修改的硬约束。
-- 本目录保存详细规范、教程作者要求和决策记录；新增运行时硬约束时再同步回 `AGENTS.md`。
+## Sources of Constraints
+- `AGENTS.md` holds hard constraints that directly affect runtime behavior, safety, and code changes.
+- This directory holds detailed rules, tutorial author requirements, and decision records; when a new runtime hard constraint is added, sync it back to `AGENTS.md`.
 
-## 文档约定
-- 文件名用小写 + 连字符，如 `http-client-constraint.md`。
-- 每篇文档开头写明：约束内容、原因、违反后果。
-- [教程作者规范](tutorial-authoring.md) 规定版本课程的内容结构与验收要求。
-- [主 README 编写规范](readme-authoring.md) 规定中文命名、章节职责和同步要求。
-- [依赖政策](dependency-policy.md) 区分核心标准库流程与可选用户体验依赖。
+## Document Conventions
+- File names use lowercase with hyphens, for example `http-client-constraint.md`.
+- Each document starts with: the constraint, the reason, and the consequence of a violation.
+- [Tutorial authoring rules](tutorial-authoring.md) define the content structure and acceptance requirements for version lessons.
+- [Main README authoring rules](readme-authoring.md) define English naming, section roles, and sync requirements.
+- [Dependency policy](dependency-policy.md) separates core standard-library flows from optional user-experience dependencies.

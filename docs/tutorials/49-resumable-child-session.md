@@ -1,35 +1,35 @@
-# 第 49 课：恢复并继续子会话
+# Lesson 49: Resuming and continuing child sessions
 
-上一课：[让子代理在后台调查](48-background-subagents.md) · [教程总览](README.md) · 下一阶段：评估与回归
+Previous: [Letting subagents investigate in the background](48-background-subagents.md) · [Tutorial overview](README.md) · Next stage: evaluation and regression
 
-代码快照：`v0.49` · 相邻差异：`v0.48..v0.49`
+Code snapshot: `v0.49` · Adjacent diff: `v0.48..v0.49`
 
-本课命令使用 Bash/zsh；源码链接和示例都对应 `v0.49` 快照。
+The commands in this lesson use Bash/zsh; source links and examples all correspond to the `v0.49` snapshot.
 
-## 本课目标
+## Lesson Goals
 
-第 48 课给每个后台调查一个 `child_session_id`。这个编号能让父 Agent 在当前程序里找到子任务，但它本身不包含子代理已经读过的对话。程序退出后，线程和内存中的对话都会消失；只保存编号仍无法继续调查。
+Lesson 48 gives every background investigation a `child_session_id`. This number lets the parent Agent find the child task within the current program, but it does not by itself contain the conversation the subagent has already read. After the program exits, the threads and in-memory conversations are gone; saving only the number is not enough to continue the investigation.
 
-本课允许父 Agent 在结果已完成并领取后保存子代理自己的对话快照。之后重启程序并恢复父会话，父 Agent 可以用原来的编号继续追问同一个子代理。
+This lesson lets the parent Agent save the subagent's own conversation snapshot after a result is finished and collected. Later, after restarting the program and resuming the parent session, the parent Agent can use the original number to ask the same subagent follow-up questions.
 
-先区分两个编号：
+First tell two numbers apart:
 
-- 父会话的 `session_id` 用来恢复用户的整个任务。
-- 子会话的 `child_session_id` 用来继续其中一项独立调查。
+- The parent session's `session_id` is used to resume the user's whole task.
+- The child session's `child_session_id` is used to continue one independent investigation within it.
 
-读完后，你应能说明什么条件下子会话可以保存、恢复后哪些内容会沿用，以及为什么每轮追问都要重新说明调查范围。
+After reading, you should be able to explain under what conditions a child session can be saved, what carries over after resuming, and why every follow-up must restate the investigation scope.
 
-## 上一版的问题
+## Problems in the Previous Version
 
-v0.48 只在当前命令行进程中保存活动的子代理对象和对话。父会话可以记录某次调查已领取，却没有足够资料让另一个进程恢复该调查。
+v0.48 keeps the active subagent objects and conversations only within the current command-line process. The parent session can record that an investigation was collected, but it does not have enough information for another process to resume that investigation.
 
-另一个难点是保持资料一致：父会话写入了“结果已领取”，但子对话仍留在内存里时，程序退出会让两边记录不匹配。本版把父会话和已完成子会话的快照一起保存，并且只允许保存空闲、已领取的子会话。
+Another difficulty is keeping the records consistent: if the parent session has written "the result was collected" while the child conversation is still only in memory, a program exit leaves the two records mismatched. This version saves the parent session and the snapshots of finished child sessions together, and allows saving only idle, collected child sessions.
 
-## 前置条件与版本切换
+## Prerequisites and Version Checkout
 
-建议先读第 47 课，了解角色和 Skill 授权，再读第 48 课，了解后台启动、结果领取与父侧保存边界。Skill 是 Agent 可按需读取的本地操作说明。
+Read Lesson 47 first to learn about roles and Skill authorization, then Lesson 48 to learn about background starts, result collection, and the parent-side save boundary. A Skill is a local operating instruction the Agent can read on demand.
 
-检查版本变化后切到本课快照：
+Check the version changes, then switch to this lesson's snapshot:
 
 ```bash
 git checkout v0.48
@@ -38,63 +38,63 @@ git diff v0.48..v0.49 -- src/mini_agent/delegation.py src/mini_agent/session.py 
 git checkout v0.49
 ```
 
-读完后用 `git checkout -` 返回切换前的分支。
+After reading, use `git checkout -` to return to the branch you were on before switching.
 
-## 新增与改动文件
+## New and Changed Files
 
-| 文件 | 变化 | 读者可从这里看到什么 |
+| File | Change | What you can see here |
 |---|---|---|
-| [tools/delegation.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.49/src/mini_agent/tools/delegation.py) | 修改 | 新工具 `followup_subagent` 的参数合同。 |
-| [delegation.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.49/src/mini_agent/delegation.py) | 修改 | 怎样恢复子对话、开始新一轮并生成快照。 |
-| [state.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.49/src/mini_agent/state.py) | 修改 | 如何分别记录每轮报告、领取情况和累计用量。 |
-| [agent.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.49/src/mini_agent/agent.py) 与 [runtime.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.49/src/mini_agent/runtime.py) | 修改 | 初次启动与继续调查怎样遵守同一整轮提交规则。 |
-| [session.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.49/src/mini_agent/session.py) | 修改 | schema 4 怎样把父会话与空闲子快照一起保存和检查。 |
-| [resume.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.49/src/mini_agent/resume.py) | 修改 | 重启时怎样重建本地配置并判断哪些子会话还能继续。 |
+| [tools/delegation.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.49/src/mini_agent/tools/delegation.py) | Changed | The argument contract of the new `followup_subagent` tool. |
+| [delegation.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.49/src/mini_agent/delegation.py) | Changed | How a child conversation is restored, a new round started, and a snapshot produced. |
+| [state.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.49/src/mini_agent/state.py) | Changed | How each round's report, collection status, and cumulative usage are recorded separately. |
+| [agent.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.49/src/mini_agent/agent.py) and [runtime.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.49/src/mini_agent/runtime.py) | Changed | How the initial start and continued investigation follow the same whole-round commit rule. |
+| [session.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.49/src/mini_agent/session.py) | Changed | How schema 4 saves and checks the parent session together with idle child snapshots. |
+| [resume.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.49/src/mini_agent/resume.py) | Changed | How local configuration is rebuilt on restart, and how it is decided which child sessions can still continue. |
 
-这里的 `schema 4` 是 v0.49 使用的会话文件格式版本。与 v0.48 相比，变化不仅是增加一个追问工具，还包括保存格式和恢复过程。
+`schema 4` here is the session file format version v0.49 uses. Compared with v0.48, the change is not just one more follow-up tool; it also includes the save format and the recovery process.
 
-## 版本变更定位
+## Version Change Map
 
-v0.48 的父 Agent 能在一个进程内启动子代理、收到结果并领取报告；父安全保存点不会带上子代理的完整对话。State 是父任务当前事实与进度的结构化记录；Context 是一次模型请求会看到的对话和资料：
+The parent Agent of v0.48 can start a subagent within one process, receive the result, and collect the report; the parent safe point does not include the subagent's full conversation. State is the structured record of the parent task's current facts and progress; the Context is the conversation and material one model request sees:
 
 ```text
-[旧] 父 Agent
-  → spawn_subagent → 保存启动回执 → 启动子代理
-  → 父线程收到完成结果 → get_subagent_result 领取
-  → [B] 进程结束后：子对话和运行线程不恢复
+[old] parent Agent
+  → spawn_subagent → save the start receipt → start the subagent
+  → the parent thread receives the finished result → collect with get_subagent_result
+  → [B] after the process ends: the child conversation and running threads are not restored
 ```
 
-v0.49 允许已领取的子会话继续一轮，并把空闲子会话快照与父会话原子保存。这里的子 Context 就是子代理自己的对话视图。
+v0.49 lets a collected child session continue for another round and saves idle child session snapshots atomically together with the parent session. The child Context here is the subagent's own conversation view.
 
 ```text
-[旧] 父 Agent 与后台子代理
+[old] parent Agent and background subagents
   → [~] spawn_subagent / [+] followup_subagent
-  → 父线程按顺序提交启动回执
-  → 整轮保存成功 → 后台任务管理器启动子任务
-  → 子 Context 继续调查 → 本轮结果
-  → 领取结果 → 子快照变为空闲，可保存
-  → [C] 一次保存父 State / Context 与空闲子快照
-  → [C] 恢复时重建当前角色、模型、Skill 配置
-  → [B] 配置身份不匹配：报告该子会话不能续接
+  → the parent thread commits start receipts in order
+  → whole round saved → the background task manager starts the child task
+  → the child Context continues the investigation → this round's result
+  → result collected → the child snapshot becomes idle and can be saved
+  → [C] save the parent State / Context and idle child snapshots at once
+  → [C] on recovery, rebuild the current role, model, and Skill configuration
+  → [B] configuration identity mismatch: report that the child session cannot continue
 ```
 
-图例：`[旧]` 为 v0.48 已有，`[+]` 为 v0.49 新增，`[~]` 为修改，`[C]` 为主要校验或使用方，`[B]` 为本版边界。箭头表示调用、控制或数据流。只要一轮还没完成并领取，子快照就不能作为空闲状态保存。
+Legend: `[old]` already in v0.48, `[+]` new in v0.49, `[~]` changed, `[C]` main validator or user, `[B]` boundary of this version. Arrows show calls, control, or data flow. As long as a round has not finished and been collected, the child snapshot cannot be saved as idle.
 
-## 核心概念与数据结构
+## Core Concepts and Data Structures
 
-### 1. 每次追问都提交一份新调查合同
+### 1. Every follow-up submits a new investigation contract
 
-`followup_subagent` 中的 followup 意为“继续上一轮调查”。它使用原来的 `child_session_id`，并要求调用者重新写明这轮要做什么、可查看哪些文件、应交付什么发现，以及申请哪些只读工具。委派合同就是这组目标、范围、限制和工具申请。例如：
+The "followup" in `followup_subagent` means "continue the previous round's investigation". It uses the original `child_session_id` and requires the caller to restate what this round should do, which files may be viewed, what findings should be delivered, and which read-only tools are requested. The delegation contract is this set of goals, scope, constraints, and tool requests. For example:
 
 ```json
 {
-  "child_session_id": "<上一轮的子会话编号>",
-  "goal": "检查配置加载是否也需要恢复适配",
+  "child_session_id": "<the child session ID from the previous round>",
+  "goal": "Check whether configuration loading also needs recovery adaptation",
   "scope": ["src/mini_agent"],
-  "constraints": ["只读调查，不修改文件"],
-  "expected_findings": ["指出相关入口和调用关系"],
+  "constraints": ["Read-only investigation; do not change files"],
+  "expected_findings": ["Point out the relevant entries and call relationships"],
   "requested_tools": ["read_file", "grep"],
-  "selected_parent_facts": ["父任务正在整理恢复流程"],
+  "selected_parent_facts": ["The parent task is reorganizing the recovery flow"],
   "purpose": "investigation",
   "budget": {
     "max_rounds": 2,
@@ -106,15 +106,15 @@ v0.49 允许已领取的子会话继续一轮，并把空闲子会话快照与�
 }
 ```
 
-示例里的尖括号文字是说明占位符，实际调用时要换成上一轮返回的子会话编号。`selected_parent_facts` 用来明确告诉子代理哪些父任务背景与本轮有关。子代理不是自动接收父 Agent 的全部新对话，所以新合同要把本轮真正需要的背景说清楚。角色和模型沿用原设置，调用者不能趁追问时换成权限更大的角色或模型。每次需要读取角色配置中的 Skill 时，父侧都要重新检查该 Skill 的授权。
+The text in angle brackets in the example is a placeholder; in a real call, replace it with the child session ID returned by the previous round. `selected_parent_facts` tells the subagent explicitly which parent task background is relevant to this round. The subagent does not automatically receive all of the parent Agent's new conversation, so the new contract must state clearly the background this round really needs. The role and model keep their original settings; the caller cannot use a follow-up to switch to a role or model with more permissions. Each time a Skill from the role configuration needs to be read, the parent side checks that Skill's authorization again.
 
-在发出子模型请求前，运行时会确认：这是当前父任务和工作区的子会话；上一轮已完成且已领取；角色、模型和 Skill 身份仍匹配；本轮合同没有越权；累计预算还有余量。未收束、未领取或身份不匹配的子会话不能继续。
+Before sending the child model request, the runtime confirms: this is a child session of the current parent task and workspace; the previous round finished and was collected; the role, model, and Skill identities still match; this round's contract does not overstep; and the cumulative budget still has room. Child sessions that have not finished, have not been collected, or whose identities do not match cannot continue.
 
-### 2. 对话快照保存历史，预算仍然累计
+### 2. The conversation snapshot saves history; the budget still accumulates
 
-Child Session Snapshot（子会话快照）是父会话文件里一份有界的子代理检查点。它包含子代理对话、角色和模型来源摘要、Skill 文件身份、最近领取结果的编号与摘要、轮次和累计用量等信息。它不包含 Python 工作线程，也不是一个能继续运行的后台进程。
+A Child Session Snapshot is a bounded subagent checkpoint inside the parent session file. It contains the subagent conversation, summaries of the role and model sources, Skill file identities, the ID and digest of the most recently collected result, the round count, cumulative usage, and so on. It contains no Python worker thread and is not a background process that can keep running.
 
-下面摘出快照中几个关键字段；完整结构还会记录工作区、模型和 Skill 的身份摘要：
+Below are a few key fields of the snapshot; the full structure also records identity summaries of the workspace, model, and Skills:
 
 ```python
 @dataclass(frozen=True)
@@ -127,103 +127,103 @@ class ChildSessionSnapshot:
     context: dict[str, Any]
 ```
 
-这些字段说明快照保存的是“哪个子会话、做到第几轮、上一份报告是什么、对话和用量到哪里”，而不是正在运行的线程。
+These fields show that the snapshot saves "which child session, which round it reached, what the previous report was, and how far the conversation and usage got", not a running thread.
 
-恢复时，子代理可以基于原来的对话继续；但每次追问会重新建立本轮预算。累计上限仍包含之前各轮，不能通过保存和重启清零：
+On recovery, the subagent can continue from the original conversation; but every follow-up sets up a new budget for that round. The cumulative limits still include the earlier rounds and cannot be reset by saving and restarting:
 
-| 整个子会话的累计上限 | 含义 |
+| Cumulative limit for the whole child session | Meaning |
 |---|---|
-| 4 轮 | 包含最初的调查 |
-| 16 次模型调用 | 所有轮次合计 |
-| 48 次工具调用 | 只计算允许使用的子代理只读工具 |
-| 64,000 tokens（模型处理文本的计量单位） | 所有轮次合计 |
-| 240 秒 | 所有轮次已用时间与本轮预留一起检查 |
+| 4 rounds | Including the initial investigation |
+| 16 model calls | Total across all rounds |
+| 48 tool calls | Counting only the allowed subagent read-only tools |
+| 64,000 tokens (the unit models use to measure text) | Total across all rounds |
+| 240 seconds | Time already used across rounds is checked together with this round's reservation |
 
-每轮有独立的委派结果和报告编号，所以领取新报告不会覆盖旧报告；重复领取同一轮也不会重复结算。父任务自己的总预算与并发限制仍然生效。继续旧子会话不会占用一个新的子代理名额。
+Each round has its own delegation result and report ID, so collecting a new report does not overwrite an old one; collecting the same round again does not settle it twice. The parent task's own total budget and concurrency limits still apply. Continuing an old child session does not use a new subagent slot.
 
-### 3. 父会话与空闲子快照一起保存
+### 3. The parent session and idle child snapshots are saved together
 
-用户必须先通过 `/save` 开启持久化。只有子代理已经完成、父 Agent 也已经领取结果后，系统才会把该轮快照标记为空闲。活动中的线程和待领取报告都不能作为可恢复快照保存。
+The user must first turn on persistence with `/save`. Only after the subagent has finished and the parent Agent has collected the result does the system mark that round's snapshot as idle. Active threads and reports awaiting collection cannot be saved as resumable snapshots.
 
-负责写会话文件的保存模块，会把父任务状态、对话、当前工具回合的提交记录和空闲子快照放进同一个 schema 4 会话文件，再通过一次原子替换提交。原子替换意味着恢复时看到的是完整旧文件或完整新文件，不会只更新父会话而漏掉子快照。
+The save module that writes the session file puts the parent task state, the conversation, the commit record of the current tool round, and the idle child snapshots into the same schema 4 session file, then commits it with one atomic replacement. Atomic replacement means that on recovery you see either the complete old file or the complete new file, never an updated parent session with a missing child snapshot.
 
-保存模块先写完临时文件并确认写入，再调用标准库的文件替换操作：
+The save module first finishes writing a temporary file and confirms the write, then calls the standard library's file replace operation:
 
 ```python
 os.replace(temporary, target)
 ```
 
-这一步让新文件整体替代旧文件；它不会先删掉旧会话，再逐段复制新内容。
+This step replaces the old file with the new one as a whole; it does not delete the old session first and then copy the new content piece by piece.
 
-每个父会话最多保存 3 个子快照；每个快照最多 256 KiB，总计最多 720 KiB。快照过大或校验失败时不会为了凑大小而截断对话或身份。单个子快照不能生成时，调查报告仍可领取并结算，但该子会话无法继续追问；总体快照超限时，保存会指出相关子会话 ID。
+Each parent session saves at most 3 child snapshots; each snapshot is at most 256 KiB, with a total of at most 720 KiB. When a snapshot is too large or fails validation, the conversation or identity is never truncated to make it fit. When a single child snapshot cannot be produced, the investigation report can still be collected and settled, but that child session cannot take follow-up questions; when the snapshots exceed the total limit, saving names the child session IDs involved.
 
-恢复时，程序会检查子快照是否与父记录中的领取结果、轮次和累计用量一致，然后从当前本地配置重新装配角色、模型和 Skill 目录。若角色、模型或 Skill 文件身份已经变化，该子会话会标为不能续接；系统不会偷偷切换到另一个模型。旧 schema 1/2/3 父会话仍可读取，但本来没有子快照，不能凭空恢复旧子对话。
+On recovery, the program checks that the child snapshot agrees with the collected result, round count, and cumulative usage in the parent record, then reassembles the role, model, and Skill catalog from the current local configuration. If the role, model, or Skill file identity has changed, that child session is marked as unable to continue; the system does not quietly switch to another model. Old schema 1/2/3 parent sessions can still be read, but they never had child snapshots, so old child conversations cannot be restored out of nothing.
 
-### 4. 用原子保存和恢复命令走完一次续接
+### 4. One continuation with atomic saving and the resume command
 
-一条完整路径如下：
+A complete path:
 
 ```text
-1. 启动后台子代理
-2. 等待收束，并调用 get_subagent_result 领取报告
-3. 在命令行界面输入 /save，按提示记录父 session_id
-4. 退出程序
-5. 使用 --resume 恢复父会话
-6. 让父 Agent 用原 child_session_id 调用 followup_subagent
+1. Start a background subagent
+2. Wait for it to finish, and collect the report with get_subagent_result
+3. Enter /save in the command-line interface and note the parent session_id as prompted
+4. Exit the program
+5. Resume the parent session with --resume
+6. Have the parent Agent call followup_subagent with the original child_session_id
 ```
 
-恢复父会话的命令使用 Bash/zsh：
+The command to resume the parent session uses Bash/zsh:
 
 ```bash
 PYTHONPATH=src python -m mini_agent --resume <session_id>
 ```
 
-这里的 `<session_id>` 是 `/save` 后命令行界面提供的父会话编号，不是子代理编号。恢复后，父 Agent 可以选用原来的 `child_session_id` 继续调查。若程序退出前子代理仍在运行，或报告尚未领取，保存和恢复都不会把它当作可续接的子会话。
+`<session_id>` here is the parent session ID the command-line interface gives after `/save`, not the subagent ID. After resuming, the parent Agent can choose the original `child_session_id` to continue the investigation. If the subagent was still running before the program exited, or the report had not been collected, neither saving nor resuming treats it as a continuable child session.
 
-## 为什么这样设计
+## Why This Design
 
-只存编号无法还原子代理读过的对话；无限保存所有内容又会让会话文件和恢复校验没有上限。因此，本版只保存已成功完成、已领取的有限对话，并与父会话一起写入。
+Saving only an ID cannot restore the conversation the subagent read; saving everything without limit would leave the session file and recovery validation unbounded. So this version saves only bounded conversations that finished successfully and were collected, and writes them together with the parent session.
 
-每轮重新提交合同，让新的目标和文件范围都能在续接点重新检查。角色、模型保持不变，Skill 权限重新获得确认；累计预算则跨轮保留。这样恢复提供的是同一受限调查的继续，而不是一份不受约束的新任务。
+Submitting a contract again every round lets the new goal and file scope be rechecked at the continuation point. The role and model stay the same, Skill permissions are reconfirmed, and the cumulative budget is kept across rounds. This way recovery provides the continuation of the same restricted investigation, not an unconstrained new task.
 
-## 设计边界
+## Design Boundaries
 
-只有成功完成并已领取的报告可以续接。失败、超时、取消、中断、运行中和待领取状态都不行。子会话也不能转移到另一父任务或工作区，不能更换角色、模型或继承旧权限。
+Only reports that finished successfully and were collected can be continued. Failed, timed-out, cancelled, interrupted, running, and awaiting-collection states cannot. A child session also cannot move to another parent task or workspace, change its role or model, or inherit old permissions.
 
-父 State 和 Trace（供只读回放使用的事件记录）只保存子会话身份、结果摘要、轮次与用量等结构化资料；子对话正文存放在会话快照中。开启持久化后，这些内容会保存在本地 session 文件里，应按普通会话资料保护。
+The parent State and Trace (event records for read-only replay) save only structured information such as the child session identity, the result summary, the round count, and usage; the child conversation body is stored in the session snapshot. With persistence on, this content is saved in the local session file and should be protected like ordinary session material.
 
-## 关键流程
+## Key Flow
 
 ```text
-followup_subagent(child_session_id, 新合同)
-  → 确认子会话属于当前父任务
-  → 确认上一轮已完成并领取
-  → 检查角色、模型、Skill、工具范围与累计预算
-  → 顺序提交启动回执和工具结果
-  → 整轮保存成功后，恢复子 Context 并运行新一轮
-  → 父线程收集、结算；父 Agent 领取新报告
-  → 更新空闲子快照
-  → /save 将父会话与空闲快照原子写入
+followup_subagent(child_session_id, new contract)
+  → confirm the child session belongs to the current parent task
+  → confirm the previous round finished and was collected
+  → check the role, model, Skills, tool scope, and cumulative budget
+  → commit the start receipt and tool results in order
+  → after the whole round is saved, restore the child Context and run a new round
+  → the parent thread collects and settles; the parent Agent collects the new report
+  → update the idle child snapshot
+  → /save atomically writes the parent session and idle snapshots
 
-不符合条件 → 在子模型请求前拒绝继续
+conditions not met → continuation refused before the child model request
 ```
 
-## 运行与观察
+## Run and Observe
 
-准备本地模型配置后，可在父任务中要求先做一次调查、领取报告，再要求保存并续接。关键观察点是：第一次与后续追问会用同一个 `child_session_id`；新一轮仍需明确目标和范围；没有领取报告时，命令行界面不会把子会话当作可保存的空闲快照。
+After preparing local model configuration, ask the parent task to do one investigation and collect the report, then to save and continue. The key observations: the first round and later follow-ups use the same `child_session_id`; each new round still needs an explicit goal and scope; without a collected report, the command-line interface does not treat the child session as a savable idle snapshot.
 
-父会话恢复后，观察父 Agent 是否能根据原子文件中的子快照发起 `followup_subagent`。如果本地角色、模型或 Skill 身份与保存时不同，系统会说明对应子会话不能继续，而不会把它静默切换成其他身份。
+After the parent session is resumed, observe whether the parent Agent can issue `followup_subagent` based on the child snapshot in the atomic file. If the local role, model, or Skill identity differs from when it was saved, the system states that the matching child session cannot continue, instead of quietly switching it to another identity.
 
-## 实现拆解
+## Implementation Breakdown
 
-`followup_subagent` 通过父侧工具、权限和阶段检查，再交给后台任务管理器准备合同。它复用同一套子 Agent 运行循环；差别是先从快照恢复该子代理自己的 Context，再把新合同作为这一轮的新任务输入。
+`followup_subagent` passes the parent-side tool, permission, and phase checks, then hands the contract to the background task manager to prepare. It reuses the same child Agent run loop; the difference is that it first restores this subagent's own Context from the snapshot, then uses the new contract as this round's new task input.
 
-结果由父线程收集和结算。只有结果领取完成后，后台管理器才会提供可保存的空闲快照。`session.py` 将快照和父会话放进同一次提交；`resume.py` 恢复时重新读取当前本地配置并比对身份。线程句柄、运行中的任务和旧权限批准都不会从文件中复活。
+Results are collected and settled by the parent thread. Only after a result is collected does the background manager provide a savable idle snapshot. `session.py` puts snapshots and the parent session into the same commit; `resume.py` rereads the current local configuration on recovery and compares identities. Thread handles, running tasks, and old permission approvals are never revived from the file.
 
-## 本版特性、下一课与代码索引
+## Version Features, Next Lesson, and Code Index
 
-v0.49 为已完成且已领取的后台调查增加可恢复的子对话快照，并增加 `followup_subagent`。父会话与空闲快照一起原子保存；累计预算、角色和模型边界跨轮保留。
+v0.49 adds resumable child conversation snapshots for background investigations that finished and were collected, and adds `followup_subagent`. The parent session and idle snapshots are saved atomically together; the cumulative budget and the role and model boundaries are kept across rounds.
 
-第 49 课完成了后台子会话的续接链路。下一阶段转向 Evaluation & Regression，即评估现有功能的效果、成本和可靠性。
+Lesson 49 completes the continuation chain for background child sessions. The next stage turns to Evaluation & Regression, that is, evaluating the effect, cost, and reliability of existing features.
 
-固定在 v0.49 的代码索引：[追问工具合同](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.49/src/mini_agent/tools/delegation.py)、[子代理运行循环与快照管理](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.49/src/mini_agent/delegation.py)、[父任务生命周期和累计预算](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.49/src/mini_agent/state.py)、[schema 4 保存与校验](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.49/src/mini_agent/session.py)、[恢复时的身份检查](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.49/src/mini_agent/resume.py)。
+Code index pinned at v0.49: [follow-up tool contract](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.49/src/mini_agent/tools/delegation.py), [subagent run loop and snapshot management](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.49/src/mini_agent/delegation.py), [parent task lifecycle and cumulative budget](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.49/src/mini_agent/state.py), [schema 4 saving and validation](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.49/src/mini_agent/session.py), [identity checks on recovery](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.49/src/mini_agent/resume.py).

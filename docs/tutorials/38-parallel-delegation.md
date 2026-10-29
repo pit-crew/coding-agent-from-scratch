@@ -1,31 +1,31 @@
-# 第 38 课：让多个只读子代理有界并行
+# Lesson 38: Bounded parallel read-only subagents
 
-上一课：[给子代理加上生命周期和总预算](37-subagent-lifecycle-budget.md) · [教程总览](README.md) · 下一课：[持久委派交付](39-durable-delegation.md)
+Previous: [Adding lifecycles and a total budget to subagents](37-subagent-lifecycle-budget.md) · [Tutorial overview](README.md) · Next: [Durable delegation delivery](39-durable-delegation.md)
 
-> 代码快照：`v0.38` · 相邻差异：`v0.37..v0.38` · 命令环境：Bash/zsh
+> Code snapshot: `v0.38` · Adjacent diff: `v0.37..v0.38` · Shell: Bash/zsh
 
-> 运行要求：Python 3.10+。本课只并行调度只读子代理，不改变父 Agent 的修改、权限和验证边界。
+> Requirements: Python 3.10+. This lesson only schedules read-only subagents in parallel; it does not change the parent Agent's boundaries for changes, permissions, and verification.
 
-## 本课目标
+## Lesson Goals
 
-第 37 课可以记录预算和取消，但同一时间只能运行一个子代理。如果三个调查彼此独立，父任务就必须先等 A 完成，再等 B，再等 C。
+Lesson 37 can record budgets and cancellation, but only one subagent can run at a time. If three investigations are independent of each other, the parent task has to wait for A to finish, then B, then C.
 
-本课允许父模型在一个 assistant 回合中提出多个 `delegate_task`。Scheduler（调度器）最多同时启动配置允许数量的子代理；它们可以乱序完成，但父模型最终仍按 A、B、C 的原始调用顺序收到工具结果。读完后，你应能解释：
+This lesson lets the parent model propose several `delegate_task` calls in one assistant round. The Scheduler starts at most the configured number of subagents at the same time; they can finish out of order, but the parent model still receives the tool results in the original call order A, B, C. After reading, you should be able to explain:
 
-- 为什么只有“纯委派回合”才允许走并行路径；
-- 为什么预算额度和运行槽位是两种不同的限制；
-- 为什么 B 先完成，也不能越过 A 先写入父 Context；
-- 为什么并行 worker 不能直接修改父 State。
+- Why only a "pure delegation round" may take the parallel path;
+- Why budget quota and run slots are two different limits;
+- Why even if B finishes first, it cannot be written into the parent Context ahead of A;
+- Why parallel workers cannot change the parent State directly.
 
-## 上一版的问题
+## Problems in the Previous Version
 
-v0.37 的 `max_concurrency` 固定为 1。它保护了生命周期和账本，却把互不依赖的调查强制排成一列，等待时间接近所有子任务耗时之和。
+In v0.37, `max_concurrency` is fixed at 1. It protects the lifecycle and the ledger, but it forces independent investigations into a single line, so the waiting time is close to the sum of all child task durations.
 
-本版只改变“何时运行子代理”，不改变“谁拥有任务”。父 Agent 仍独占工作区修改、权限请求、主计划、generation、权威验证和完成判定；子代理仍是 depth=1 的只读实例。
+This version changes only "when subagents run", not "who owns the task". The parent Agent still exclusively owns workspace changes, permission requests, the main plan, the generation, authoritative verification, and the completion decision; subagents are still depth=1 read-only instances.
 
-## 前置条件与版本切换
+## Prerequisites and Version Checkout
 
-需要第 37 课、基础 Python、Bash/zsh 和 Git 知识。先看相邻差异，再进入本课快照：
+You need Lesson 37, basic Python, Bash/zsh, and Git. First look at the adjacent diff, then enter this lesson's snapshot:
 
 ```bash
 git checkout v0.37
@@ -34,63 +34,63 @@ git diff v0.37..v0.38 -- src/mini_agent/delegation.py src/mini_agent/runtime.py 
 git checkout v0.38
 ```
 
-## 新增与改动文件
+## New and Changed Files
 
-本版沿着“批量准入 → 有界执行 → 按序交付”展开：
+This version unfolds along "batch admission → bounded execution → ordered delivery":
 
-| 文件 | 作用 |
+| File | Purpose |
 |---|---|
-| [`src/mini_agent/delegation.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.38/src/mini_agent/delegation.py) | 定义 `DelegationScheduler`、批量合同冻结、槽位调度和取消。 |
-| [`src/mini_agent/runtime.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.38/src/mini_agent/runtime.py) | 识别纯委派回合、收集结果并按 index 提交。 |
-| [`src/mini_agent/state.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.38/src/mini_agent/state.py) | 在锁内批量预留预算并结算实际 usage。 |
-| [`src/mini_agent/agent.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.38/src/mini_agent/agent.py) | 允许多个委派同轮出现，拒绝与其他工具混用。 |
-| [`src/mini_agent/tools/base.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.38/src/mini_agent/tools/base.py) | 让已准入的委派结果沿用统一工具结果边界。 |
+| [`src/mini_agent/delegation.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.38/src/mini_agent/delegation.py) | Defines `DelegationScheduler`, batch contract freezing, slot scheduling, and cancellation. |
+| [`src/mini_agent/runtime.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.38/src/mini_agent/runtime.py) | Recognizes pure delegation rounds, collects results, and commits them by index. |
+| [`src/mini_agent/state.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.38/src/mini_agent/state.py) | Reserves budget in batch and settles actual usage inside the lock. |
+| [`src/mini_agent/agent.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.38/src/mini_agent/agent.py) | Allows several delegations in the same round and rejects mixing them with other tools. |
+| [`src/mini_agent/tools/base.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.38/src/mini_agent/tools/base.py) | Lets admitted delegation results follow the unified tool result boundary. |
 
-## 版本变更定位
+## Version Change Map
 
-图例：`[旧]` v0.37 已有，`[+]` v0.38 新增，`[~]` v0.38 修改，`[C]` 主要消费者，`[B]` 本课边界。
+Legend: `[old]` already in v0.37, `[+]` new in v0.38, `[~]` changed in v0.38, `[C]` main consumer, `[B]` boundary of this lesson.
 
-v0.37 只有一个运行槽位：
+v0.37 has only one run slot:
 
 ```text
-[旧][C] 父 assistant: delegate_task A
-      -> [旧] 单任务 Manager
-      -> [旧] SubagentRunner A
-      -> [旧] 父 role=tool A
-      -> [旧] 下一次父 LLM
+[old][C] parent assistant: delegate_task A
+      -> [old] single-task Manager
+      -> [old] SubagentRunner A
+      -> [old] parent role=tool A
+      -> [old] next parent LLM request
       [B] max_concurrency=1
 ```
 
-v0.38 为一个纯委派回合增加批量调度：
+v0.38 adds batch scheduling for a pure delegation round:
 
 ```text
-[C] 父 assistant: delegate_task A, B, C
-      -> [~] 逐项准入
-      -> [~] State 锁内批量预留额度
+[C] parent assistant: delegate_task A, B, C
+      -> [~] admission one by one
+      -> [~] batch quota reservation inside the State lock
       -> [+] Scheduler(max_concurrency=2)
-           ├─ A worker 运行
-           ├─ B worker 运行 -> 完成
-           └─ 释放槽位 -> 启动 C worker
-      -> [+] 结果缓冲：B、C 可以先完成
-      -> [~] 父线程等待连续的 A，再按 A、B、C 提交
-      -> [C] 下一次父 LLM
+           ├─ A worker runs
+           ├─ B worker runs -> finishes
+           └─ slot released -> start C worker
+      -> [+] result buffer: B and C can finish first
+      -> [~] the parent thread waits for the contiguous A, then commits A, B, C in order
+      -> [C] next parent LLM request
 
-[B] 子代理仍只读、depth=1；第 39 课才保存跨进程可恢复的结果原文
+[B] subagents are still read-only, depth=1; Lesson 39 saves the raw results so they can be recovered across processes
 ```
 
-例如 B 比 A 先完成，调度器可以马上启动 C，但父 history 仍必须保持 A、B、C。执行完成和父侧交付是两个时刻。
+For example, if B finishes before A, the scheduler can start C right away, but the parent history must still be A, B, C. Execution completion and parent-side delivery are two different moments.
 
-## 核心概念与数据结构
+## Core Concepts and Data Structures
 
-### 1. 只有纯委派回合才能并行
+### 1. Only pure delegation rounds can run in parallel
 
-并行调度只适合多个互不依赖的只读调查。如果同一 assistant 回合同时出现 `delegate_task` 和写文件、shell、计划或其他普通工具，系统无法把它们安全地拆开执行。因此 `ParentRuntimePolicy.prepare_tool_round()` 只有在“这一轮全部是 `delegate_task`”时才进入并行路径；混合回合的所有调用都会得到 `delegation_batch_gate`，不会启动任何子模型。
+Parallel scheduling is suited only to several independent read-only investigations. If the same assistant round contains `delegate_task` together with file writes, shell, plans, or other ordinary tools, the system cannot split them up and run them safely. So `ParentRuntimePolicy.prepare_tool_round()` enters the parallel path only when "every call in this round is `delegate_task`"; in a mixed round, every call gets `delegation_batch_gate`, and no child model is started.
 
-这不是把委派工具变成特权入口。每个委派仍先经过 schema、阶段、权限和 durable admission；并行路径只决定调度方式。
+This does not turn the delegation tool into a privileged entry. Each delegation still passes schema, phase, permission, and durable admission first; the parallel path only decides how they are scheduled.
 
-### 2. 预算额度和运行槽位是两件事
+### 2. Budget quota and run slots are two different things
 
-预算回答“父任务总共允许消耗多少”，槽位回答“现在最多同时跑多少个”。例如：
+The budget answers "how much the parent task may consume in total", and slots answer "how many may run at the same time right now". For example:
 
 ```python
 MAX_SUBAGENTS = 3
@@ -100,83 +100,83 @@ MAX_TOTAL_TOOL_CALLS = 72
 MAX_TOTAL_TOKENS = 96_000
 ```
 
-A、B 运行时，C 可以排队，但三个合同的预算应在启动前一起检查并预留。排队中的 C 不占运行槽位，却已经占用父任务的子代理数和预留额度。任务完成后释放未用预留，再按实际 usage 结算；如果 provider 报告的 token 超过预留，账本记录真实超额，后续任务看到更少的余额。
+While A and B run, C can queue, but the budget for all three contracts should be checked and reserved together before starting. A queued C does not take a run slot, but it already uses the parent task's subagent count and reserved quota. After a task finishes, the unused reservation is released and the actual usage is settled; if the provider reports more tokens than reserved, the ledger records the real overrun, and later tasks see a smaller balance.
 
-### 3. worker 执行，父线程提交
+### 3. Workers execute; the parent thread commits
 
-每个 worker 有独立的 SubagentRunner、State、Context、model binding、HTTP 连接、流缓冲和 usage 计数。worker 只返回 `SubagentResult`，不直接修改父 State 或父 Context。
+Each worker has its own SubagentRunner, State, Context, model binding, HTTP connection, stream buffer, and usage counter. A worker only returns a `SubagentResult`; it does not change the parent State or parent Context directly.
 
-调度器用按 index 编址的结果缓冲保存乱序完成结果。B 完成后可以释放槽位并启动 C，但只有当前面连续的 A 也有结果时，父线程才会将 A、B、C 推进到 `result_ready`、`role=tool` 和 `committed`。
+The scheduler keeps out-of-order results in a result buffer addressed by index. After B finishes, it can release its slot and start C, but only when the contiguous earlier A also has a result does the parent thread advance A, B, C to `result_ready`, `role=tool`, and `committed`.
 
-### 4. durable boundary 仍按模型顺序收口
+### 4. The durable boundary still finishes in model order
 
-启用 `/save` 时，顺序仍是：
+With `/save` on, the order is still:
 
 ```text
 start_round
-  -> A/B/C 各自 admission 与 handler_admitted
-  -> 批量预留并启动有限 worker
-  -> 收集结果，等待连续前序 index
-  -> 按 A、B、C 提交 State + role=tool + tool boundary
+  -> admission and handler_admitted for each of A/B/C
+  -> batch reservation and start of a bounded number of workers
+  -> collect results, wait for the contiguous earlier indexes
+  -> commit State + role=tool + tool boundary for A, B, C in order
   -> complete_round
-  -> 下一次父 LLM
+  -> next parent LLM request
 ```
 
-任一持久化提交失败，都会阻止尚未安全收口的后续流程和下一次父 LLM。并行不允许产生“B 已写入、A 还没有”的半轮。
+If any durable commit fails, it blocks the later flow that has not yet finished safely and the next parent LLM request. Parallelism is not allowed to produce a half round where "B is written but A is not yet".
 
-## 关键流程
+## Key Flow
 
-正常路径可以压缩为：
+The normal path can be condensed to:
 
 ```text
-父模型提交 A、B、C
-  -> 三个合同一起做权限、scope、预算检查
-  -> 同时启动 A、B，C 等待槽位
-  -> B 完成，启动 C
-  -> A 完成
-  -> 父侧按 A、B、C 交付三个唯一 tool result
-  -> 整轮提交完成后请求父 LLM
+the parent model submits A, B, C
+  -> permission, scope, and budget checks for all three contracts together
+  -> start A and B at the same time; C waits for a slot
+  -> B finishes, start C
+  -> A finishes
+  -> the parent side delivers three single tool results in the order A, B, C
+  -> request the parent LLM after the whole round is committed
 ```
 
-失败路径中，某个子代理可以得到 `failed`、`timed_out`、`cancelled` 或 `budget_exhausted`；这个失败结果仍占它在父回合中的位置，其他已完成结果不会因此被抹掉。父任务取消时，调度器会请求全部活动 worker 停止，并保留没有及时收束的登记。
+On a failure path, one subagent can get `failed`, `timed_out`, `cancelled`, or `budget_exhausted`; that failure result still occupies its position in the parent round, and other completed results are not wiped out because of it. When the parent task is cancelled, the scheduler asks all active workers to stop and keeps the registrations that did not finish in time.
 
-## 运行与观察
+## Run and Observe
 
-在已配置模型后，用 Bash/zsh 启动 CLI：
+After configuring a model, start the CLI with Bash/zsh:
 
 ```bash
 PYTHONPATH=src python -m mini_agent
 ```
 
-当父模型一次提出多个独立的 `delegate_task` 时，观察活动数最多不超过 `max_concurrency`；较早完成的 B 不会提前出现在父 Context，父侧结果仍按模型原始顺序进入。若混入普通工具，则应看到批量拒绝，而不是部分启动。命令行首条任务处理后，CLI 仍会进入交互循环。
+When the parent model proposes several independent `delegate_task` calls at once, observe that the number of active ones never exceeds `max_concurrency`; a B that finishes earlier does not appear in the parent Context early, and the parent results still enter in the model's original order. If ordinary tools are mixed in, you should see a batch rejection rather than a partial start. After the command-line first task is handled, the CLI still enters the interactive loop.
 
-## 实现拆解
+## Implementation Breakdown
 
-`reserve_delegation_batch()` 在一把 State 锁中完成批量预算检查，防止多个 worker 同时超发。`DelegationScheduler` 维护有限线程、待启动队列和按 index 的结果表；worker 只负责执行，父线程负责提交。父线程在每次连续结果交付时仍沿用第 37 课的生命周期和 durable 边界。
+`reserve_delegation_batch()` completes the batch budget check under one State lock, preventing several workers from over-issuing at the same time. `DelegationScheduler` maintains a bounded set of threads, a queue of tasks waiting to start, and a result table by index; workers only execute, and the parent thread commits. Each time the parent thread delivers contiguous results, it still follows the lifecycle and durable boundary of Lesson 37.
 
-因此“并行”只发生在子代理内部执行阶段。父 Context、State、tool result 和 session 的可见顺序仍然由模型调用顺序决定。
+So "parallel" happens only in the subagents' internal execution stage. The visible order of the parent Context, State, tool results, and session is still decided by the model's call order.
 
-## 为什么这样设计
+## Why This Design
 
-直接把所有 `delegate_task` 丢进普通工具线程池，会混淆普通 handler 并发与子代理生命周期：子代理还需要独立 Runtime、冻结模型绑定、父聚合预算、取消和结果合同。专用 Scheduler 能把这些资源边界集中管理。
+Throwing all `delegate_task` calls into the ordinary tool thread pool would confuse ordinary handler concurrency with the subagent lifecycle: subagents also need an independent Runtime, a frozen model binding, the parent aggregate budget, cancellation, and the result contract. A dedicated Scheduler can manage these resource boundaries in one place.
 
-把预算和槽位分开，既能让 C 排队，又能在启动前知道 A、B、C 是否整体负担得起。代价是等待队列也会占父任务的预留额度。
+Separating budget from slots lets C queue while still knowing before starting whether A, B, and C are affordable as a whole. The cost is that the waiting queue also uses the parent task's reserved quota.
 
-父侧按 index 提交可能让已经完成的 B 等待 A，但这是保持模型消息顺序和 durable 原子收口所付出的成本。这样线程调度不会改变下一次模型看到的对话。
+Committing by index on the parent side may make an already finished B wait for A, but that is the price of keeping the model message order and the durable atomic finish. This way thread scheduling never changes the conversation the next model request sees.
 
-## 设计边界
+## Design Boundaries
 
-- 只有纯委派回合进入并行路径；委派与普通工具混用时整轮拒绝。
-- 子代理仍不能写文件、运行 shell、管理进程、再次委派或决定父任务完成。
-- 每个 worker 使用独立 State、Context、连接、流缓冲和 usage；不共享可变运行数据。
-- 结果可以乱序产生，但父 `role=tool`、State 和 durable boundary 必须按模型顺序提交。
-- v0.38 不保存完整子 Context，也不恢复跨进程的内存结果；第 39 课才持久化 `result_ready` 原文。
+- Only pure delegation rounds enter the parallel path; when delegation is mixed with ordinary tools, the whole round is rejected.
+- Subagents still cannot write files, run shell, manage processes, delegate again, or decide parent task completion.
+- Each worker uses its own State, Context, connection, stream buffer, and usage; no mutable runtime data is shared.
+- Results may be produced out of order, but the parent `role=tool`, State, and durable boundary must be committed in model order.
+- v0.38 does not save the full child Context and does not recover in-memory results across processes; Lesson 39 persists the raw `result_ready` text.
 
-## 本版特性、下一课与代码索引
+## Version Features, Next Lesson, and Code Index
 
-本课完成有界并行、批量预算预留、独立 worker、部分失败交付、全体取消和父侧按序提交。下一课会解决一个新的恢复缺口：子代理结果已经产生，但父结果尚未交付时进程崩溃怎么办。
+This lesson completes bounded parallelism, batch budget reservation, independent workers, delivery of partial failures, cancellation of all, and ordered commits on the parent side. The next lesson solves a new recovery gap: what if the process crashes after a subagent result is produced but before the parent result is delivered?
 
-核心源码：
+Core source:
 
 - [`src/mini_agent/delegation.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.38/src/mini_agent/delegation.py)
 - [`src/mini_agent/runtime.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.38/src/mini_agent/runtime.py)

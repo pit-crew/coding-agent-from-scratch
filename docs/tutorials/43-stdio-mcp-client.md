@@ -1,22 +1,22 @@
-# 第 43 课：用 stdio 连接一个 MCP Server
+# Lesson 43: Connecting an MCP Server over stdio
 
-上一课：[具名本地 References](42-local-references.md) · [教程总览](README.md) · 下一课：[把 MCP Tool 接入 Agent](44-mcp-tools-runtime.md)
+Previous: [Named local References](42-local-references.md) · [Tutorial overview](README.md) · Next: [Connecting MCP Tools to the Agent](44-mcp-tools-runtime.md)
 
-代码快照：`v0.43` · 相邻差异：`v0.42..v0.43`
+Code snapshot: `v0.43` · Adjacent diff: `v0.42..v0.43`
 
-本课命令使用 Bash/zsh。下面的代码链接和示例都对应 `v0.43`。
+The commands in this lesson use Bash/zsh. The code links and examples below all correspond to `v0.43`.
 
-## 本课目标
+## Lesson Goals
 
-想让程序使用另一个程序提供的能力，双方需要约定消息怎么写、先说什么、怎样知道对方回应的是哪次请求。MCP（Model Context Protocol）就是一套这样的约定；MCP Server 提供工具，MCP Client 负责连接并发出请求。
+For one program to use capabilities provided by another, both sides must agree on how messages are written, what is said first, and how to know which request a reply belongs to. MCP (Model Context Protocol) is such an agreement; an MCP Server provides tools, and an MCP Client connects and sends requests.
 
-本课先写一个独立 Client：它启动本机 Server，列出工具，并在你确认后调用一个工具。它还没有接入 Agent，所以语言模型不会替你挑工具。读完后，你应能看懂一次 MCP 会话的顺序，并说清楚这条演示路径为什么还不是 Agent 的工具授权系统。
+This lesson first writes a standalone Client: it starts a local Server, lists its tools, and calls a tool after you confirm. It is not yet connected to the Agent, so the language model does not choose tools for you. After reading, you should be able to follow the order of one MCP session and explain why this demo path is not yet the Agent's tool authorization system.
 
-## 前置条件
+## Prerequisites
 
-只需要基础 Python、终端和 Git。这里的 Agent 指“根据用户任务向模型提问，并执行模型所请求工具”的程序；本课暂时不运行这条 Agent 流程，而是单独观察 Client 与 Server 如何通信。
+You only need basic Python, a terminal, and Git. The Agent here means "the program that asks the model questions based on the user's task and runs the tools the model requests"; this lesson does not run that Agent flow yet but observes on its own how the Client and Server communicate.
 
-先查看上一版和本版的差异，再切到本课代码：
+First look at the diff between the previous version and this one, then switch to this lesson's code:
 
 ```bash
 git checkout v0.42
@@ -24,61 +24,61 @@ git diff --stat v0.42..v0.43
 git checkout v0.43
 ```
 
-阅读完毕后，用 `git checkout -` 返回切换前所在的分支。
+After reading, use `git checkout -` to return to the branch you were on before switching.
 
-## 新增与改动文件
+## New and Changed Files
 
-本版新增的是一条独立的连接路径。下表只列理解这条路径需要认识的部分：
+What this version adds is a standalone connection path. The table lists only the parts you need to know to understand this path:
 
-| 文件 | 负责什么 |
+| File | Responsibility |
 |---|---|
-| [mcp/client.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.43/src/mini_agent/mcp/client.py) | 按 MCP 顺序握手、列出并保存工具目录、发送工具调用。 |
-| [mcp/stdio.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.43/src/mini_agent/mcp/stdio.py) | 启动本地 Server，并分别读取协议消息和诊断输出。 |
-| [mcp/protocol.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.43/src/mini_agent/mcp/protocol.py) | 检查请求、通知和响应的 JSON-RPC 消息格式。 |
-| [mcp/__main__.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.43/src/mini_agent/mcp/__main__.py) | 提供 `list` 和每次都要确认的 `call` 命令。 |
-| [config.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.43/src/mini_agent/config.py) | 读取本机 MCP Server 配置；导入配置时不会启动 Server。 |
+| [mcp/client.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.43/src/mini_agent/mcp/client.py) | Handshakes in MCP order, lists and saves the tool catalog, sends tool calls. |
+| [mcp/stdio.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.43/src/mini_agent/mcp/stdio.py) | Starts the local Server and reads protocol messages and diagnostic output separately. |
+| [mcp/protocol.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.43/src/mini_agent/mcp/protocol.py) | Checks the JSON-RPC message format of requests, notifications, and responses. |
+| [mcp/__main__.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.43/src/mini_agent/mcp/__main__.py) | Provides the `list` command and the `call` command, which asks for confirmation every time. |
+| [config.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.43/src/mini_agent/config.py) | Reads local MCP Server configuration; importing the configuration does not start a Server. |
 
-## 版本变更定位
+## Version Change Map
 
-先把新旧两条路径分开看。v0.42 已有的 Agent 工具流程由 Runtime 管理；v0.43 新增的 MCP 命令独立运行，不会接入那个流程。
+First look at the old and new paths separately. The Agent tool flow already in v0.42 is managed by the Runtime; the MCP command added in v0.43 runs independently and does not connect to that flow.
 
 ```text
-上一版 v0.42：
-[旧] 用户任务 → [旧] AgentRuntime ↔ [旧] 模型
-                         └─ [旧] 模型请求工具 → [旧] ToolExecutor → [旧] 工具结果
+previous version v0.42:
+[old] user task → [old] AgentRuntime ↔ [old] model
+                          └─ [old] model requests a tool → [old] ToolExecutor → [old] tool result
 
-本版 v0.43 新增：
-[+] 命令行 `python -m mini_agent.mcp`
-  → [C] McpClient → [+] StdioTransport → [+] 本机 MCP Server
-       └─ [B] 独立演示路径；不接入 AgentRuntime 或 PermissionGate
+new in this version v0.43:
+[+] command line `python -m mini_agent.mcp`
+  → [C] McpClient → [+] StdioTransport → [+] local MCP Server
+       └─ [B] standalone demo path; not connected to AgentRuntime or PermissionGate
 ```
 
-图例：`[旧]` v0.42 已有；`[+]` v0.43 新增；`[C]` 主要消费者；`[B]` 本版边界。这就是本课最重要的结论：Client 能调用 Server，不代表 Agent 已经可以调用它。下一课才会把外部工具接入 Agent 已有的执行和授权流程。
+Legend: `[old]` already in v0.42; `[+]` new in v0.43; `[C]` main consumer; `[B]` boundary of this version. This is the most important conclusion of this lesson: a Client being able to call a Server does not mean the Agent can call it yet. Only the next lesson connects external tools to the Agent's existing execution and authorization flow.
 
-项目把负责模型与工具循环的部分称为 `AgentRuntime`。下文会提到它来标出边界；本课不需要修改或启动它。
+The project calls the part responsible for the model and tool loop `AgentRuntime`. It is mentioned below to mark the boundary; this lesson does not need to change or start it.
 
-## 关键流程
+## Key Flow
 
-stdio 是进程之间的两条管道：Client 写 Server 的标准输入（stdin），Server 把协议回复写到标准输出（stdout）；诊断信息写到标准错误（stderr）。程序因此能把机器要读的消息和人要看的日志分开。
+stdio is two pipes between processes: the Client writes to the Server's standard input (stdin), the Server writes protocol replies to standard output (stdout), and diagnostic information goes to standard error (stderr). So the program can keep messages for machines separate from logs for people.
 
-一次会话先确认彼此支持的协议，再列目录，最后才能调用工具：
+A session first confirms the protocol both sides support, then lists the catalog, and only then can call tools:
 
 ```text
 Client                                      Server
-  │── initialize（请求 id=1） ──────────────>│  确认协议版本和能力
-  │<─ response（id=1） ──────────────────────│
-  │── notifications/initialized（通知） ────>│  握手完成
-  │── tools/list（请求 id=2） ──────────────>│  返回第一页工具
-  │<─ response（id=2，可能有 nextCursor） ───│
-  │── tools/list（请求 id=3，可选） ─────────>│  返回后续页
-  │── tools/call（请求 id=4） ──────────────>│  执行指定工具
-  │<─ response（id=4） ──────────────────────│
-  └── 关闭 stdin，并回收 Server 进程
+  │── initialize (request id=1) ───────────>│  confirm protocol version and capabilities
+  │<─ response (id=1) ──────────────────────│
+  │── notifications/initialized (notice) ──>│  handshake complete
+  │── tools/list (request id=2) ───────────>│  return the first page of tools
+  │<─ response (id=2, may have nextCursor) ─│
+  │── tools/list (request id=3, optional) ─>│  return later pages
+  │── tools/call (request id=4) ───────────>│  run the named tool
+  │<─ response (id=4) ──────────────────────│
+  └── close stdin and reap the Server process
 ```
 
-`initialize`、`tools/list` 和 `tools/call` 是请求，都会带一个 ID；Client 用相同 ID 找到对应的回复。`notifications/initialized` 是通知，只表示一个事件，不需要回复，因此没有 ID。本版固定使用 MCP `2025-11-25`，不会尝试猜测或切换协议版本。JSON-RPC 是承载这些消息的格式：回复中的 `error` 表示协议请求失败；工具也可能正常返回一个 `result`，但在结果里标记 `isError=true`，表示工具执行后报告了业务错误。
+`initialize`, `tools/list`, and `tools/call` are requests and each carries an ID; the Client uses the same ID to find the matching reply. `notifications/initialized` is a notification that only signals an event and needs no reply, so it has no ID. This version is pinned to MCP `2025-11-25` and does not try to guess or switch protocol versions. JSON-RPC is the format that carries these messages: an `error` in a reply means the protocol request failed; a tool can also return a normal `result` but mark `isError=true` in it, which means the tool ran and reported a business error.
 
-下面是 Client 中握手的关键顺序。省略号代表版本和返回值检查；要点是完成 `initialize` 后才通知 Server 握手结束：
+Below is the key order of the handshake in the Client. The ellipsis stands for version and return value checks; the point is that the Server is notified that the handshake is over only after `initialize` completes:
 
 ```python
 result = self._request(
@@ -90,39 +90,39 @@ result = self._request(
     },
     timeout=self.startup_timeout,
 )
-# 检查 Server 返回的协议版本与能力
+# Check the protocol version and capabilities the Server returned
 self._send_notification("notifications/initialized", None)
 ```
 
-这是 [`McpClient._connect()`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.43/src/mini_agent/mcp/client.py) 的简化摘录，省略了检查代码。完成握手后，Client 还会把工具目录读完再保存为快照。MCP 可以把长目录分成多页；`nextCursor` 是“还有下一页”的位置标记。重复游标、重复工具名或格式不符都会使整个目录失败，Client 不会只拿第一页就继续调用。
+This is a simplified excerpt of [`McpClient._connect()`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.43/src/mini_agent/mcp/client.py), with the check code omitted. After the handshake, the Client also reads the whole tool catalog before saving it as a snapshot. MCP can split a long catalog into pages; `nextCursor` is the position marker for "there is a next page". A repeated cursor, a duplicate tool name, or a format mismatch makes the whole catalog fail; the Client does not continue to call with only the first page.
 
-## 实现拆解
+## Implementation Breakdown
 
-### 1. 启动进程时不经过命令解释器
+### 1. Starting the process does not go through a command interpreter
 
-配置中的命令按参数列表传给 `subprocess.Popen`，使用 `shell=False`。这表示 `python` 和脚本路径会作为明确参数执行，而不会先交给 shell 解释 `;`、管道或变量展开。配置可以指定工作目录和环境变量，但这些值只从本机 `config_local.py` 读取。
+The command in the configuration is passed as an argument list to `subprocess.Popen` with `shell=False`. This means `python` and the script path run as explicit arguments, without first going through a shell that would interpret `;`, pipes, or variable expansion. The configuration can set the working directory and environment variables, but these values are read only from the local `config_local.py`.
 
-### 2. 协议输出和日志分开处理
+### 2. Protocol output and logs are handled separately
 
-stdout 逐行读取 UTF-8 JSON-RPC；stderr 独立排空，只保留末尾一小段诊断内容。单条消息、等待队列和关闭时间都有上限。遇到坏编码、坏 JSON、超时或进程退出时，连接会失效；可能已经执行过的 `tools/call` 不会自动重试。
+stdout is read line by line as UTF-8 JSON-RPC; stderr is drained separately, and only a small tail of diagnostic content is kept. Single messages, the waiting queue, and the shutdown time all have limits. On bad encoding, bad JSON, a timeout, or a process exit, the connection becomes invalid; a `tools/call` that may already have run is not retried automatically.
 
-关闭时先关 stdin，再等待 Server 结束；超时后才尝试终止进程并回收它。这样既给 Server 正常收尾的机会，也避免留下后台子进程。
+On shutdown, stdin is closed first, then the program waits for the Server to end; only after a timeout does it try to terminate and reap the process. This gives the Server a chance to finish cleanly and avoids leaving background child processes behind.
 
-### 3. 人工确认只保护独立命令
+### 3. Manual confirmation only protects the standalone command
 
-独立命令会在调用前完整显示 Server alias、工具原名和参数，并要求你输入确认。输入不是明确的 `yes` 或 `y`、参数无法完整显示，或 stdin 不是交互终端时，都不会发送调用。
+Before a call, the standalone command shows the Server alias, the tool's original name, and the full arguments, and asks you to confirm. If the input is not an explicit `yes` or `y`, the arguments cannot be shown in full, or stdin is not an interactive terminal, no call is sent.
 
-这里的确认只属于这个命令行演示。它没有 Agent 的 PermissionGate（工具授权检查），也不会为后续的模型调用保存授权。
+This confirmation belongs only to this command-line demo. It has no Agent PermissionGate (tool authorization check), and it saves no authorization for later model calls.
 
-## 为什么这样设计
+## Why This Design
 
-本课先单独验证协议和进程边界，可以看清 Client 要承担的工作：按顺序握手、配对请求与回复、读完目录，并在失败时关闭 Server。若一开始就把这些行为和 Agent 授权混在一起，读者很难判断一次失败来自 MCP 通信还是 Agent 决策。
+This lesson first validates the protocol and process boundaries on their own, so you can see clearly the work the Client must take on: handshake in order, pair requests with replies, read the whole catalog, and close the Server on failure. If these behaviors were mixed with Agent authorization from the start, it would be hard to tell whether a failure came from MCP communication or from Agent decisions.
 
-本版使用 stdio，是因为本机进程的输入、输出和关闭过程容易观察。它只支持固定的 MCP `2025-11-25`，不探测其他版本、不重试调用，也不支持 HTTP、Resource 或 Prompt。Server 主动发起带 ID 的请求也会导致连接关闭；本课只实现 Client 主动请求的路径。
+This version uses stdio because the input, output, and shutdown of a local process are easy to observe. It supports only the fixed MCP `2025-11-25`, does not probe other versions, does not retry calls, and does not support HTTP, Resources, or Prompts. A request with an ID initiated by the Server also closes the connection; this lesson implements only the path where the Client initiates requests.
 
-## 运行与观察
+## Run and Observe
 
-若想复现下面的结果，可在未跟踪的 `src/mini_agent/config_local.py` 中配置本课自带的本机演示 Server：
+To reproduce the results below, configure this lesson's local demo Server in the untracked `src/mini_agent/config_local.py`:
 
 ```python
 MCP_SERVERS = [{
@@ -133,24 +133,24 @@ MCP_SERVERS = [{
 }]
 ```
 
-相对 `command` 和 `cwd` 从 `src/mini_agent` 目录解析。然后在仓库根目录运行：
+A relative `command` and `cwd` are resolved from the `src/mini_agent` directory. Then run in the repository root:
 
 ```bash
 PYTHONPATH=src python -m mini_agent.mcp demo list
 PYTHONPATH=src python -m mini_agent.mcp demo call echo '{"text":"hello"}'
 ```
 
-第一条命令应列出 `echo`、`sum`、`third`。它们分成两页，所以 Client 会发送两次 `tools/list`。第二条命令会先展示将要发送的参数；确认后，Server 返回的文本中应包含 `hello`。不确认时，Client 不发送 `tools/call`。
+The first command should list `echo`, `sum`, and `third`. They are split into two pages, so the Client sends `tools/list` twice. The second command first shows the arguments it will send; after you confirm, the text the Server returns should contain `hello`. If you do not confirm, the Client does not send `tools/call`.
 
-## 设计边界
+## Design Boundaries
 
-- Client 只读取并调用冻结的工具目录；收到目录变化通知也不会在运行中刷新。
-- `tools/call` 超时或断线后不自动重试，因为 Server 可能已经执行了动作。
-- 本课没有接入 AgentRuntime、Tool Registry、PermissionGate、State 或 session。独立命令的确认不能代替后续 Agent 的权限检查。
-- 只允许有界文本结果；本版不处理 Resource、Prompt、二进制结果或 Server 主动请求。
+- The Client only reads and calls a frozen tool catalog; receiving a catalog change notification does not refresh it during the run.
+- `tools/call` is not retried automatically after a timeout or disconnect, because the Server may already have performed the action.
+- This lesson does not connect to AgentRuntime, the Tool Registry, the PermissionGate, State, or the session. The standalone command's confirmation cannot replace the later Agent permission check.
+- Only bounded text results are allowed; this version does not handle Resources, Prompts, binary results, or Server-initiated requests.
 
-## 本版特性、下一课与代码索引
+## Version Features, Next Lesson, and Code Index
 
-v0.43 完成了可独立运行的 stdio MCP Client。下一课会把已冻结的外部工具目录转换为 Agent 可以请求的工具，并让这些调用经过 Agent 自己的授权与执行流程。
+v0.43 completes a standalone stdio MCP Client. The next lesson turns the frozen external tool catalog into tools the Agent can request, and makes these calls go through the Agent's own authorization and execution flow.
 
-固定代码索引：[client.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.43/src/mini_agent/mcp/client.py)、[stdio.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.43/src/mini_agent/mcp/stdio.py)、[protocol.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.43/src/mini_agent/mcp/protocol.py)、[mcp/__main__.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.43/src/mini_agent/mcp/__main__.py)。
+Pinned code index: [client.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.43/src/mini_agent/mcp/client.py), [stdio.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.43/src/mini_agent/mcp/stdio.py), [protocol.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.43/src/mini_agent/mcp/protocol.py), [mcp/__main__.py](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.43/src/mini_agent/mcp/__main__.py).

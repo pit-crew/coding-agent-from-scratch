@@ -1,24 +1,24 @@
-# 第 53 课：怎样公平比较两个 Agent 条件
+# Lesson 53: How to compare two Agent conditions fairly
 
-代码快照：`v0.53` · 相邻差异：`v0.52..v0.53` · 命令：Bash/zsh
+Code snapshot: `v0.53` · Adjacent diff: `v0.52..v0.53` · Commands: Bash/zsh
 
-[上一课：故障注入与恢复评测](52-reliability-evaluation.md) · [教程索引](README.md)
+[Previous lesson: Fault injection and recovery evaluation](52-reliability-evaluation.md) · [Tutorial index](README.md)
 
-本课里我们要回答一个看起来简单、实际很容易弄错的问题：新版本是否真的比旧版本好？Agent 每次回答会有波动。只看一次成功，可能把偶然当成改进；只换掉旧版本，也可能把题目或权限变化误当成版本效果。
+In this lesson we answer a question that looks simple but is easy to get wrong: is the new version really better than the old one? The Agent's answers vary from run to run. Looking at only one success may mistake chance for improvement; just swapping out the old version may also mistake a change in the cases or permissions for an effect of the version.
 
-v0.52 已经能冻结编码题目、隔离工作区并让独立 grader 评分，但它只运行一个版本的题目集。v0.53 加上一份比较合同，把三个条件排进同一个批次：旧版本关闭记忆检索、当前版本关闭检索、当前版本开启检索。这样前两组回答版本是否退步，后两组回答自动 Memory 检索带来什么变化。
+v0.52 can already freeze coding cases, isolate workspaces, and let an independent grader score them, but it runs the case set for only one version. v0.53 adds a comparison contract that puts three conditions into the same batch: the old version with memory retrieval off, the current version with retrieval off, and the current version with retrieval on. This way the first two groups answer whether the version regressed, and the last two groups answer what changes automatic Memory retrieval brings.
 
-## 本课目标
+## Lesson Goals
 
-读完后，你应能看出一次公平比较需要先固定哪些条件，解释 36 个 trial 如何配对，并区分离线 Runtime 自测与真实模型成绩。Memory 检索消融只表示比较启用和关闭自动摘要检索的差别。
+After reading, you should be able to see which conditions a fair comparison must fix first, explain how the 36 trials are paired, and tell an offline Runtime self-test apart from real model results. The Memory retrieval ablation only means comparing the difference between enabling and disabling automatic summary retrieval.
 
-## 前置条件
+## Prerequisites
 
-准备 Python 3.10+ 和 Git；先了解上一课的固定题集、隔离工作区与独立 grader。当前源码链接固定到 `v0.53`，tag 尚未由维护者创建时，先阅读默认分支的源码，不要把未存在的 tag 当成已冻结快照。
+Prepare Python 3.10+ and Git; first understand the fixed case set, isolated workspaces, and independent grader from the previous lesson. The current source links are pinned to `v0.53`; when the maintainer has not created the tag yet, read the source on the default branch first, and do not treat a tag that does not exist as an already frozen snapshot.
 
-## 先准备代码快照
+## Prepare the Code Snapshot First
 
-Git tag 是给一份代码快照起的固定名字，教程用它保证示例指向同一份源码。本课声明 `v0.53`；新 tag 需要由维护者手动创建。切换前先查看本课使用的源码差异：
+A Git tag is a fixed name given to a code snapshot; the tutorials use it to make sure examples point at the same source. This lesson declares `v0.53`; new tags must be created manually by the maintainer. Before switching, look at the source diff this lesson uses:
 
 ```bash
 git checkout --detach v0.53
@@ -26,129 +26,129 @@ git diff v0.52..v0.53
 git diff --stat v0.52..v0.53
 ```
 
-第一条命令把工作区切到本课版本；第二条命令展示它相对 v0.52 的改动。本文命令假定在 Bash/zsh 的仓库根目录执行。若维护者还没有创建 `v0.53` tag，应先停在当前分支阅读源码，不能假定该名字已经可切换。
+The first command switches the workspace to this lesson's version; the second shows its changes relative to v0.52. The commands in this lesson assume Bash/zsh in the repository root. If the maintainer has not created the `v0.53` tag yet, stay on the current branch to read the source; do not assume the name can already be checked out.
 
-## 新增与改动文件
+## New and Changed Files
 
-先看这些文件，能找到比较条件在哪里校验、目标 Runtime 从哪里装配、报告怎样重建：
+Look at these files first to find where the comparison conditions are validated, where the target Runtime is assembled, and how the report is rebuilt:
 
-| 文件 | 作用 |
+| File | Purpose |
 |---|---|
-| [`comparison_schema.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/comparison_schema.py) | 定义比较清单、批次账本和单次结果的严格字段。 |
-| [`comparison.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/comparison.py) | 冻结来源和顺序，协调逐题执行并保留槽位状态。 |
-| [`comparison_sources.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/comparison_sources.py) | 从完整 commit 创建临时源码副本，并在请求前检查接口。 |
-| [`comparison_worker.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/comparison_worker.py) | 装配目标版本的 Runtime、工具权限和 Memory 检索。 |
-| [`comparison_report.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/comparison_report.py) | 校验原始证据摘要并重建配对报告。 |
+| [`comparison_schema.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/comparison_schema.py) | Defines the strict fields of the comparison manifest, the batch ledger, and single results. |
+| [`comparison.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/comparison.py) | Freezes sources and order, coordinates per-case execution, and keeps slot status. |
+| [`comparison_sources.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/comparison_sources.py) | Creates temporary source copies from complete commits and checks interfaces before requests. |
+| [`comparison_worker.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/comparison_worker.py) | Assembles the target version's Runtime, tool permissions, and Memory retrieval. |
+| [`comparison_report.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/comparison_report.py) | Validates the raw evidence digests and rebuilds the paired report. |
 
-## 关键流程：v0.52 与 v0.53 的数据流
+## Key Flow: Data Flow in v0.52 and v0.53
 
-上一版的路径是：固定题目创建工作区，Agent 使用六个文件与计算工具，停止后 grader 检查结果，最后汇总单个版本的试跑：
-
-```text
-v0.52 基线
-[旧] validate-suite
-  → [旧] 一份固定题集和一组权限
-  → [旧] EvaluationRunner.run_case()
-  → [旧] AgentRuntime + 六工具 + PermissionGate
-  → [旧] 独立 grader
-  → [C] report-suite 汇总 trial
-```
-
-它能回答“这个版本做得怎样”，却不能保证两次运行只差一个条件。v0.53 把比较条件和顺序先冻结，再从对应 commit 启动目标 Runtime：
+The path of the previous version: fixed cases create workspaces, the Agent uses six file and calculation tools, the grader checks the result after it stops, and finally the trial runs of a single version are summarized:
 
 ```text
-v0.53 比较
-[+] validate-comparison → 检查三组条件与两条比较边
-  → [+] plan-comparison 冻结题集、来源、环境和 36 个槽位
-  → [~] 为每个槽位创建独立 workspace / HOME / Memory
-  → [+] 临时 checkout + 统一外部 worker
-       ├─ [C] 目标版本 AgentRuntime、ToolExecutor、PermissionGate
-       ├─ [C] current-on：目标版本 MemoryRetriever → Context
-       └─ [B] 不装配 shell、Memory CRUD、MCP 或子代理
-  → [C] 独立 grader 检查 Agent 停止后的工作区
-  → [+] 原子账本 + trial/artifact 摘要
-  → [+] report-comparison 校验引用后重建配对结果
-
-失败或中断：[B] 留下错误槽位与未运行槽位；不自动重试或补跑。
+v0.52 baseline
+[old] validate-suite
+  → [old] one fixed case set and one set of permissions
+  → [old] EvaluationRunner.run_case()
+  → [old] AgentRuntime + six tools + PermissionGate
+  → [old] independent grader
+  → [C] report-suite summarizes trials
 ```
 
-图中，[旧] 表示上一版已有，[+] 表示新增，[~] 表示扩展，[C] 表示主要消费者，[B] 表示责任边界。比较器只协调运行；每个 Agent 的 Runtime、工具和权限来自选中的 commit。这样旧版不会误用当前版核心代码。
+It can answer "how well did this version do", but it cannot guarantee that two runs differ in only one condition. v0.53 freezes the comparison conditions and order first, then starts the target Runtime from the matching commit:
 
-## 实现拆解
+```text
+v0.53 comparison
+[+] validate-comparison → check the three groups of conditions and two comparison edges
+  → [+] plan-comparison freezes the case set, sources, environment, and 36 slots
+  → [~] create an independent workspace / HOME / Memory for each slot
+  → [+] temporary checkout + a uniform external worker
+       ├─ [C] the target version's AgentRuntime, ToolExecutor, PermissionGate
+       ├─ [C] current-on: the target version's MemoryRetriever → Context
+       └─ [B] no shell, Memory CRUD, MCP, or subagents assembled
+  → [C] the independent grader checks the workspace after the Agent stops
+  → [+] atomic ledger + trial/artifact digests
+  → [+] report-comparison validates references, then rebuilds the paired results
 
-### 比较条件为什么要先冻结
+failure or interruption: [B] error slots and unrun slots are left behind; no automatic retry or rerun.
+```
 
-同一轮比较有三组：`old-off`、`current-off`、`current-on`。`off` 和 `on` 指是否允许 Context 自动检索固定记忆摘要。每题三次，所以 `4 题 × 3 组 × 3 次 = 36 个槽位`。每题内轮换组顺序，减少总让某一组先运行造成的顺序偏差。
+In the diagram, [old] means already in the previous version, [+] means new, [~] means extended, [C] means main consumer, and [B] means responsibility boundary. The comparator only coordinates runs; each Agent's Runtime, tools, and permissions come from the chosen commit. This way the old version never accidentally uses the current version's core code.
 
-比较边是“只允许变化的条件清单”：
+## Implementation Breakdown
 
-| 比较边 | 唯一允许变化 | 能回答的问题 |
+### Why the comparison conditions must be frozen first
+
+One comparison round has three groups: `old-off`, `current-off`, and `current-on`. `off` and `on` mean whether the Context is allowed to retrieve fixed memory summaries automatically. Each case runs three times, so `4 cases × 3 groups × 3 runs = 36 slots`. Within each case, the group order rotates, reducing the order bias of always running one group first.
+
+A comparison edge is "the list of conditions allowed to change":
+
+| Comparison edge | The only allowed change | Question it answers |
 |---|---|---|
-| `old-off → current-off` | 源码 commit | v0.53 是否相对 v0.52 退步 |
-| `current-off → current-on` | Memory 检索开关 | 固定记忆的自动摘要检索是否改善结果、增加多少代价 |
+| `old-off → current-off` | The source commit | Did v0.53 regress relative to v0.52 |
+| `current-off → current-on` | The Memory retrieval switch | Does automatic summary retrieval of fixed memories improve results, and how much does it cost |
 
-如果 suite、grader、工具权限、预算、绑定或其他字段不一致，比较器会报出不可比较原因。它不会把问题较多的槽位静默丢掉，让剩下的样本看起来完整。
+If the suite, grader, tool permissions, budget, binding, or other fields differ, the comparator reports why they are not comparable. It never silently drops slots with more problems to make the remaining samples look complete.
 
-schema 通过组字段差异校验比较边，槽位顺序由题目索引和重复序号生成。核心轮换规则很短：
+The schema validates comparison edges through differences in group fields, and slot order is generated from the case index and repetition number. The core rotation rule is short:
 
 ```python
 shift = (case_index + repetition - 1) % len(groups)
 rotated = groups[shift:] + groups[:shift]
 ```
 
-`shift` 决定每题每次从哪一组开始；完整顺序在模型运行前写入计划。实现见 [`comparison_execution_order()`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/comparison_schema.py)。
+`shift` decides which group each run of each case starts from; the full order is written into the plan before any model runs. See [`comparison_execution_order()`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/comparison_schema.py) for the implementation.
 
-### Memory 消融如何保持公平
+### How the Memory ablation stays fair
 
-消融实验的意思是固定其他条件，只打开或关闭一个能力。本版准备四份很短的语义记忆，只包含接口约定和调查方法。每个 trial 都按自己的 workspace 身份重建同一快照，避免一个 trial 学到另一题结果。
+An ablation experiment means fixing the other conditions and turning only one capability on or off. This version prepares four very short semantic memories that contain only interface conventions and investigation methods. Each trial rebuilds the same snapshot from its own workspace identity, so one trial cannot learn another case's result.
 
-关闭组跳过自动检索；开启组使用目标版本自己的 `MemoryStore`、`MemoryRetriever` 和既有 Context 逻辑，最多选四条、总计 2,400 字符。Memory CRUD 工具不注册，因此 Agent 不能改写实验材料。Memory 目录在 workspace 外，证据只保存材料摘要、是否发生检索及失败类别，不保存注入正文。
+The off group skips automatic retrieval; the on group uses the target version's own `MemoryStore`, `MemoryRetriever`, and existing Context logic, choosing at most four entries and 2,400 characters in total. The Memory CRUD tools are not registered, so the Agent cannot rewrite the experiment material. The Memory directory is outside the workspace, and the evidence saves only the material digests, whether retrieval happened, and the failure category, not the injected body.
 
-检索失败仍按 Context 已有的降级方式运行，但报告会标记实验条件异常。这个样本保留在账本里，不能解释成“检索正常开启”的结果。完整材料边界见[比较说明](../evaluation/comparison.md)和[四份冻结种子](https://github.com/liiiiiiiiil/agent-from-scratch/tree/v0.53/tests/fixtures/evaluation/comparison/memories)。
+A retrieval failure still runs with the Context's existing degradation, but the report marks the experiment condition as abnormal. This sample stays in the ledger and cannot be interpreted as a result of "retrieval was on and working". For the full material boundary, see the [comparison guide](../evaluation/comparison.md) and the [four frozen seeds](https://github.com/liiiiiiiiil/agent-from-scratch/tree/v0.53/tests/fixtures/evaluation/comparison/memories).
 
-### 运行与观察
+### Run and Observe
 
-首先可用固定响应跑离线自测：
+First, you can run the offline self-test with fixed responses:
 
 ```bash
 PYTHONPATH=src python -m mini_agent.evaluation self-test-comparison --output /private/tmp/v053-comparison-offline
 PYTHONPATH=src python -m mini_agent.evaluation report-comparison /private/tmp/v053-comparison-offline
 ```
 
-自测仍装配真实 Runtime 和 PermissionGate，但模型响应来自本地 fixture，不访问 provider。它会检查 36 个槽位从各自初始文件独立运行、grader 能接受已知修复，并旁路探测工具失败、权限拒绝和相同调用重复。报告里 `run_kind` 是 `fixture`，不能把这些通过数算成模型成绩。
+The self-test still assembles the real Runtime and PermissionGate, but model responses come from local fixtures and no provider is contacted. It checks that the 36 slots run independently from their own initial files, that the grader accepts the known fix, and it probes tool failures, permission denials, and repeated identical calls on the side. The `run_kind` in the report is `fixture`, and these pass counts must not be counted as model results.
 
-真实评测前，复制 [`comparison.template.json`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/tests/fixtures/evaluation/comparison/comparison.template.json)，填入当前完整 commit、已配置的 profile 别名和审阅后的价格快照，然后生成计划：
+Before a real evaluation, copy [`comparison.template.json`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/tests/fixtures/evaluation/comparison/comparison.template.json), fill in the current complete commit, the configured profile aliases, and a reviewed price snapshot, then generate the plan:
 
 ```bash
 PYTHONPATH=src python -m mini_agent.evaluation validate-comparison /path/to/filled-spec.json
 PYTHONPATH=src python -m mini_agent.evaluation plan-comparison /path/to/filled-spec.json --output /private/tmp/v053-review-plan
 ```
 
-计划会显示题目、成功标准、三个版本/检索组、模型来源摘要、预算、价格、Memory 材料摘要和完整顺序。生成计划不会请求模型。只有用户审阅并明确批准这份清单后，才能执行带 `--live` 的命令：
+The plan shows the cases, success criteria, the three version/retrieval groups, the model source summary, budget, prices, Memory material digests, and the full order. Generating the plan makes no model requests. Only after the user reviews and explicitly approves this manifest can the command with `--live` be run:
 
 ```bash
 PYTHONPATH=src python -m mini_agent.evaluation run-comparison /private/tmp/v053-review-plan/comparison-plan.json --live --output /path/to/new-run
 ```
 
-每个槽位只启动一次。运行中断后，账本保留当前状态与未运行槽位；修复实现后应冻结新 revision 并开新 run，不能重用旧批次补洞。
+Each slot starts only once. When a run is interrupted, the ledger keeps the current state and the unrun slots; after fixing the implementation, freeze a new revision and start a new run, instead of reusing the old batch to fill the gaps.
 
-报告把 grader 通过率和严格任务成功分开。正常文本结束不代表 grader 通过；grader 通过也不代表临时资源清理成功。模型请求、成功响应、工具调用、权限拒绝、输入/输出 token、Agent/grader 耗时和成本分别列出。没有用量或价格时显示 `null`；恢复成功率对这类编码比较也固定为 `null`。
+The report keeps the grader pass rate and strict task success separate. A normal text finish does not mean the grader passed; the grader passing does not mean temporary resource cleanup succeeded. Model requests, successful responses, tool calls, permission denials, input/output tokens, Agent/grader durations, and cost are listed separately. Without usage or prices, `null` is shown; the recovery success rate is also fixed at `null` for this kind of coding comparison.
 
-## 为什么这样设计
+## Why This Design
 
-把协调器与目标 Runtime 分开，可以在同一版 runner 里调用 v0.52 和 v0.53 的代码，同时避免当前模块混入旧版本。每个版本从完整 commit 的归档临时展开，接口预检发生在模型请求之前；不兼容时直接拒绝。
+Separating the coordinator from the target Runtime lets the same version of the runner call the code of v0.52 and v0.53 while keeping the current modules from mixing with the old version. Each version is unpacked temporarily from an archive of a complete commit, and the interface pre-check happens before the model request; incompatibility is refused directly.
 
-逐槽原子账本和不重试规则保留失败事实。报告从 trial 与 artifact 的摘要重建，因此汇总可以重复生成并定位到每个配对证据。独立 grader 与 Agent 的自述分开，避免把模型自我评价当成验收。
+The per-slot atomic ledger and the no-retry rule keep failure facts. The report is rebuilt from the digests of trials and artifacts, so the summary can be regenerated and traced to each paired piece of evidence. The independent grader is kept separate from the Agent's own account, so the model's self-evaluation is never taken as acceptance.
 
-本版只得到固定题集、同一绑定和冻结记忆材料下的描述性观察。它不证明统计显著性，不衡量跨任务学习，也不代表其他模型或记忆策略。历史 v0.51 和 v0.52 live 基线仍未完成；v0.53 live 清单还需单独审阅。
+This version yields only descriptive observations under a fixed case set, the same binding, and frozen memory material. It does not prove statistical significance, does not measure cross-task learning, and does not represent other models or memory strategies. The historical v0.51 and v0.52 live baselines are still incomplete; the v0.53 live manifest still needs a separate review.
 
-## 本版特性、下一课与代码索引
+## Version Features, Next Lesson, and Code Index
 
-本版交付比较合同和离线运行链路；真实比较仍要先经用户审阅后才能启动。阶段十四没有据此宣布完成，下一步是先复核历史 live 基线欠项，再由维护者决定后续课程主题。
+This version delivers the comparison contract and the offline run chain; a real comparison still requires user review before it starts. Stage 14 is not declared complete on this basis; the next step is to recheck the open items of the historical live baselines, and then the maintainer decides the topic of later lessons.
 
-- [比较合同与摘要](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/comparison_schema.py)
-- [顺序编排与试验隔离](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/comparison.py)
-- [目标源码归档与 API 预检](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/comparison_sources.py)
-- [Runtime worker 与检索旁路观察](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/comparison_worker.py)
-- [指标与可重复报告](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/comparison_metrics.py) · [报告校验](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/comparison_report.py)
-- [CLI 命令](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/__main__.py) · [冻结题集摘要](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/benchmark.py)
+- [Comparison contract and digests](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/comparison_schema.py)
+- [Ordered orchestration and trial isolation](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/comparison.py)
+- [Target source archives and API pre-check](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/comparison_sources.py)
+- [Runtime worker and side observation of retrieval](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/comparison_worker.py)
+- [Metrics and reproducible reports](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/comparison_metrics.py) · [Report validation](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/comparison_report.py)
+- [CLI commands](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/__main__.py) · [Frozen case set digests](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.53/src/mini_agent/evaluation/benchmark.py)

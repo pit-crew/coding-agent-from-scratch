@@ -8,8 +8,6 @@ Build a working AI agent from scratch with the Python standard library, one conc
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/) [![Dependencies](https://img.shields.io/badge/core%20dependencies-zero-green)](#quick-start) [![Versions](https://img.shields.io/badge/versions-v0.01%E2%86%92ongoing-orange)](#learning-path) [![License](https://img.shields.io/badge/license-MIT-lightgrey)](./LICENSE)
 
-**English** · **[中文](./README.md)**
-
 </div>
 
 ---

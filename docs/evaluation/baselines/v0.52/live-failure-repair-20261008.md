@@ -1,39 +1,39 @@
-# 2026-10-08：修复最新 live 暴露的执行断点
+# 2026-10-08: Fixing the Execution Breakpoints Exposed by the Latest Live
 
-本轮依据 `live-20260930-01` 的归档事实实施修复，不发送模型请求，不补跑旧槽位。当前可执行候选为 `reliability-boundaries@1.6`，摘要为 `376170c1721cf6862c2c9faa3bc99195ff2c7a008afc0e7e89910bcbdd3502db`。旧 suite 1.5 的 6/14 仍是该历史批次的成绩；新候选尚无 live 恢复率。
+This round implements fixes based on the archived facts of `live-20260930-01`, sending no model requests and making up no old slots. The current executable candidate is `reliability-boundaries@1.6`, with digest `376170c1721cf6862c2c9faa3bc99195ff2c7a008afc0e7e89910bcbdd3502db`. The old suite 1.5's 6/14 is still the score of that historical batch; the new candidate has no live recovery rate yet.
 
-## 已确认的原因
+## Confirmed causes
 
-1. 崩溃场景 r01 在真正的崩溃注入前，模型提交 `recover.caused_by_failure_id=""`。拒绝记录仍把空串作为因果引用，State 导出报 `recovery action 引用无效`，外层包装为 `SessionValidationError`。使用归档 session 在内存中复现；没有重放原工具或更改原 session。
-2. 多个任务在 64k 总额度仍剩约 19k–22k 时被准入拒绝。完整工作提示重复进入最终回复的预算预留；final 类别还没有 provider 观察，按冷启动规则预留。在文件已经正确但仍需独立验证时，两份输入预留使剩余额度不可用。
-3. 验证修复场景 r01/r03 分别发生 9/10 次文件不存在错误。冻结工具表没有 `list_dir`、`grep`，模型定位文件的只读手段不足；模型也没有及时执行任务已明确要求的修复。目录能力不足与模型执行效率共同放大无效调查。
+1. In crash scenario r01, before the real crash injection, the model submitted `recover.caused_by_failure_id=""`. The rejection record still used the empty string as a causal reference, the State export reported `recovery action reference invalid`, and the outer layer wrapped it as `SessionValidationError`. It was reproduced in memory using the archived session; the original tool was not replayed and the original session was not changed.
+2. Several tasks were refused at admission while about 19k–22k of the 64k total quota remained. The full working prompt entered the final reply budget reservation again; the final category had no provider observations yet and was reserved by the cold-start rule. When the files were already correct but independent verification was still needed, the two input reservations made the remaining quota unusable.
+3. Verification repair scenarios r01/r03 had 9/10 file-not-found errors respectively. The frozen tool table had no `list_dir` or `grep`, so the model lacked read-only means to locate files; the model also did not promptly make the fix the task explicitly required. Insufficient directory capability and model execution efficiency together amplified invalid investigation.
 
-## 文件级修改
+## File-level changes
 
-| 文件 | 修改与边界 |
+| File | Change and boundary |
 |---|---|
-| `state.py` | 拒绝记录只引用真实存在的 failure；未知编号记为 null，不转接到活动 failure、不伪造失败。只有 rejected 记录允许显式 null，其他状态仍严格校验；缺字段、未知或非字符串引用仍拒绝。 |
-| `recovery.py`、`agent.py`、`tools/base.py` | handler 拒绝、参数 schema 拒绝和回合阶段拒绝返回活动故障编号与修复阶段。拒绝提示指出合法恢复入口，不推进 generation。 |
-| `prompt.py` | 新增应用生成的 `build_completion_prompt`，用于只允许最终文本回复的阶段；保留完整项目指令。纠正原提示中“工具失败直接终止循环”的过时描述。 |
-| `context.py` | 应用可独立提供最终回复的受保护提示；未配置者仍用原提示。工作请求仍用完整提示。最终视图保留任务、全部用户/system 约束和权威完成事实，省略旧调查工具回合；history、入选推理和原受保护提示不改写。 |
-| `__main__.py`、`resume.py` | 新任务与恢复任务均从当前本地项目指令重新生成工作/收尾两组提示；收尾提示不从旧 session 导入。 |
-| `evaluation/reliability_worker.py` | 初始 live 与新进程崩溃恢复均装配专用收尾提示；评测规则和恢复约束仍保留。 |
-| `evaluation/reliability_schema.py`、`reliability.py` | 当前可执行套件升级为 1.6 并更新固定摘要；继续允许历史 1.5 只读重建，保留其原预算合同。 |
-| `tests/fixtures/evaluation/reliability/verification-repair/scenario.json`、`suite.json` | 新增只限 trial 工作区的目录/搜索工具及明确权限；重算材料与 suite 摘要。其他场景材料和 21/50 槽位数量不变。 |
-| `tests/test_live_failure_repairs_v052.py` | 新增非法编号的持久化与恢复校验、完整父提示下的晚期验证/计划推进/最终回复、约束保留及新工具表回归。 |
+| `state.py` | Rejection records reference only failures that really exist; unknown IDs are recorded as null, without redirecting to the active failure or forging failures. Only rejected records allow an explicit null; other states are still validated strictly; missing fields and unknown or non-string references are still refused. |
+| `recovery.py`, `agent.py`, `tools/base.py` | Handler refusals, argument schema refusals, and turn phase refusals return the active failure ID and repair phase. The refusal notice points to the legal recovery entry and does not advance the generation. |
+| `prompt.py` | Adds an application-generated `build_completion_prompt` for phases that allow only a final text reply; keeps the full project instructions. Corrects the outdated description in the original prompt that "tool failures end the loop directly". |
+| `context.py` | The application can provide a protected prompt for the final reply separately; without configuration the original prompt is still used. Working requests still use the full prompt. The final view keeps the task, all user/system constraints, and authoritative completion facts, and omits old investigation tool rounds; history, selected reasoning, and the original protected prompt are not rewritten. |
+| `__main__.py`, `resume.py` | New and resumed tasks both regenerate the working/finishing prompt pair from the current local project instructions; the finishing prompt is not imported from old sessions. |
+| `evaluation/reliability_worker.py` | Both the initial live and the new-process crash recovery assemble the dedicated finishing prompt; evaluation rules and recovery constraints are still kept. |
+| `evaluation/reliability_schema.py`, `reliability.py` | The current executable suite is upgraded to 1.6 with updated fixed digests; historical 1.5 can still be rebuilt read-only, keeping its original budget contract. |
+| `tests/fixtures/evaluation/reliability/verification-repair/scenario.json`, `suite.json` | Adds directory/search tools limited to the trial workspace with explicit permissions; recomputes material and suite digests. Other scenario material and the 21/50 slot counts are unchanged. |
+| `tests/test_live_failure_repairs_v052.py` | Adds regressions for persistence and recovery validation of illegal IDs, late verification/plan progress/final reply under the full parent prompt, constraint retention, and the new tool table. |
 
-本轮未增大 64,000 上限、未降低冷启动或校准预留、未移除尝试次数限制。收尾仍需真实模型文本回复；活动计划、当前代验证、进程、子代理与恢复 issue 的完成闸门保持有效。只有请求视图缩小，完整任务历史仍可保存。
+This round did not raise the 64,000 limit, lower cold-start or calibration reservations, or remove attempt limits. Finishing still requires a real model text reply; the completion gates for active plans, current-generation verification, processes, subagents, and recovery issues stay in effect. Only the request view shrinks, and the full task history can still be saved.
 
-## 离线验收
+## Offline acceptance
 
-定向回归 112 项通过。完整父提示的受控晚期任务剩余 19,520 tokens 时，收尾预留由约 10,128 降至 2,966，工作输入预留约 14,976，验证请求可准入，并可完成独立验证与真实无工具模拟回复。另覆盖剩余 27k 的计划推进；账本没有超额。这是固定模型响应的离线流程证据，不是对真实模型恢复率的预测。
+Targeted regressions: 112 passed. In a controlled late task with the full parent prompt and 19,520 tokens remaining, the finishing reservation dropped from about 10,128 to 2,966, the working input reservation was about 14,976, the verification request could be admitted, and independent verification and a real tool-free mock reply could be completed. Plan progress with 27k remaining is also covered; the ledger had no overrun. This is offline flow evidence with fixed model responses, not a prediction of the real model recovery rate.
 
-全量测试、离线矩阵和文档检查的最终结果见[机器可读验收记录](live-failure-repair-20261008-validation.json)。沙箱内首次验证的本机回环 HTTP fixture 无法启动，另在获准的沙箱外执行完整独立验证，原失败输出保留，不替换任何 live 槽位。
+For the final results of full tests, the offline matrix, and documentation checks, see the [machine-readable acceptance record](live-failure-repair-20261008-validation.json). In the first verification inside the sandbox, the local loopback HTTP fixture could not start; a full independent verification was run outside the sandbox with approval, the original failure output is kept, and no live slots are replaced.
 
-旧批次 `live-20260929-08`、`live-20260929-09`、`live-20260930-01` 均从冻结材料、账本与原 trial 重建，与归档报告字节一致。
+The old batches `live-20260929-08`, `live-20260929-09`, and `live-20260930-01` are all rebuilt from frozen material, ledgers, and original trials, byte-identical to the archived reports.
 
-## 尚待真实模型验证
+## Still awaiting real model verification
 
-离线结果证明已定位的保存缺陷和受控晚期预算断点得到修复，不能保证模型不再重复调查，也不能保证任意规模的受保护项目指令都能装入剩余预算。无法容纳时仍明确停止；不能通过裁剪用户约束或伪造完成解决。
+The offline results prove that the located save defect and the controlled late budget breakpoint are fixed, but cannot guarantee that the model no longer repeats investigation, nor that protected project instructions of any size fit into the remaining budget. When they cannot fit, it still stops explicitly; this cannot be solved by trimming user constraints or forging completion.
 
-后续应先运行少量独立、明确费用上限的定点 live，观察非法恢复请求后的继续执行和修复后的验证/收尾。它们不计入旧 21 槽位批次。只有定点链路通过，才重新冻结 suite 1.6 候选并考虑完整 live；本轮没有启动这些付费操作。
+Next, first run a small number of separate targeted lives with explicit cost caps, observing continued execution after illegal recovery requests and verification/finishing after the fix. They do not count toward the old 21-slot batch. Only if the targeted chain passes should the suite 1.6 candidate be re-frozen and a full live considered; this round started none of these paid operations.

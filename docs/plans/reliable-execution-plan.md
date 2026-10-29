@@ -1,21 +1,21 @@
-# 阶段六：Reliable Execution 实施计划
+# Stage 6: Reliable Execution Implementation Plan
 
-> 状态：`v0.21` Trace & Replay 已实现；阶段六实现验收完成，发布 tag 待用户创建
-> 当前基线：`v0.21`（阶段化失败—诊断—恢复—验证循环与只读回放）
-> 前置阶段：阶段五项目感知与任务编排（Project-Aware Task Orchestration，`v0.14`–`v0.16`）
-> 版本范围：`v0.17`–`v0.21`
+> Status: `v0.21` Trace & Replay implemented; Stage 6 implementation acceptance complete, release tag to be created by the user
+> Current baseline: `v0.21` (phased failure—diagnosis—recovery—verification loop and read-only replay)
+> Prerequisite stage: Stage 5 Project-Aware Task Orchestration (`v0.14`–`v0.16`)
+> Version range: `v0.17`–`v0.21`
 
-## 1. 目标与定位
+## 1. Goal and Positioning
 
-阶段五已经建立了 Plan → Execute → Observe → Verify 的正常执行闭环；当观察或验证发现问题时，模型再 Replan 并继续执行。阶段六处理这个闭环中的异常分支：**发现执行失败，基于事实判断原因，采取受约束的恢复动作，再用新的验证证据决定继续、阻塞或失败；并能回放这条决策链，验证可靠性机制确实按约束工作。**
+Stage 5 built the normal execution loop of Plan → Execute → Observe → Verify; when observation or verification finds a problem, the model Replans and continues. Stage 6 handles the exception branch of this loop: **detect an execution failure, judge the cause from facts, take a constrained recovery action, then use new verification evidence to decide whether to continue, block, or fail; and be able to replay this decision chain to verify that the reliability mechanisms really work under their constraints.**
 
-阶段六的设计原则是：
+The design principle of Stage 6:
 
 ```text
-事实依据 + 原因判断 + 受限动作 + 新验证证据 + 可回放验收
+factual basis + cause judgment + bounded action + new verification evidence + replayable acceptance
 ```
 
-目标流程：
+Target flow:
 
 ```text
 Execute
@@ -27,98 +27,98 @@ Execute
   -> Trace / Replay
 ```
 
-阶段五与阶段六的边界如下：
+The boundary between Stage 5 and Stage 6:
 
-| 能力 | 阶段五 | 阶段六 |
+| Capability | Stage 5 | Stage 6 |
 |---|---|---|
-| 任务计划与 Todo | 建立、推进和完成 Todo | 失败时要求模型重新评估当前 Todo |
-| 正常执行 | 调用工具并记录事实 | 失败后的动作选择与预算控制 |
-| 验证 | 记录当前 generation 的完成证据 | 验证失败后驱动诊断、修复和再次验证 |
-| 重新规划 | 模型维护完整计划 | 不新增独立 planner；通过正常模型回合触发计划调整 |
-| 回滚 | 不提供 | `v0.19` 起提供有边界的检查点与回滚 |
-| 可靠性验收 | 不提供失败恢复的因果回放 | `v0.21` 只读回放已有执行事实与证据 |
+| Task plan and Todo | Build, advance, and complete the Todo | Require the model to re-evaluate the current Todo on failure |
+| Normal execution | Call tools and record facts | Action choice and budget control after failure |
+| Verification | Record completion evidence of the current generation | A verification failure drives diagnosis, repair, and verification again |
+| Replanning | The model maintains the full plan | No separate planner; plan adjustments are triggered through normal model rounds |
+| Rollback | Not provided | Bounded checkpoints and rollback from `v0.19` |
+| Reliability acceptance | No causal replay of failure recovery | `v0.21` replays existing execution facts and evidence read-only |
 
-## 2. 范围与非目标
+## 2. Scope and Non-Goals
 
-### 2.1 本阶段范围
+### 2.1 Scope of this stage
 
-- 统一记录工具尝试、失败事件和恢复动作
-- 为所有执行事实绑定 `generation_id`
-- 标准化失败分类、可恢复性和阻塞/失败收口规则
-- 对重试和恢复动作施加计数预算
-- 支持 `retry`、`adjust`、`ask`、`block` 四类基础恢复动作
-- 在明确边界内为文件修改建立检查点并回滚
-- 将诊断、修复、验证串成有上限的 Repair Loop
-- 按 generation 查询和回放已有的失败、恢复与验证证据，以验收可靠性约束
+- Record tool attempts, failure events, and recovery actions uniformly
+- Bind every execution fact to a `generation_id`
+- Standardize failure classification, recoverability, and the blocked/failed finishing rules
+- Apply count budgets to retries and recovery actions
+- Support four basic recovery actions: `retry`, `adjust`, `ask`, and `block`
+- Create checkpoints for file changes and roll back within explicit boundaries
+- Chain diagnosis, repair, and verification into a bounded Repair Loop
+- Query and replay existing failure, recovery, and verification evidence by generation to accept the reliability constraints
 
-### 2.2 本阶段不做
+### 2.2 Not in this stage
 
-- `v0.18` 不暴露或执行 `rollback`；需要回滚的场景只能 `block`，直到 `v0.19` 的能力可用
-- 不比较或推断“环境是否完全相同”；预算约束只使用稳定的计数和参数指纹
-- 不引入独立的 Diagnose Agent、Planner Agent 或多 agent 协议
-- 不把任意 shell 副作用伪装成可回滚操作；未知副作用只能检查后继续或阻塞
-- 不绕过现有 `PermissionGate`，不因失败自动提升权限
-- 不引入第三方依赖、跨进程持久化或事务数据库
-- 不让运行时替模型判断业务正确性；任务级结论仍以 Verify 证据为准
-- `v0.21` 不引入任何新的执行、恢复、诊断或状态转换逻辑；它只查询和展示 `v0.17`–`v0.20` 已记录的数据；本版新增的 TodoRevision 只记录提交快照，不改变执行逻辑
-- `v0.21` 不属于阶段七的规划系统范畴。阶段七（Planning & Replanning）保持独立阶段；其重规划触发依赖阶段六的 `blocked` 状态，并可使用 `v0.21` 的回放能力进行调试，但不合并代码或阶段编号
+- `v0.18` neither exposes nor runs `rollback`; scenarios that need rollback can only `block` until the `v0.19` capability exists
+- No comparing or inferring "whether the environment is exactly the same"; budget constraints use only stable counts and argument fingerprints
+- No separate Diagnose Agent, Planner Agent, or multi-agent protocol
+- Arbitrary shell side effects are not disguised as reversible operations; unknown side effects can only continue after inspection or block
+- The existing `PermissionGate` is not bypassed, and permissions are not raised automatically because of failures
+- No third-party dependencies, cross-process persistence, or transactional database
+- The runtime does not judge business correctness for the model; task-level conclusions are still based on Verify evidence
+- `v0.21` introduces no new execution, recovery, diagnosis, or state transition logic; it only queries and shows data already recorded by `v0.17`–`v0.20`; the TodoRevision added in this version only records submission snapshots and does not change execution logic
+- `v0.21` is not part of the Stage 7 planning system. Stage 7 (Planning & Replanning) stays a separate stage; its replanning triggers depend on Stage 6's `blocked` status and can use `v0.21`'s replay for debugging, but the code and stage numbering are not merged
 
-## 3. 先冻结的架构决策
+## 3. Architecture Decisions to Freeze First
 
-### D1：`generation_id` 与执行调度共同定义证据边界
+### D1: `generation_id` and execution scheduling together define the evidence boundary
 
-`generation_id` 是任务内单调递增的验证边界，而不是对真实操作系统快照的声称：它表示“在此编号之前获准执行的所有可能副作用，都必须有此编号或更新编号上的新验证”。
+`generation_id` is a monotonically increasing verification boundary within a task, not a claim about a real operating system snapshot: it means "every possible side effect approved before this number must have new verification at this number or a newer one".
 
-- `begin_task()` 创建初始 generation。
-- 每个可执行工具在注册时声明 `effect_class`：`none` 或 `possible`。现有 `write_file`、`edit_file`、`run_shell(purpose="execution")` 和 rollback 为 `possible`；只读工具为 `none`。运行时不从命令文本猜测副作用。
-- PermissionGate 放行后、调用 handler 前，Runtime 必须在同一把 State 锁内为 `possible` 调用预留下一个 generation，并立即使旧验证失效。handler 随后超时、异常、非零退出或只写入部分内容也不回退该 generation。权限拒绝或参数在 handler 前被拒绝时不预留 generation。
-- `none` 调用与 verification 调用不推进 generation；verification 只能绑定到已经提交的当前 generation。已接受的 recovery action 是例外：Runtime 必须在同一把 State 锁内预留其后继 generation；`retry`/`adjust` 的实际工具调用复用这个 generation，`ask`/`block` 则创建无 handler 的状态转换 generation，不能重复预留。
-- 同一 LLM 回合只有全部为 `effect_class=none` 的调用才可以并发。含 `possible` 调用或 rollback 的回合必须按 tool-call 原始顺序串行执行、串行提交 State。verification 不得和 `possible` 调用处在同一回合；违反时该 verification call 产生 `invalid` 的工具结果且不进入 handler。恢复后的 Verify 也必须在恢复结果已回灌模型后的下一回合执行。
-- `ExecutionAttempt` 记录 `pre_generation_id` 和预留后的 `generation_id`；`FailureEvent`、`RecoveryAction`、`ExecutionGeneration` 和验证证据都带其所属的 `generation_id`。每个已接受的恢复动作都必须开启一个新的 `ExecutionGeneration`，即使它本身不产生外部副作用；恢复前的验证证据不能跨 generation 复用于 `done` 判定。被 schema、预算或权限拒绝的动作不是已接受的 recovery，仍必须记录拒绝事实但不创建后继 generation。
+- `begin_task()` creates the initial generation.
+- Each executable tool declares an `effect_class` at registration: `none` or `possible`. The existing `write_file`, `edit_file`, `run_shell(purpose="execution")`, and rollback are `possible`; read-only tools are `none`. The runtime does not guess side effects from command text.
+- After the PermissionGate allows a `possible` call and before the handler is called, the Runtime must reserve the next generation under the same State lock and invalidate old verification immediately. If the handler then times out, raises, exits nonzero, or writes only part of the content, the generation does not roll back. When permission is denied or arguments are refused before the handler, no generation is reserved.
+- `none` calls and verification calls do not advance the generation; verification can only bind to the current generation that is already committed. Accepted recovery actions are the exception: the Runtime must reserve their successor generation under the same State lock; the actual tool call of `retry`/`adjust` reuses this generation, while `ask`/`block` create a state transition generation with no handler, and must not reserve twice.
+- Calls in the same LLM round can run concurrently only when all of them are `effect_class=none`. A round that contains `possible` calls or rollback must run serially in the original tool-call order and commit State serially. Verification must not be in the same round as `possible` calls; if it is, that verification call produces an `invalid` tool result and does not enter the handler. The Verify after recovery must also run in the next round, after the recovery result is fed back to the model.
+- `ExecutionAttempt` records `pre_generation_id` and the reserved `generation_id`; `FailureEvent`, `RecoveryAction`, `ExecutionGeneration`, and verification evidence all carry their `generation_id`. Every accepted recovery action must open a new `ExecutionGeneration`, even if it produces no external side effect itself; verification evidence from before the recovery cannot be reused across generations for the `done` decision. Actions refused by schema, budget, or permission are not accepted recoveries; the refusal fact must still be recorded, but no successor generation is created.
 
-因此，即使一个获准的文件写入在中途失败，旧验证证据也不能继续证明当前环境；同一批并发结果的到达顺序也不能改变 generation 的含义。
+So even if an approved file write fails partway, the old verification evidence can no longer prove the current environment; the arrival order of results in the same concurrent batch also cannot change the meaning of the generation.
 
-### D2：阶段六不拥有完整重新规划能力
+### D2: Stage 6 does not own full replanning
 
-阶段六的 Recovery Policy 只能决定当前失败的下一步动作，并可要求模型重新诊断。它可以建议调整单个工具调用的参数、命令或顺序，但不直接生成或替换完整 Todo。
+Stage 6's Recovery Policy can only decide the next action for the current failure and can require the model to diagnose again. It can suggest adjusting the arguments, command, or order of a single tool call, but it does not generate or replace the full Todo directly.
 
-当需要改变任务方案时，运行时发出结构化 recovery notice，下一次普通 LLM 回合负责调用已有的 `update_todo` 并提交新计划。这样“完整计划”仍由阶段五的 Task State 协议负责，阶段六只提供触发条件和事实。
+When the task approach needs to change, the runtime issues a structured recovery notice, and the next ordinary LLM round is responsible for calling the existing `update_todo` and submitting the new plan. This way the "full plan" stays the responsibility of the Stage 5 Task State protocol, and Stage 6 only provides the trigger conditions and facts.
 
-### D3：RecoveryAction 的执行结果引用不代表任务修复
+### D3: The execution result reference of a RecoveryAction does not mean the task is fixed
 
-`RecoveryAction.result_attempt` 只引用恢复动作实际产生的 `ExecutionAttempt`；该 attempt 记录权限结果、退出码或异常等执行层事实。例如“重试关联 attempt `a-7`，其退出码为 1”。它不得声称任务已经修复。
+`RecoveryAction.result_attempt` only references the `ExecutionAttempt` that the recovery action actually produced; that attempt records execution-level facts such as the permission result, exit code, or exception. For example, "the retry is linked to attempt `a-7`, whose exit code was 1". It must not claim that the task is already fixed.
 
-任务级别的正确性、Todo 是否完成以及修改后环境是否满足目标，全部由后续 Verify 调用和阶段五的完成条件判断。Recovery 与 Verify 不能互相代替。
+Task-level correctness, whether the Todo is complete, and whether the changed environment meets the goal are all judged by later Verify calls and the Stage 5 completion conditions. Recovery and Verify cannot replace each other.
 
-### D4：重试只受计数和预算约束
+### D4: Retries are bounded only by counts and budgets
 
-不要求判断两次尝试之间的环境是否相同。运行时至少维护以下硬上限（具体默认值可在实现时配置并写入教程）：
+There is no requirement to judge whether the environment is the same between two attempts. The runtime maintains at least the following hard limits (the specific defaults can be configured at implementation and written into the tutorial):
 
-- 单个 `failure_id` 的恢复/重试次数不超过 `MAX_FAILURE_RETRIES`
-- 同一 `(tool, arguments_hash)` 组合的执行次数不超过 `MAX_ATTEMPT_FINGERPRINTS`
-- 单任务的恢复动作总数不超过 `MAX_RECOVERY_ACTIONS`
-- Repair Loop 的诊断—修复—验证周期不超过 `MAX_REPAIR_CYCLES`
+- Recoveries/retries for a single `failure_id` do not exceed `MAX_FAILURE_RETRIES`
+- Executions of the same `(tool, arguments_hash)` combination do not exceed `MAX_ATTEMPT_FINGERPRINTS`
+- The total number of recovery actions in a single task does not exceed `MAX_RECOVERY_ACTIONS`
+- Diagnosis—repair—verification cycles of the Repair Loop do not exceed `MAX_REPAIR_CYCLES`
 
-达到上限后不得静默重复；必须依据下表收口为 `blocked` 或 `failed`。
+After a limit is reached, nothing may repeat silently; the task must finish as `blocked` or `failed` according to the table below.
 
-`arguments_hash` 固定为校验后的参数以 canonical JSON（键排序、稳定分隔符、类型不丢失）编码后计算的 SHA-256；State 和 Structured State 只显示 hash 与脱敏参数摘要，不显示凭据原文。计数检查和额度预留必须在实际恢复调用前、同一把 State 锁内完成；未预留到额度的调用不得进入 PermissionGate 或 handler。
+`arguments_hash` is fixed as the SHA-256 computed from the validated arguments encoded as canonical JSON (sorted keys, stable separators, no type loss); State and Structured State show only the hash and a redacted argument summary, never the raw credentials. Count checks and quota reservation must be done before the actual recovery call, under the same State lock; a call that did not reserve quota must not enter the PermissionGate or the handler.
 
-### D5：`blocked` 与 `failed` 的判定规则
+### D5: Deciding `blocked` vs `failed`
 
-| 条件 | 状态 | 含义 |
+| Condition | Status | Meaning |
 |---|---|---|
-| 瞬时/可重试失败，但对应预算已耗尽 | `blocked` | 可能仍可恢复，但当前运行不能继续安全尝试 |
-| 需要用户输入、授权或外部资源，且当前通道不可用 | `blocked` | 等待外部条件，不宣称任务不可完成 |
-| 诊断信息不足，继续动作会有未知副作用 | `blocked` | 保守停止，保留失败事实供人工或下一次运行处理 |
-| 权限被明确拒绝且没有可用的 ask/授权路径 | `failed` | 当前任务在既定权限边界内不可执行 |
-| 协议、参数或状态违反运行时不变量，且无法由调整动作修复 | `failed` | 当前执行路径确定无效 |
-| 明确不可恢复的外部错误或 Repair Loop 预算耗尽且没有待等待条件 | `failed` | 已无受支持的恢复路径 |
+| Transient/retryable failure, but the matching budget is exhausted | `blocked` | May still be recoverable, but the current run cannot keep trying safely |
+| User input, authorization, or an external resource is needed, and the current channel is unavailable | `blocked` | Waiting for an external condition; does not claim the task cannot be done |
+| Diagnostic information is insufficient, and continuing would have unknown side effects | `blocked` | Stop conservatively, keeping the failure facts for manual handling or the next run |
+| Permission explicitly denied, with no available ask/authorization path | `failed` | The current task cannot be executed within the established permission boundaries |
+| Protocol, arguments, or state violate runtime invariants and cannot be fixed by an adjust action | `failed` | The current execution path is definitely invalid |
+| An explicitly unrecoverable external error, or the Repair Loop budget is exhausted with no condition to wait for | `failed` | No supported recovery path remains |
 
-`blocked` 不是成功的别名，`failed` 也不是异常字符串的别名；两者都必须携带最后一个 `FailureEvent` 和可读原因。
+`blocked` is not an alias for success, and `failed` is not an alias for an exception string; both must carry the last `FailureEvent` and a readable reason.
 
-## 4. 数据模型（`v0.17` 冻结的最小 schema）
+## 4. Data Model (minimal schema frozen in `v0.17`)
 
-运行时事实与模型判断分开保存，四类记录都不可由 `update_todo` 直接修改。除初始 generation 外，所有失败/恢复相关记录必须同时保存 `generation_id` 和明确的因果链接字段，链接到直接触发它的前一个 `FailureEvent` 或 `ExecutionAttempt`；不得仅靠时间顺序或自然语言推断关联关系。这个约束在 `v0.17` 冻结，以保证 `v0.21` 无需迁移或扩展底层模型即可回放。
+Runtime facts are stored separately from model judgments, and none of the four kinds of records can be changed directly by `update_todo`. Apart from the initial generation, all failure/recovery-related records must store both a `generation_id` and explicit causal link fields linking to the previous `FailureEvent` or `ExecutionAttempt` that directly triggered them; relationships must not be inferred only from time order or natural language. This constraint is frozen in `v0.17`, so that `v0.21` can replay without migrating or extending the underlying model.
 
 ```text
 ExecutionGeneration
@@ -169,64 +169,64 @@ RecoveryAction
 - result_attempt: optional execution-level result reference
 ```
 
-除任务启动的初始 generation 外，`ExecutionGeneration` 必须有且只有一个 `opened_by_*` 因果前驱；由失败恢复开启的 generation 以 `opened_by_recovery_id` 为准。因失败或恢复触发的 `ExecutionAttempt` 必须有且只有一个 `caused_by_*` 因果前驱；普通初始执行 attempt 可为空。
+Apart from the initial generation at task start, an `ExecutionGeneration` must have exactly one `opened_by_*` causal predecessor; a generation opened by failure recovery uses `opened_by_recovery_id`. An `ExecutionAttempt` triggered by a failure or recovery must have exactly one `caused_by_*` causal predecessor; an ordinary initial execution attempt can have none.
 
-字段所有权：
+Field ownership:
 
-- ToolRegistry 声明 `effect_class`；Executor 产生结构化 `ExecutionResult`（权限决定、handler 是否获准、结果、耗时、退出码、超时和错误种类），不能只把 `ok` 布尔值或格式化字符串回调给 State。Runtime 将其写成 `ExecutionAttempt`，并在 handler 前完成 generation 预留。
-- Runtime 根据结果产生 `FailureEvent` 的基础分类、计数和因果关联关系，并创建不可变的 `ExecutionGeneration` 开启记录。`retry` 或 `adjust` 所产生的 attempt 必须回链到触发它的 failure；恢复 action 必须回链到触发它的 failure，不能只保留展示性文字。
-- 模型可以提供 `cause_hint`、`reason` 和 `adjust` 的参数，但不能伪造执行结果、选择 `result_attempt` 或清除失败记录。原始已校验参数仅保留在当前任务的私有 attempt 存储中，供 retry 使用，不渲染到 Context。
-- Verify 继续由现有验证证据机制负责；其证据必须绑定 `generation_id`，通过后才能解除 `verification_required`。
+- The ToolRegistry declares `effect_class`; the Executor produces a structured `ExecutionResult` (permission decision, whether the handler was admitted, result, duration, exit code, timeout, and error kind) and cannot just call back State with an `ok` boolean or a formatted string. The Runtime writes it as an `ExecutionAttempt` and completes the generation reservation before the handler.
+- The Runtime produces the basic classification, counts, and causal relationships of `FailureEvent` from the result, and creates the immutable `ExecutionGeneration` opening record. Attempts produced by `retry` or `adjust` must link back to the failure that triggered them; recovery actions must link back to the triggering failure and cannot keep only display text.
+- The model can provide `cause_hint`, `reason`, and the arguments of `adjust`, but cannot forge execution results, choose `result_attempt`, or clear failure records. The original validated arguments are kept only in the current task's private attempt storage for retry and are not rendered into the Context.
+- Verify stays the responsibility of the existing verification evidence mechanism; its evidence must bind a `generation_id`, and only after passing can it clear `verification_required`.
 
-## 5. 版本切片
+## 5. Version Slices
 
 ### 5.1 `v0.17` Failure Model
 
-目标：让每次失败都可观察、可关联、可计数。
+Goal: make every failure observable, linkable, and countable.
 
-主要工作：
+Main work:
 
-1. 在 `AgentState` 中加入 generation、失败事件、执行尝试和恢复计数的结构化状态。
-2. 为 ToolRegistry 加入 `effect_class`，并把 Executor 回调升级为结构化 `ExecutionResult`；保留完整工具回灌内容的既有协议，但 State 只能依据结构化字段分类。
-3. 在 handler 前原子预留 `possible` 调用的 generation，限制并发只用于全只读回合，并拒绝与可能副作用同回合的 verification call。
-4. 把权限拒绝、超时、非零退出、参数/协议错误和验证失败映射为基础分类。
-5. 用 canonical arguments hash 为 `failure_id`、参数 fingerprint 和任务级动作维护原子预算计数。
-6. 固定 `blocked` / `failed` 判定与状态转换，不实现自动恢复动作。
-7. 在 Context 的 Structured State 中渲染最近失败、当前 generation、剩余预算和待处理 recovery notice；参数只显示 hash 与脱敏摘要。
+1. Add structured state for generations, failure events, execution attempts, and recovery counts to `AgentState`.
+2. Add `effect_class` to the ToolRegistry and upgrade the Executor callback to a structured `ExecutionResult`; keep the existing protocol of feeding back full tool content, but State can classify only from structured fields.
+3. Reserve the generation of `possible` calls atomically before the handler, limit concurrency to fully read-only rounds, and refuse verification calls in the same round as possible side effects.
+4. Map permission denials, timeouts, nonzero exits, argument/protocol errors, and verification failures to basic categories.
+5. Use the canonical arguments hash to maintain atomic budget counts per `failure_id`, argument fingerprint, and task-level action.
+6. Fix the `blocked` / `failed` decision and state transitions, without implementing automatic recovery actions.
+7. Render the recent failure, the current generation, the remaining budget, and pending recovery notices in the Context's Structured State; arguments show only the hash and a redacted summary.
 
-验收重点：同一失败可以被稳定关联；失败与恢复可沿显式因果链接回溯；失败不会被普通 history trimming 丢失；获准但失败的可能副作用同样会使旧验证证据失效；并发的只读回合不会改变记录顺序或 generation 语义。
+Acceptance focus: the same failure can be linked stably; failures and recoveries can be traced back along explicit causal links; failures are not lost by ordinary history trimming; approved but failed possible side effects also invalidate old verification evidence; concurrent read-only rounds do not change record order or generation semantics.
 
 ### 5.2 `v0.18` Recovery Policy
 
-目标：在不提供回滚的前提下，支持有限且可解释的恢复选择。
+Goal: support bounded, explainable recovery choices without providing rollback.
 
-动作集合只有：`retry`、`adjust`、`ask`、`block`。
+The action set is only: `retry`, `adjust`, `ask`, and `block`.
 
-- 模型通过新增、受 JSON Schema 校验的 `recover` 控制工具提交动作；它不是独立 planner，也不绕过普通工具调用。`recover` 必须带 `caused_by_failure_id`、`reason` 和 action 所需引用或参数。
-- 每个通过 schema、预算和权限检查而被接受的 action，都在 State 锁内预留一个后继 generation 并写入 `result_generation_id`。`retry`/`adjust` 的实际工具调用复用该 generation；`ask`/`block` 也保留该 state-only generation，使旧验证证据不能被复用。
-- `retry`：仅用于可重试失败，必须精确引用原 `attempt_id`，并在 State 锁内预留对应预算后，使用当前任务私有 attempt 存储中的原始参数重新经 PermissionGate 执行。
-- `adjust`：模型基于失败事实提交目标工具和新参数；Runtime 校验参数、记录其 canonical hash 与脱敏摘要、原子预留预算后，再将该调用经 PermissionGate 执行。必要时通过 recovery notice 触发 Todo 调整。
-- `ask`：需要用户授权、缺失信息或外部条件时暂停执行。
-- `block`：没有安全恢复路径时保守收口。
+- The model submits actions through a new `recover` control tool validated by JSON Schema; it is not a separate planner and does not bypass ordinary tool calls. `recover` must carry `caused_by_failure_id`, `reason`, and the references or arguments the action needs.
+- Every action accepted after schema, budget, and permission checks reserves a successor generation under the State lock and writes `result_generation_id`. The actual tool call of `retry`/`adjust` reuses this generation; `ask`/`block` also keep this state-only generation, so old verification evidence cannot be reused.
+- `retry`: only for retryable failures; it must reference the original `attempt_id` exactly and, after reserving the matching budget under the State lock, run again through the PermissionGate with the original arguments from the current task's private attempt storage.
+- `adjust`: the model submits a target tool and new arguments based on the failure facts; the Runtime validates the arguments, records their canonical hash and redacted summary, reserves budget atomically, and then runs the call through the PermissionGate. When needed, a Todo adjustment is triggered by a recovery notice.
+- `ask`: pause execution when user authorization, missing information, or an external condition is needed.
+- `block`: finish conservatively when there is no safe recovery path.
 
-`v0.18` 明确不接受 `rollback` 作为 action 值。验证失败且模型判断必须撤销已有副作用时，系统只能记录原因并进入 `blocked`，不能模拟回滚成功。
+`v0.18` explicitly does not accept `rollback` as an action value. When verification fails and the model judges that existing side effects must be undone, the system can only record the reason and enter `blocked`; it cannot simulate a successful rollback.
 
-### 5.3 `v0.19` 检查点与回滚（Checkpoint / Rollback）
+### 5.3 `v0.19` Checkpoint / Rollback
 
-实现状态：已完成单文件检查点与回滚；v0.20 在此基础上补齐阶段化 Repair Loop，本节保留实现边界与验收依据。
+Implementation status: single-file checkpoints and rollback are complete; v0.20 completes the phased Repair Loop on top of this, and this section keeps the implementation boundaries and acceptance basis.
 
-目标：为可追踪的文件修改提供有限、可审计的恢复能力。
+Goal: provide bounded, auditable recovery for traceable file changes.
 
-- 检查点的作用域固定为**一次成功或失败的单文件 `write_file`/`edit_file` 调用**，不尝试提供多文件事务。创建检查点时在 handler 前捕获同一真实路径的前镜像：规范化后的工作区内相对路径、`absent | regular-file` 类型、原始字节、mode、前镜像 SHA-256、创建 generation 与 attempt ID。路径解析到工作区外、符号链接、非普通文件、超过 `MAX_CHECKPOINT_BYTES` 的文件一律不支持检查点，调用仍可执行但不可回滚。
-- 每个检查点只绑定一个文件和一次写入；写入结束后记录预期的后镜像 SHA-256。原文件不存在时以 `absent` tombstone 表示，回滚的目标是删除这次创建的文件。
-- `v0.19` 将 `rollback` 加入 `recover` action schema，且该 action 必须引用一个检查点 ID。Runtime 据此调用不直接暴露给模型的 `rollback_checkpoint` 工具；该工具仍必须经 PermissionGate 按目标路径授权，模型不能提供替换内容。执行前必须验证当前文件类型和 digest 仍等于该检查点的后镜像，否则判为外部改变并拒绝写入。
-- 恢复使用同目录临时文件加原子 replace；对于 `absent` tombstone，只能删除 digest 仍匹配后镜像的普通文件。restore 的任一步骤失败都记录为副作用未知、保留检查点，并进入 `blocked`，不能声称已经回滚。
-- 回滚仅对上述检查点文件承诺恢复；任意 shell、网络或外部服务副作用不承诺可回滚。每次回滚都是 `possible` 调用：在 handler 前预留新 generation、清除旧验证证据，并要求下一 LLM 回合的独立 Verify。
-- 检查点缺失、文件已被外部改变或副作用范围未知时，动作结果为失败并按 `blocked` / `failed` 规则收口。
+- The scope of a checkpoint is fixed to **one successful or failed single-file `write_file`/`edit_file` call**; no multi-file transaction is attempted. When creating a checkpoint, capture the pre-image of the same real path before the handler: the normalized relative path inside the workspace, the type `absent | regular-file`, the raw bytes, mode, the pre-image SHA-256, and the creating generation and attempt ID. Paths that resolve outside the workspace, symlinks, non-regular files, and files over `MAX_CHECKPOINT_BYTES` are not supported for checkpoints; the call can still run but cannot be rolled back.
+- Each checkpoint binds only one file and one write; after the write, the expected post-image SHA-256 is recorded. When the original file did not exist, it is represented by an `absent` tombstone, and the goal of rollback is to delete the file this write created.
+- `v0.19` adds `rollback` to the `recover` action schema, and the action must reference a checkpoint ID. The Runtime then calls the `rollback_checkpoint` tool, which is not exposed to the model directly; this tool must still be authorized by the PermissionGate on the target path, and the model cannot provide replacement content. Before running, it must verify that the current file type and digest still equal the checkpoint's post-image; otherwise it is judged as an external change and the write is refused.
+- Restoration uses a temporary file in the same directory plus an atomic replace; for an `absent` tombstone, only a regular file whose digest still matches the post-image can be deleted. Any failed restore step is recorded as an unknown side effect, keeps the checkpoint, and enters `blocked`; it cannot claim the rollback happened.
+- Rollback promises restoration only for the checkpointed files above; arbitrary shell, network, or external service side effects are not promised to be reversible. Every rollback is a `possible` call: a new generation is reserved before the handler, old verification evidence is cleared, and an independent Verify is required in the next LLM round.
+- When the checkpoint is missing, the file was changed externally, or the scope of side effects is unknown, the action result is a failure, finished as `blocked` / `failed` according to the rules.
 
 ### 5.4 `v0.20` Repair Loop
 
-目标：把失败分类、诊断、恢复和验证串成完整的有上限循环。
+Goal: chain failure classification, diagnosis, recovery, and verification into a complete bounded loop.
 
 ```text
 failure
@@ -238,60 +238,60 @@ failure
   -> continue, next failure, blocked, or failed
 ```
 
-该版本只复用阶段五已有的 LLM 回合和 Todo 工具，不创建第二个 planner。实现冻结三个运行阶段：`idle`、`diagnosis_required` 和 `verification_required`。失败进入诊断阶段；诊断阶段只允许只读调查、`update_todo` 或独占 `recover`，并且 recover 只能引用当前活动 failure。被授权并激活的 `retry`、`adjust`、`rollback` 才消耗一个 repair cycle；初始失败、拒绝、权限拒绝和 `ask`/`block` 不消耗。恢复结果回灌后，下一工具回合必须是单个独立 verification；通过后才回到 idle，失败则产生新的 FailureEvent 并回到诊断阶段。agent loop 与 ToolExecutor 都执行同一准入协议，拒绝调用仍按原始顺序回灌对应 `role=tool` 结果。
+This version reuses only Stage 5's existing LLM rounds and Todo tool and creates no second planner. The implementation freezes three run phases: `idle`, `diagnosis_required`, and `verification_required`. A failure enters the diagnosis phase; the diagnosis phase allows only read-only investigation, `update_todo`, or an exclusive `recover`, and recover can reference only the current active failure. Only authorized and activated `retry`, `adjust`, and `rollback` consume a repair cycle; the initial failure, rejections, permission denials, and `ask`/`block` do not. After the recovery result is fed back, the next tool round must be a single independent verification; only after it passes does the phase return to idle, while a failure produces a new FailureEvent and returns to the diagnosis phase. Both the agent loop and the ToolExecutor enforce the same admission protocol, and refused calls are still fed back as matching `role=tool` results in the original order.
 
-Structured State 的 `repair_loop` 保存阶段、活动 failure/recovery、周期已用/剩余量和要求的下一动作；压缩后的 critical state 与 completion Runtime Notice 同步这些字段。这样每个周期都能回答：失败事实是什么、选择动作的理由是什么、动作执行结果是什么、验证证据是否属于当前 generation。任何已接受的恢复动作都必须进入新 generation；旧 generation 的验证证据不得复用于 `done` 判定。
+The `repair_loop` in Structured State stores the phase, the active failure/recovery, the cycles used/remaining, and the required next action; the compacted critical state and the completion Runtime Notice sync these fields. So every cycle can answer: what the failure facts are, the reason the action was chosen, the result of executing the action, and whether the verification evidence belongs to the current generation. Every accepted recovery action must enter a new generation; verification evidence from an old generation must not be reused for the `done` decision.
 
 ### 5.5 `v0.21` Trace & Replay
 
-目标：支持按 generation 回放一次任务的完整决策链：计划 → 执行 → 失败 → 分类/诊断 → 恢复 → 再验证 → 终态。
+Goal: support replaying, by generation, a task's complete decision chain: plan → execution → failure → classification/diagnosis → recovery → re-verification → terminal state.
 
-本版是阶段六的验收和调试收尾，不引入新的执行、恢复、诊断或状态转换逻辑。它只查询并展示 `v0.17`–`v0.21` 已产生的 `ExecutionGeneration`、`ExecutionAttempt`、`FailureEvent`、`RecoveryAction`、Todo/计划变更、append-only verification history 和终态；回放不得补写、推测或修复缺失的运行时事实。当前 `verification_evidence` 仍只保留当前 generation 并服务完成判定，历史记录不参与 `done` 判定。
+This version is Stage 6's acceptance and debugging wrap-up and introduces no new execution, recovery, diagnosis, or state transition logic. It only queries and shows the `ExecutionGeneration`, `ExecutionAttempt`, `FailureEvent`, `RecoveryAction`, Todo/plan changes, append-only verification history, and terminal states produced by `v0.17`–`v0.21`; replay must not write, guess, or repair missing runtime facts. The current `verification_evidence` still keeps only the current generation and serves the completion decision; the history records take no part in the `done` decision.
 
-回放视图按 generation 顺序呈现状态转换，并以 schema 中冻结的因果链接连接每条记录到其触发的 attempt 或 failure。每个节点必须能显示原始、已脱敏的执行/验证证据及其来源，且明确标出证据所属 generation；终态必须显示为 `continue`、`done`、`blocked` 或 `failed` 及其最后依据。
+The replay view presents state transitions in generation order and connects each record to the attempt or failure that triggered it through the causal links frozen in the schema. Each node must be able to show the raw, redacted execution/verification evidence and its source, and mark clearly the generation the evidence belongs to; the terminal state must be shown as `continue`, `done`, `blocked`, or `failed` with its final basis.
 
-实现状态：已新增不可变 `TodoRevision`、append-only `verification_history`、`src/mini_agent/trace.py` 的 `build_trace()` / `render_trace()` 和 `/trace [generation_id]` CLI。报告校验重复/缺失引用、generation opener、attempt/failure 双向引用、recovery 结果、verification 历史完整性和当前证据隔离；损坏快照保留可确认记录并输出 unresolved 边。回放只读，不调用 LLM、工具或权限闸门，也不修改 history、预算、State 或 generation。
+Implementation status: added the immutable `TodoRevision`, the append-only `verification_history`, `build_trace()` / `render_trace()` in `src/mini_agent/trace.py`, and the `/trace [generation_id]` CLI. The report validates duplicate/missing references, generation openers, two-way attempt/failure references, recovery results, verification history integrity, and current evidence isolation; corrupted snapshots keep the records that can be confirmed and output unresolved edges. Replay is read-only; it does not call the LLM, tools, or the permission gate, and does not change history, budgets, State, or generations.
 
-验收重点：对 `v0.17`–`v0.20` 产生的至少一次真实失败—恢复案例，能够完整回放每个 generation 的状态转换，以及每个分类、诊断、恢复和终态所依据的原始证据。该案例应能直接用于核验 `v0.18` 的恢复策略与预算、`v0.19` 的回滚边界和 `v0.20` 的验证证据隔离是否按预期生效。
+Acceptance focus: for at least one real failure—recovery case produced by `v0.17`–`v0.20`, it can fully replay each generation's state transitions and the raw evidence on which each classification, diagnosis, recovery, and terminal state is based. This case should be directly usable to check whether `v0.18`'s recovery policy and budgets, `v0.19`'s rollback boundaries, and `v0.20`'s verification evidence isolation work as intended.
 
-## 6. 测试与验收
+## 6. Tests and Acceptance
 
-### 6.1 单元测试
+### 6.1 Unit tests
 
-- generation 在写文件、execution shell、验证、权限拒绝后的变化符合 D1。
-- 获准但抛出异常、超时或只写入部分内容的 `possible` 调用仍预留 generation 并使验证失效；拒绝和 handler 前参数错误不会。
-- 含副作用的同轮 tool calls 按原顺序串行提交；混入 verification 的调用被回灌为 `invalid`，不执行 handler。
-- `ExecutionGeneration`、attempt、failure、recovery 和验证证据始终带 generation_id；除初始 generation 外，失败/恢复记录的因果链接完整且可机器追溯。
-- Executor 的结构化结果能无字符串解析地表达权限拒绝、handler 异常、超时、退出码和耗时；canonical arguments hash 对键序稳定且 Context 不泄露原始敏感参数。
-- failure_id、参数 fingerprint、动作总数和 repair cycle 超限时不再执行隐藏重试。
-- `retry` 精确复用其引用 attempt 的参数；`adjust`、预算预留、PermissionGate 执行和 `result_attempt` 关联均可独立测试。
-- `RecoveryAction.result_attempt` 不会被当作 Verify 证据；验证失败仍保持 `verification_required`。
-- `blocked` / `failed` 判定表覆盖每种输入，状态转换可重复测试。
-- `v0.18` 的 action schema 拒绝 `rollback`。
-- 检查点覆盖既有文件、新建文件、外部修改、符号链接/工作区外路径、大小上限和 restore 中断；失败恢复不会把任务表述为已回滚。
-- Trace & Replay 能仅依赖冻结 schema 的 generation 与因果链接重建一条失败—恢复—验证链；缺失链接或跨 generation 复用验证证据会被明确标为不可验收，而不是由展示层猜测补全。
-- 当前 verification evidence 在 generation 变化后失效，但 append-only verification history 仍保留每一代的原始审计证据；两者不能互相替代。
+- Generation changes after file writes, execution shell, verification, and permission denials follow D1.
+- Approved `possible` calls that raise, time out, or write only part of their content still reserve a generation and invalidate verification; refusals and argument errors before the handler do not.
+- Same-round tool calls with side effects are committed serially in the original order; a verification mixed in is fed back as `invalid` and the handler is not run.
+- `ExecutionGeneration`, attempts, failures, recoveries, and verification evidence always carry a generation_id; apart from the initial generation, the causal links of failure/recovery records are complete and machine-traceable.
+- The Executor's structured result can express permission denials, handler exceptions, timeouts, exit codes, and durations without string parsing; the canonical arguments hash is stable under key order, and the Context does not leak raw sensitive arguments.
+- When the failure_id, argument fingerprint, total action count, or repair cycle limits are exceeded, no hidden retry is run.
+- `retry` reuses the arguments of the attempt it references exactly; `adjust`, budget reservation, PermissionGate execution, and the `result_attempt` link can each be tested independently.
+- `RecoveryAction.result_attempt` is never treated as Verify evidence; after a verification failure, `verification_required` stays set.
+- The `blocked` / `failed` decision table covers every input, and state transitions can be tested repeatedly.
+- `v0.18`'s action schema refuses `rollback`.
+- Checkpoints cover existing files, new files, external changes, symlinks/paths outside the workspace, size limits, and interrupted restores; failed recovery never describes the task as rolled back.
+- Trace & Replay can rebuild a failure—recovery—verification chain relying only on the generations and causal links of the frozen schema; missing links or verification evidence reused across generations are marked explicitly as not acceptable, never filled in by guesses in the display layer.
+- Current verification evidence is invalidated after a generation change, but the append-only verification history still keeps the raw audit evidence of each generation; the two cannot replace each other.
 
-### 6.2 阶段级 E2E 场景
+### 6.2 Stage-level E2E scenarios
 
-1. 命令临时失败，有限重试后成功并通过最终验证。
-2. 参数错误，模型调整参数后成功。
-3. 修改后测试失败，模型根据输出二次修复并重新验证通过。
-4. 权限拒绝或连续失败，最终以明确原因进入 `blocked` 或 `failed`，没有死循环。
-5. `v0.19` 中单文件检查点回滚后，旧验证证据失效；外部修改或 restore 中断时进入 blocked；新验证通过才能继续。
-6. 至少一次上下文压缩后，generation、失败事件、剩余预算和 recovery notice 仍然准确。
-7. 对一次真实失败—恢复案例，按 generation 回放计划、attempt、failure、诊断、recovery、验证证据和终态；每一状态转换都能定位其原始、已脱敏证据与因果前驱。
+1. A command fails transiently, succeeds after bounded retries, and passes final verification.
+2. Wrong arguments; the model adjusts them and succeeds.
+3. Tests fail after a change; the model fixes again based on the output and verification passes again.
+4. Permission denials or repeated failures finally enter `blocked` or `failed` with an explicit reason, with no infinite loop.
+5. In `v0.19`, after a single-file checkpoint rollback, old verification evidence is invalidated; an external change or an interrupted restore enters blocked; only a new passing verification allows continuing.
+6. After at least one context compaction, the generation, failure events, remaining budgets, and recovery notices are still accurate.
+7. For a real failure—recovery case, replay the plan, attempts, failures, diagnoses, recoveries, verification evidence, and terminal state by generation; every state transition can locate its raw, redacted evidence and causal predecessor.
 
-### 6.3 阶段完成定义
+### 6.3 Stage definition of done
 
-- [x] `v0.17`–`v0.21` 各有独立教程、变更记录和可运行测试。
-- [x] 所有失败都能关联到执行尝试和 generation；没有仅靠自然语言字符串驱动的隐藏状态。
-- [x] 每次恢复动作都受 PermissionGate 和计数预算约束，并开启新的 Execution Generation；旧 generation 的验证证据不可复用于 `done` 判定。
-- [x] 回滚只在 `v0.19` 及以后对明确检查点的副作用可用。
-- [x] Repair Loop 能在成功、继续修复、阻塞和失败四种结果间正确收口。
-- [x] v0.21 能用冻结的结构化数据回放至少一个真实失败—恢复案例，展示每个 generation 的状态转换与原始证据。
-- [x] Trace & Replay 只读回放、断链标记和按 generation CLI 查询已完成。
-- [x] 默认测试套件、教程检查和阶段级 E2E 全部通过，运行时仍只有标准库。
-- [ ] 用户手动创建 `v0.21` tag 后，教程事实检查通过并完成发布验收。
+- [x] `v0.17`–`v0.21` each have their own tutorial, change record, and runnable tests.
+- [x] Every failure can be linked to an execution attempt and a generation; there is no hidden state driven only by natural language strings.
+- [x] Every recovery action is bound by the PermissionGate and count budgets and opens a new Execution Generation; verification evidence from old generations cannot be reused for the `done` decision.
+- [x] Rollback is available only from `v0.19` onwards, for side effects with explicit checkpoints.
+- [x] The Repair Loop finishes correctly among four outcomes: success, continued repair, blocked, and failed.
+- [x] v0.21 can replay at least one real failure—recovery case with the frozen structured data, showing each generation's state transitions and raw evidence.
+- [x] Trace & Replay read-only replay, broken-chain marking, and CLI queries by generation are complete.
+- [x] The default test suite, the tutorial check, and the stage-level E2E all pass, and the runtime still uses only the standard library.
+- [ ] After the user manually creates the `v0.21` tag, the tutorial facts check passes and release acceptance is complete.
 
-阶段六完成后，mini_agent 的完成标准不再只是“工具调用过且测试曾经通过”，而是：**失败有结构化事实，恢复有明确边界，结果有属于当前 generation 的新验证证据；这些事实还能按 generation 完整回放，以验证可靠性机制真的按预期工作；无法继续时也能准确说明是 blocked 还是 failed。**
+After Stage 6, mini_agent's completion standard is no longer just "tools were called and the tests passed once", but: **failures have structured facts, recovery has explicit boundaries, and results have new verification evidence belonging to the current generation; these facts can also be replayed completely by generation to verify that the reliability mechanisms really work as intended; and when it cannot continue, it can state accurately whether it is blocked or failed.**

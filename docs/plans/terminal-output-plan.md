@@ -1,34 +1,34 @@
-# 终端输出实施计划
+# Terminal Output Implementation Plan
 
-> 状态：已完成（A–D 已实现并验收）
-> 范围：终端输出、流式观察与 CLI 交互呈现
-> 非目标：颜色、Markdown、第三方依赖、版本号、`AGENTS.md` 或主 README 改动
+> Status: complete (A–D implemented and accepted)
+> Scope: terminal output, streaming observation, and CLI interaction presentation
+> Non-goals: color, Markdown, third-party dependencies, version numbers, changes to `AGENTS.md` or the main README
 
-## 1. 目标
+## 1. Goal
 
-为 agent loop 和 CLI 提供稳定、可读、可重定向的终端输出协议，同时保持模型消息历史和工具结果不被展示层改写：
+Provide the agent loop and CLI with a stable, readable, redirectable terminal output protocol, while keeping the model message history and tool results from being rewritten by the presentation layer:
 
-- 用户输入提示固定为 `你 › `。
-- 助手正文按流式 chunk 懒加载 `助手 › ` 标题；没有正文时不输出空标题。
-- 普通模式按批次汇总工具调用，并按原调用顺序呈现结构化结果。
-- 调试模式增加轮次、参数和有界结果；安静模式隐藏助手正文、进度和运行时状态。
-- 明确的 CLI 通知和权限确认在安静模式仍可见。
+- The user input prompt is fixed as `You › `.
+- The assistant body lazily loads the `Assistant › ` header per streaming chunk; no empty header is printed when there is no body.
+- Normal mode summarizes tool calls per batch and presents structured results in the original call order.
+- Debug mode adds rounds, arguments, and bounded results; quiet mode hides the assistant body, progress, and runtime status.
+- Explicit CLI notifications and permission confirmations stay visible in quiet mode.
 
-## 2. 行为边界
+## 2. Behavior Boundaries
 
-`TerminalOutput` 只负责观察性呈现，写入失败不得影响 agent loop。普通模式的成功结果只显示工具名及安全摘要：文件工具仅显示 `path`，`run_shell` 仅显示 `command`，摘要不超过 100 个字符；其他参数（包括写入内容）不显示。失败、拒绝、超时和无效结果显示不超过 240 个字符的原因。调试模式显示参数和结果，各自不超过 1200 个字符。工具结果回灌模型时仍使用完整协议内容，不受终端截断影响。
+`TerminalOutput` is responsible only for observational presentation; write failures must not affect the agent loop. Successful results in normal mode show only the tool name and a safe summary: file tools show only `path`, `run_shell` shows only `command`, and summaries are at most 100 characters; other arguments (including written content) are not shown. Failures, refusals, timeouts, and invalid results show a reason of at most 240 characters. Debug mode shows arguments and results, each at most 1200 characters. When tool results are fed back to the model, the full protocol content is still used, unaffected by terminal truncation.
 
-`call_llm(..., on_content=...)` 在 `stream_output` 有效时逐 chunk 调用观察回调；提供回调后不额外打印正文。回调异常会被隔离，不影响 SSE 累积。`stream_output=False` 时既不打印也不调用回调，但仍返回完整的 assistant message；未提供回调的独立流式调用保留标准输出兼容行为。agent loop 将回调连接到 `TerminalOutput.assistant_delta()`。
+`call_llm(..., on_content=...)` calls the observation callback per chunk when `stream_output` is in effect; when a callback is provided, the body is not printed additionally. Callback exceptions are isolated and do not affect SSE accumulation. With `stream_output=False`, it neither prints nor calls the callback, but still returns the complete assistant message; standalone streaming calls without a callback keep the standard output compatible behavior. The agent loop connects the callback to `TerminalOutput.assistant_delta()`.
 
-## 3. 任务拆解与状态
+## 3. Task Breakdown and Status
 
-- [x] **A：输出渲染器** — 实现 normal/debug/quiet 三种模式、分节换行、懒助手标题、工具批次与有界字段。
-- [x] **B：agent loop / LLM 接线** — 增加 `on_content` 观察回调，保持 tool-call 协议历史完整，并按调用顺序呈现结果。
-- [x] **C：CLI 与权限交互** — 使用短提示符，保留显式 CLI 通知和权限确认；重定向或坏输出流不应破坏执行。
-- [x] **D：文档与测试** — 补充手册、CHANGELOG、配置注释和回归测试，覆盖安静模式、回调、批次终态及协议正文边界。
+- [x] **A: Output renderer** — Implement the normal/debug/quiet modes, section line breaks, the lazy assistant header, tool batches, and bounded fields.
+- [x] **B: agent loop / LLM wiring** — Add the `on_content` observation callback, keep the tool-call protocol history complete, and present results in call order.
+- [x] **C: CLI and permission interaction** — Use a short prompt and keep explicit CLI notifications and permission confirmations; redirected or broken output streams must not break execution.
+- [x] **D: Documentation and tests** — Add to the manual, CHANGELOG, configuration comments, and regression tests, covering quiet mode, callbacks, batch terminal states, and the protocol body boundary.
 
-## 4. 验收记录
+## 4. Acceptance Record
 
-- 相关 pytest 覆盖 `call_llm` 回调/兼容语义、agent loop 流式与安静模式、工具输出边界、CLI 提示和权限 transcript。
-- 已由 root 使用 mock LLM 与 mock tool 完成手工 PTY 及重定向输出验证；验证未调用真实 API。
-- 完整仓库验收命令按 `AGENTS.md` 执行：pytest、教程检查、README 检查和 `git diff --check`。
+- The related pytest tests cover the `call_llm` callback/compatibility semantics, agent loop streaming and quiet mode, tool output boundaries, CLI prompts, and the permission transcript.
+- Manual PTY and redirected output verification was done by root with a mock LLM and mock tools; the verification did not call a real API.
+- The full repository acceptance commands follow `AGENTS.md`: pytest, the tutorial check, the README check, and `git diff --check`.

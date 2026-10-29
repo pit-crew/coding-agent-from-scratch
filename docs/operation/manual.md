@@ -1,10 +1,10 @@
-# mini_agent 操作手册
+# mini_agent Operation Manual
 
-> 本手册跟随最新版本更新。当前对应版本：**v0.53**（回归比较与 Memory 检索消融；含此前冻结故障矩阵、编码基准、Evaluation Harness、计划驱动执行、工具权限、父侧 Memory/References/MCP/Skills 和轻量子代理协作）。
+> This manual follows the latest version. Current version: **v0.53** (regression comparison and Memory retrieval ablation; includes the earlier frozen fault matrix, coding benchmark, Evaluation Harness, plan-driven execution, tool permissions, parent-side Memory/References/MCP/Skills, and lightweight subagent collaboration).
 
-## v0.53 回归比较与 Memory 检索消融
+## v0.53 Regression Comparison and Memory Retrieval Ablation
 
-比较评测冻结 v0.52 与 v0.53 来源、四道编码题、同一模型别名和权限预算。三组是 `old-off`、`current-off`、`current-on`；每题重复三次，合计 36 槽。只比较 v0.52→v0.53 版本变化和 v0.53 内自动 Memory 摘要检索开关变化。Live 尚未运行；必须先生成并审阅完整计划，再由用户明确启动。
+Comparison evaluation freezes the v0.52 and v0.53 sources, four coding tasks, the same model alias, and the permission budget. The three groups are `old-off`, `current-off`, and `current-on`; each task is repeated three times, 36 slots in total. It compares only the v0.52→v0.53 version change and the switch of automatic Memory summary retrieval within v0.53. Live has not run yet; the full plan must first be generated and reviewed, and then started explicitly by the user.
 
 ```bash
 PYTHONPATH=src python -m mini_agent.evaluation validate-comparison /path/to/filled-spec.json
@@ -13,11 +13,11 @@ PYTHONPATH=src python -m mini_agent.evaluation self-test-comparison --output /pr
 PYTHONPATH=src python -m mini_agent.evaluation report-comparison /private/tmp/v053-offline
 ```
 
-`self-test-comparison` 用固定响应运行真实 Runtime 装配，不发送 provider 请求，结果标记为 `fixture`。只有审阅计划获明确启动后才执行 `run-comparison <comparison-plan.json> --live --output <new-run-dir>`；不自动重试或补跑。报告会从原始 trial 和相对证据摘要重建逐题配对结果，细节见[比较评测说明](../evaluation/comparison.md)和[v0.53 基线状态](../evaluation/baselines/v0.53/README.md)。
+`self-test-comparison` runs the real Runtime assembly with fixed responses, sends no provider requests, and marks results as `fixture`. Only after the reviewed plan is explicitly started is `run-comparison <comparison-plan.json> --live --output <new-run-dir>` run; there are no automatic retries or make-up runs. The report rebuilds per-task paired results from the raw trials and relative evidence digests; for details, see the [comparison evaluation notes](../evaluation/comparison.md) and the [v0.53 baseline status](../evaluation/baselines/v0.53/README.md).
 
-## v0.52 故障注入与恢复评测
+## v0.52 Fault Injection and Recovery Evaluation
 
-`reliability-boundaries@1.6` 冻结 18 类工具、权限、验证、进程、持久化恢复、MCP 和子代理场景。完整任务及标准由 `validate-reliability` 以 JSON 输出，包含可见工具、精确 PermissionGate 规则、预算、故障目标、恢复步骤、模拟用户反馈来源和 grader。离线自测按清单运行全部 50 个参数槽位（每变体两次）；七个代表性场景各计划三次 live，共 21 个槽位；其中权限拒绝只验收安全终止，其余六个验收完整恢复。首次请求前同时校准公开测试和独立行为评分。崩溃任务明确注入前与恢复后的阶段；子代理超时必须使用任务公布的固定预算。未触发故障时相关不变量记为证据不完整。
+`reliability-boundaries@1.6` freezes 18 kinds of tool, permission, verification, process, persistence recovery, MCP, and subagent scenarios. `validate-reliability` outputs the full tasks and criteria as JSON, including visible tools, exact PermissionGate rules, budgets, fault targets, recovery steps, the source of simulated user feedback, and the grader. The offline self-test runs all 50 parameter slots by the manifest (two per variant); seven representative scenarios each plan three live runs, 21 slots in total; of these, permission denial accepts only safe termination, and the other six accept full recovery. Before the first request, both public tests and independent behavior grading are calibrated. Crash tasks state the phases before injection and after recovery explicitly; subagent timeouts must use the fixed budget published by the task. When a fault does not trigger, the related invariants are recorded as incomplete evidence.
 
 ```bash
 PYTHONPATH=src python -m mini_agent.evaluation validate-reliability tests/fixtures/evaluation/reliability/suite.json
@@ -25,22 +25,22 @@ PYTHONPATH=src python -m mini_agent.evaluation self-test-reliability --output /p
 PYTHONPATH=src python -m mini_agent.evaluation report-reliability /private/tmp/mini-agent-reliability-offline
 ```
 
-离线探针直接测试运行时边界，不运行 Agent；所以 task grader 和恢复成功率保持 `null`。Live 必须在审阅任务后显式启动；命令在第一次模型请求前核对七个场景的本地 model binding。每个 trial 最多 20 轮、48 次父工具调用、240 秒和 64,000 个父 token；子代理仍受运行时既有限制，场景不会放宽。一次模型请求失败后不自动重试，已产生的槽位继续保留。
+Offline probes test runtime boundaries directly and do not run the Agent; so the task grader and recovery success rate stay `null`. Live must be started explicitly after reviewing the tasks; before the first model request, the command checks the local model binding of the seven scenarios. Each trial has at most 20 rounds, 48 parent tool calls, 240 seconds, and 64,000 parent tokens; subagents are still bound by the runtime's existing limits, and scenarios do not relax them. After one model request fails there is no automatic retry, and slots already produced are kept.
 
 ```bash
 PYTHONPATH=src python -m mini_agent.evaluation run-reliability tests/fixtures/evaluation/reliability/suite.json --live --repeats 3 --output docs/evaluation/baselines/v0.52/live-<run-id>
 PYTHONPATH=src python -m mini_agent.evaluation report-reliability docs/evaluation/baselines/v0.52/live-<run-id>
 ```
 
-`report-reliability` 会从冻结材料、顺序账本和原始 trial 重建结果，并分别报告故障状态、不变量、Agent 终态、grader、恢复步骤、清理、用量和缺失槽位。Fixture 与 live 不混算；未观测 token 不当作零，没有价格快照时成本为 `null`。预算定点修复后的 `live-20260929-08` 有 21/21 个 HTTP 503 槽位；`live-20260929-09` 有 20 个连接类基础设施错误，另 1 个 trial 在故障触发前因 token limit 停止。两批的恢复分母均为 0，suite 1.5 基线未完成。修复前 `live-20260929-07` 的 5/14 保留为历史结果，不与新批次合并。详见[基线目录](../evaluation/baselines/v0.52/README.md)。预算估算不能保证任意 provider 请求绝不超额。
+`report-reliability` rebuilds results from the frozen material, the ordered ledger, and the raw trials, and reports fault state, invariants, Agent terminal state, grader, recovery steps, cleanup, usage, and missing slots separately. Fixture and live are not combined; unobserved tokens are not treated as zero, and cost is `null` without a price snapshot. After the targeted budget fix, `live-20260929-08` had 21/21 HTTP 503 slots; `live-20260929-09` had 20 connection-type infrastructure errors, and 1 more trial stopped on the token limit before the fault triggered. The recovery denominator of both batches is 0, and the suite 1.5 baseline is not complete. The pre-fix 5/14 of `live-20260929-07` is kept as a historical result and is not merged with the new batches. See the [baseline directory](../evaluation/baselines/v0.52/README.md) for details. Budget estimates cannot guarantee that any provider request never exceeds its quota.
 
-OpenAI Chat 协议兼容：普通和流式响应中的可选 `reasoning_content` 会随 assistant history 保留并回传，字段须为字符串或 null，字符串最多 4 Mi 个字符；它不显示在终端正文，也不进入 State/Trace 摘要。开启 `/save` 后可随 Context 保存到 session。旧历史中已丢失的字段不能恢复，不能保证旧 thinking 会话继续请求成功。
+OpenAI Chat protocol compatibility: the optional `reasoning_content` in ordinary and streaming responses is kept with the assistant history and sent back; the field must be a string or null, with strings at most 4 Mi characters; it is not shown in the terminal body and does not enter State/Trace summaries. With `/save` on, it can be saved to the session with the Context. Fields already lost from old history cannot be restored, and continued requests of old thinking sessions are not guaranteed to succeed.
 
-## v0.51 编码任务集
+## v0.51 Coding Task Set
 
-编码基线用固定 suite 顺序运行四道纯标准库 Python 题，每题从同一份初始文件复制到独立 trial 工作区。题目覆盖分页末页边界、订单折扣与收据的双模块改动、缓存过期与回归测试、以及不预先指出故障文件的配置优先级调查。独立 grader 在 Agent 停止后运行。
+The coding baseline runs four pure standard-library Python tasks in a fixed suite order; each task copies the same initial files into a separate trial workspace. The tasks cover the last-page pagination boundary, a two-module change for order discounts and receipts, cache expiry with a regression test, and a configuration priority investigation that does not point out the faulty file in advance. The independent grader runs after the Agent stops.
 
-Suite 摘要绑定 case、任务文字、初始文件、grader 和已知正确版本。执行前必须审阅 `validate-suite` 打印的题目、成功标准、时间/轮次上限和获准工具。命令要求显式 `--live`；任务审定仍是启动这 12 次首轮真实调用的前置条件：
+The suite digest binds the case, task text, initial files, grader, and known-good version. Before running, the tasks, success criteria, time/round limits, and approved tools printed by `validate-suite` must be reviewed. The command requires an explicit `--live`; task review is still a precondition for starting these 12 first real calls:
 
 ```bash
 PYTHONPATH=src python -m mini_agent.evaluation validate-suite tests/fixtures/evaluation/benchmark/suite.json
@@ -48,15 +48,15 @@ PYTHONPATH=src python -m mini_agent.evaluation run-suite tests/fixtures/evaluati
 PYTHONPATH=src python -m mini_agent.evaluation report-suite ./evaluation-baselines/v0.51
 ```
 
-`run-suite` 在开始前完整预检所有题目和本地模型 binding；每个 trial 仅尝试一次，并按 suite 顺序写入 `suite-run.json`。启动失败、中断或未运行槽位都保留在计划分母中；已有原始 trial 不会被重试覆盖。结果目录保存套件清单副本、账本和 `trials/` 原始证据。单题 `TrialResult` schema 1 继续可读，套件 trial 使用 schema 2，并记录 Git revision 与运行时代码指纹。
+`run-suite` fully pre-checks all tasks and the local model binding before starting; each trial is tried only once and written to `suite-run.json` in suite order. Start failures, interruptions, and unrun slots all stay in the planned denominator; existing raw trials are not overwritten by retries. The result directory saves a copy of the suite manifest, the ledger, and the raw `trials/` evidence. Single-task `TrialResult` schema 1 stays readable, and suite trials use schema 2 and record the Git revision and the runtime code fingerprint.
 
-`report-suite` 从账本和引用的原始 trial 重建逐题及总报告。计划次数、已运行、可评分、独立验收通过、最终成功、基础设施错误、失败类别、已观测调用/token 和耗时分别列出，并为每个数字保留 trial 引用。`live_baseline_complete` 表示 12 个计划槽位是否都有可评分 live 结果；不足时保留未完成状态。Live 与 fixture 分开；无价格快照时成本为 `null`。首份基线计划为每题 3 次、共 12 次，结果尚待任务审阅，不把离线检查当作模型成绩。详细字段和统计口径见[评测说明](../evaluation/README.md)及[基线目录](../evaluation/baselines/v0.51/README.md)。
+`report-suite` rebuilds the per-task and total reports from the ledger and the referenced raw trials. Planned count, run, gradable, passed independent acceptance, final success, infrastructure errors, failure categories, observed calls/tokens, and duration are listed separately, and each number keeps its trial references. `live_baseline_complete` shows whether all 12 planned slots have gradable live results; when not, the incomplete status is kept. Live and fixture are separate; without a price snapshot, cost is `null`. The first baseline plan is 3 runs per task, 12 in total; results await task review, and offline checks are not treated as model scores. For detailed fields and counting rules, see the [evaluation notes](../evaluation/README.md) and the [baseline directory](../evaluation/baselines/v0.51/README.md).
 
 ## v0.50 Evaluation Harness
 
-Evaluation Harness 从固定题目复制出一个新工作区，调用一次 canonical Agent Runtime，再由独立评分程序检查 Agent 停止时留下的文件。常规测试验证实现边界；Harness 用来记录一次具体 Agent 任务的结果。`self-test` 使用固定响应，只验证链路，不计入真实模型成功率。
+The Evaluation Harness copies a fresh workspace from a fixed task, calls the canonical Agent Runtime once, and then an independent grading program checks the files the Agent left when it stopped. Regular tests verify implementation boundaries; the Harness records the result of one concrete Agent task. `self-test` uses fixed responses, verifies only the chain, and does not count toward the real model success rate.
 
-题目校验会检查 schema 1、fixture/grader 相对路径、符号链接、文件数量和大小、Agent 轮数及两类超时。模型工具面最多是 `read_file`、`list_dir`、`grep`、`write_file`、`edit_file`、`calculate`；题目中的 `authorized_tools` 对应无人值守时显式放行的能力。没有授权的调用由非交互 PermissionGate 拒绝，不读取 stdin。
+Task validation checks schema 1, fixture/grader relative paths, symlinks, file count and size, Agent rounds, and two kinds of timeouts. The model tool surface is at most `read_file`, `list_dir`, `grep`, `write_file`, `edit_file`, and `calculate`; `authorized_tools` in a task maps to capabilities explicitly allowed when unattended. Unauthorized calls are refused by the non-interactive PermissionGate, without reading stdin.
 
 ```bash
 PYTHONPATH=src python -m mini_agent.evaluation validate tests/fixtures/evaluation/smoke/case.json
@@ -64,29 +64,29 @@ PYTHONPATH=src python -m mini_agent.evaluation self-test --output ./evaluation-r
 PYTHONPATH=src python -m mini_agent.evaluation report ./evaluation-results
 ```
 
-真实模型调用只能通过显式 `--live` 启动。CLI 在运行前显示题目、轮数以及 Agent/评分时间上限；没有可用的本地 `config_local.py` 时在请求模型前报错。
+Real model calls can only be started through an explicit `--live`. Before running, the CLI shows the task, rounds, and Agent/grading time limits; without a usable local `config_local.py`, it reports an error before requesting the model.
 
 ```bash
 PYTHONPATH=src python -m mini_agent.evaluation run tests/fixtures/evaluation/smoke/case.json --live --output ./evaluation-live
 PYTHONPATH=src python -m mini_agent.evaluation report ./evaluation-live
 ```
 
-每个 `trial-<case-id>-<uuid>` 目录通过同目录原子替换发布，包含 `trial.json`、有界 `diff.patch`、`agent.log` 和 `grader.log`。`success` 要求 Agent 正常文本收束、State 为 `done`、至少一个成功模型响应、grader 通过且临时资源清理完成。Agent 自述和自行验证不改变独立评分。Agent 超时后仍会运行 grader；有有效 grader 结果的超时 trial 计入分母。Runner 或 grader 基础设施错误单独计数并从评分分母剔除。
+Each `trial-<case-id>-<uuid>` directory is published through atomic replacement in the same directory and contains `trial.json`, a bounded `diff.patch`, `agent.log`, and `grader.log`. `success` requires the Agent to end with normal text, State `done`, at least one successful model response, the grader passing, and temporary resource cleanup complete. The Agent's own claims and self-verification do not change the independent grade. After an Agent timeout the grader still runs; timed-out trials with a valid grader result count in the denominator. Runner or grader infrastructure errors are counted separately and removed from the grading denominator.
 
-Live 与 fixture 分组汇总。当前无价格快照，所以 `cost_usd=null`；恢复成功率和无效重复次数在本版不适用/未采集，也保持 `null`。Worker 被强制停止时未写盘的 token/工具计数使用 `null`。
+Live and fixture are summarized in separate groups. There is currently no price snapshot, so `cost_usd=null`; the recovery success rate and invalid repetitions are not applicable/not collected in this version and also stay `null`. When the Worker is forcibly stopped, unwritten token/tool counts use `null`.
 
-工作区隔离保证重跑从相同 fixture 开始，但不是操作系统安全沙箱：Agent worker 与 grader 仍以调用者系统账户运行。完整题目字段、结果合同、分母和人工复核步骤见[Evaluation Harness 说明](../evaluation/README.md)；教学流程见[第 50 课](../tutorials/50-evaluation-harness.md)。
+Workspace isolation guarantees that reruns start from the same fixture, but it is not an operating system security sandbox: the Agent worker and grader still run as the caller's system account. For the full task fields, result contract, denominators, and manual review steps, see the [Evaluation Harness notes](../evaluation/README.md); for the teaching flow, see [Lesson 50](../tutorials/50-evaluation-harness.md).
 
-## v0.43 独立 stdio MCP Client
+## v0.43 Standalone stdio MCP Client
 
-v0.43 提供一个不接入 Agent Runtime 的 MCP 演示命令。它按固定的
-`2025-11-25` 生命周期连接一个本地 stdio Server：
-`initialize → notifications/initialized → tools/list → tools/call`。Server 的 stdout
-只承载逐行 UTF-8 JSON-RPC，stderr 单独排空并只保留有界尾部。
+v0.43 provides an MCP demo command that does not connect to the Agent Runtime. It connects to one local stdio Server following the fixed
+`2025-11-25` lifecycle:
+`initialize → notifications/initialized → tools/list → tools/call`. The Server's stdout
+carries only line-delimited UTF-8 JSON-RPC; stderr is drained separately and only a bounded tail is kept.
 
-### 配置
+### Configuration
 
-真实命令、路径和环境值写在未跟踪的 `src/mini_agent/config_local.py`；导入配置不会启动进程：
+Real commands, paths, and environment values go in the untracked `src/mini_agent/config_local.py`; importing the configuration does not start a process:
 
 ```python
 MCP_SERVERS = [{
@@ -97,47 +97,47 @@ MCP_SERVERS = [{
 }]
 ```
 
-`alias` 必须是以小写字母开头的受限名称且唯一；`command` 是非空字符串 argv
-列表；`cwd` 为可选字符串，相对路径以 `config_local.py` 所在目录为基准；
-`environment` 是字符串映射。命令不经过 shell。只有显式选择 alias 的演示命令会启动
-Server。
+`alias` must be a restricted, unique name starting with a lowercase letter; `command` is a non-empty list of string argv;
+`cwd` is an optional string, and relative paths are based on the directory of `config_local.py`;
+`environment` is a string mapping. The command does not go through a shell. Only the demo command that explicitly selects an alias starts
+the Server.
 
-### 独立命令
+### Standalone commands
 
 ```bash
 PYTHONPATH=src python -m mini_agent.mcp demo list
 PYTHONPATH=src python -m mini_agent.mcp demo call echo '{"text":"hello"}'
 ```
 
-`list` 会读取完整分页并显示有界的工具目录；同一连接后续读取只返回冻结快照。
-`call` 会在发请求前完整显示 alias、原始工具名和参数，只有交互终端输入 `yes` 或
-`y` 才发送一次 `tools/call`。参数过长、无法完整展示、EOF、拒绝和非交互输入都不会
-发送调用。退出路径会关闭 stdin、等待子进程，并在必要时终止和回收直接子进程；
-清理未完成会报告错误并返回非零状态。
+`list` reads all pages and shows a bounded tool catalog; later reads on the same connection return only the frozen snapshot.
+`call` shows the alias, the raw tool name, and the arguments in full before the request, and sends one `tools/call` only when the interactive terminal input is `yes` or
+`y`. Over-long arguments, arguments that cannot be shown fully, EOF, refusal, and non-interactive input all send no
+call. The exit path closes stdin, waits for the child process, and terminates and reaps the direct child process when needed;
+if cleanup does not finish, it reports an error and returns a non-zero status.
 
-### 错误排查
+### Troubleshooting
 
-启动/握手默认超时 10 秒，目录每页 10 秒，工具调用 30 秒，关闭宽限 2 秒。单条
-stdout 消息最多 1 MiB，stdout 等待队列最多 64 条，普通通知只保留最近 64 条，stderr 只保留末尾 16 KiB，目录
-最多 16 页和 256 个工具。坏编码、坏 JSON、错 ID、同时含 `result`/`error`、EOF、
-超限和协议失步都会让连接失效；不自动重试 `tools/call`。JSON-RPC `error` 与工具
-结果中的 `isError=true` 分开处理。
+Startup/handshake times out after 10 seconds by default, each catalog page after 10 seconds, tool calls after 30 seconds, and the shutdown grace is 2 seconds. A single
+stdout message is at most 1 MiB, the stdout wait queue holds at most 64 messages, only the latest 64 ordinary notifications are kept, stderr keeps only the last 16 KiB, and the catalog
+has at most 16 pages and 256 tools. Bad encoding, bad JSON, wrong IDs, messages with both `result`/`error`, EOF,
+exceeded limits, and protocol desync all invalidate the connection; `tools/call` is not retried automatically. JSON-RPC `error` and
+`isError=true` in tool results are handled separately.
 
-异常只显示有限的类别和服务端错误码，不显示完整 command、环境变量、原始参数或
-服务端错误正文。遇到 Server 没有响应时检查其 stdout 是否按“每行一个 JSON 对象”
-输出；不要把日志写到 stdout，应写到 stderr。
+Exceptions show only a limited category and the server error code, not the full command, environment variables, raw arguments, or
+the server error body. When the Server does not respond, check that its stdout outputs "one JSON object per line";
+do not write logs to stdout, write them to stderr.
 
-本版的手动确认只是演示命令的交互保护，不是 Agent 的 PermissionGate。MCP Tool
-不会进入模型、Tool Registry、State 或 session；连接和 PID 只存在于当前演示进程。
-## v0.44 父 Agent Runtime 中的 MCP Tool
+The manual confirmation in this version is only interactive protection for the demo command, not the Agent's PermissionGate. MCP Tools
+do not enter the model, Tool Registry, State, or session; the connection and PID exist only in the current demo process.
+## v0.44 MCP Tools in the Parent Agent Runtime
 
-v0.44 在 v0.43 的固定 stdio Client 之上增加父侧装配路径。Server 仍由本地
-`MCP_SERVERS` 配置提供，只有 `agent_enabled=True` 的项才会在父 Runtime 创建时启动；
-省略该字段或设置为 `False` 的项继续只供独立 `python -m mini_agent.mcp` 命令使用。
-配置导入不会启动 Server，argv 也不经过 shell。
+v0.44 adds a parent-side assembly path on top of the fixed stdio Client of v0.43. Servers are still provided by the local
+`MCP_SERVERS` configuration, and only entries with `agent_enabled=True` are started when the parent Runtime is created;
+entries that omit the field or set it to `False` keep being used only by the standalone `python -m mini_agent.mcp` command.
+Importing the configuration does not start a Server, and argv does not go through a shell.
 
 ```python
-# src/mini_agent/config_local.py（未跟踪）
+# src/mini_agent/config_local.py (untracked)
 MCP_SERVERS = [{
     "alias": "demo",
     "command": ["python", "../../tests/fixtures/mcp_stdio_server.py"],
@@ -148,81 +148,81 @@ MCP_SERVERS = [{
 }]
 ```
 
-`readonly_tools` 是同一 Server 返回的原始工具名精确列表。列表中的工具只把
-`effect_class` 从默认 `possible` 降为 `none`，仍然经过 PermissionGate，也不能自动成为
-verification evidence。服务端 annotations、名称、描述和 schema 不能改变这个分类。
+`readonly_tools` is an exact list of raw tool names returned by the same Server. Tools in the list only lower
+`effect_class` from the default `possible` to `none`; they still pass through the PermissionGate and cannot automatically become
+verification evidence. Server annotations, names, descriptions, and schemas cannot change this classification.
 
-父侧会完成固定的握手、完整分页和目录冻结，然后把工具外显为
-`mcp_<alias>_<tool>`。原始工具名只接受不超过 64 个 ASCII 字母、数字、`_`、`-`，转小写
-并把 `-` 换成 `_`；外显名不超过 64 字符。内置工具、不同 MCP 工具或规范化后碰撞时，
-整次 Runtime 装配失败，已启动的 Server 会被关闭。MCP input schema 只支持根 object、
-标量属性、标量数组、`required`、布尔 `additionalProperties`、`enum`、字符串/数值边界和
-数组长度边界；嵌套 object 与未知校验关键字会在模型看到工具前拒绝。
+The parent side completes the fixed handshake, reads all pages, and freezes the catalog, then exposes the tools as
+`mcp_<alias>_<tool>`. Raw tool names accept only up to 64 ASCII letters, digits, `_`, and `-`, are lowercased,
+and have `-` replaced with `_`; exposed names are at most 64 characters. When built-in tools, different MCP tools, or normalized names collide,
+the whole Runtime assembly fails and already started Servers are closed. MCP input schemas support only a root object,
+scalar properties, scalar arrays, `required`, boolean `additionalProperties`, `enum`, string/number bounds, and
+array length bounds; nested objects and unknown validation keywords are refused before the model sees the tool.
 
-MCP Tool 走普通的 Tool Registry、ToolExecutor、PermissionGate、Plan gate 和
-`AgentRuntime.run()`。默认权限是 `ask`；授权提示显示 alias、原始工具名和有界参数摘要，
-疑似凭据字段隐藏值，长值只显示长度。JSON-RPC error、`isError=true`、超时、断连、协议
-错误和不支持的图片/二进制/结构化结果会成为带明确 `error_kind` 的工具失败；超时的
-`outcome` 是 `timeout`。成功文本保留为有界 `role=tool` 正文，State/Trace excerpt 只保留
-来源、alias、原始工具名、类别和长度等元数据。
+MCP Tools go through the ordinary Tool Registry, ToolExecutor, PermissionGate, Plan gate, and
+`AgentRuntime.run()`. The default permission is `ask`; the authorization prompt shows the alias, the raw tool name, and a bounded argument summary,
+hides the values of suspected credential fields, and shows only the length of long values. JSON-RPC errors, `isError=true`, timeouts, disconnects, protocol
+errors, and unsupported image/binary/structured results become tool failures with an explicit `error_kind`; a timeout's
+`outcome` is `timeout`. Successful text is kept as a bounded `role=tool` body, and State/Trace excerpts keep only metadata such as
+the source, alias, raw tool name, category, and length.
 
-开启 `/save` 后，MCP Tool 与其他 possible Tool 一样，在 handler 前先进入 schema 3/4 的
-`handler_admitted` 边界；提交失败不会发送 `tools/call`。已经准入且结果未结算的调用在
-恢复时按既有规则记为不确定事实，绝不重放。新任务、恢复任务和任务切换都从当前本地
-配置重新发现目录；连接不写入 State、Trace、session 或 Subagent。退出、`/new`、`/reset`、
-EOF 和恢复候选/claim 失败时都会有界关闭连接，并报告未完成的 server alias 与原因。
+With `/save` on, MCP Tools, like other possible Tools, first enter the schema 3/4
+`handler_admitted` boundary before the handler; a commit failure sends no `tools/call`. Calls already admitted whose results are not settled are
+recorded as uncertain facts on recovery by the existing rules and are never replayed. New tasks, resumed tasks, and task switches all rediscover the catalog from the current local
+configuration; connections are not written into State, Trace, session, or Subagents. Exit, `/new`, `/reset`,
+EOF, and recovery candidate/claim failures all close connections within bounds and report the unfinished server aliases and reasons.
 
-父提示词把 MCP 目录和结果标记为外部不可信资料：它们不能覆盖指令、权限或 Plan，也不能
-充当 verification evidence。v0.44 的 MCP 范围不接入 Subagent、Skills、远程 HTTP、Resources
-或 Prompts；v0.45 的本地 Skills 见下节。
+The parent prompt marks the MCP catalog and results as untrusted external material: they cannot override instructions, permissions, or the Plan, and cannot
+act as verification evidence. The MCP scope of v0.44 does not connect to Subagents, Skills, remote HTTP, Resources,
+or Prompts; for the v0.45 local Skills, see the next section.
 
-## v0.45 本地 Skills
+## v0.45 Local Skills
 
-Skill 是一段帮助模型安排已有工具的工作流说明。它不增加新的执行能力，也不自动执行正文中
-提到的命令。父 Agent 平时只看到固定目录中的有限元数据；只有模型调用 `skill(name)` 并
-通过 `PermissionGate` 后，才会读取 `SKILL.md` 正文。
+A Skill is a workflow description that helps the model arrange existing tools. It adds no new execution capabilities and does not automatically run commands mentioned in
+the body. The parent Agent normally sees only limited metadata from fixed directories; only after the model calls `skill(name)` and
+passes the `PermissionGate` is the `SKILL.md` body read.
 
-### 目录和 frontmatter
+### Directories and frontmatter
 
-Runtime 创建时固定扫描两处目录：
+When the Runtime is created, it scans two fixed directories:
 
 ```text
 <workspace-root>/skills/<name>/SKILL.md
 ~/.mini_agent/skills/<name>/SKILL.md
 ```
 
-项目级 Skill 优先于全局同名 Skill。项目级同名目录如果无效，全局同名项不会回退显示。目录
-名、frontmatter 的 `name` 和工具参数必须以小写字母开头，只能包含小写字母、数字、`_`、`-`，
-最长 64 字符，并且目录名和 `name` 必须一致。
+A project-level Skill takes priority over a global Skill with the same name. If the project-level directory with the same name is invalid, the global item with the same name is not shown as a fallback. Directory
+names, the frontmatter `name`, and the tool argument must start with a lowercase letter, contain only lowercase letters, digits, `_`, and `-`,
+be at most 64 characters, and the directory name and `name` must match.
 
-文件只接受 `---` 包围的两个单行字段：`name` 和 `description`。未知字段、重复字段、缺失
-字段、控制字符、坏 UTF-8、格式错误都会使候选失效。两个根目录合计最多扫描 64 个直属
-目录项；超过当前剩余限额的根目录整体跳过，项目级目录超限时整个 Catalog 留空，避免
-无法判断是否遮蔽全局同名项。单个文件最多 32 KiB，
-说明最多 240 字符，发给模型的目录提示最多 8 KiB。目录按 Skill ID 排序，只展示 ID、名称、
-说明和来源级别；不会展示真实路径或正文。元数据以标明不可信的用户级消息提供给模型，
-不并入受保护的 system 消息。
+The file accepts only two single-line fields surrounded by `---`: `name` and `description`. Unknown fields, duplicate fields, missing
+fields, control characters, bad UTF-8, and format errors all invalidate the candidate. The two root directories together scan at most 64 direct
+directory entries; a root directory that exceeds the current remaining quota is skipped entirely, and when the project-level directory exceeds the limit, the whole Catalog stays empty, to avoid
+being unable to judge whether it shadows a global item with the same name. A single file is at most 32 KiB,
+a description at most 240 characters, and the catalog hint sent to the model at most 8 KiB. The catalog is sorted by Skill ID and shows only the ID, name,
+description, and source level; it does not show real paths or bodies. Metadata is provided to the model as a user-level message marked untrusted
+and is not merged into the protected system message.
 
-### 权限和加载
+### Permissions and loading
 
-`skill` 的默认权限是 `ask`，权限 pattern 是 Skill ID。目录提示会用同一个 PermissionPolicy
-隐藏当前为 `deny` 的 ID，但直接调用仍会重新经过 PermissionGate。选择 `always` 只批准当前
-字面 ID；授权提示展示 Skill ID 和 project/global 来源，不展示真实路径。
+The default permission of `skill` is `ask`, and the permission pattern is the Skill ID. The catalog hint uses the same PermissionPolicy to
+hide IDs that are currently `deny`, but direct calls still pass through the PermissionGate again. Choosing `always` approves only the current
+literal ID; the authorization prompt shows the Skill ID and the project/global source, not the real path.
 
-获准后，Catalog 从冻结根目录 fd 逐段打开目录和文件，拒绝符号链接，并在读取前后复核文件
-身份、修改时间和大小。文件替换、竞态变化、越界打开、坏编码和超限都返回有界的
-`skill_access_error`，不会泄露绝对路径或 Skill 正文。
+After approval, the Catalog opens directories and files segment by segment from the frozen root directory fd, refuses symlinks, and rechecks the file
+identity, modification time, and size before and after reading. File replacement, race changes, out-of-bounds opens, bad encoding, and exceeded limits all return a bounded
+`skill_access_error`, without leaking absolute paths or the Skill body.
 
-成功结果会包含 Skill ID、来源、字节数和完整正文。完整正文只作为当前调用的普通 `role=tool`
-历史结果，并沿用现有 Context 裁剪；State、Trace 和额外目录快照只保留 ID、来源和字节数。
-开启 `/save` 后，已经进入普通工具 history 的正文可能随会话保存。除 v0.47 具名角色明确
-列出且父侧按精确 ID 预授权的 Skills 外，Catalog、Skill Tool、正文、父权限和目录提示不会
-进入 Subagent；角色子 Catalog 只能加载本次获准 ID。Skill 也不会成为 Plan 或 verification
-evidence。
+A successful result contains the Skill ID, source, byte count, and full body. The full body is only an ordinary `role=tool`
+history result of the current call and follows the existing Context trimming; State, Trace, and extra catalog snapshots keep only the ID, source, and byte count.
+With `/save` on, a body that has already entered ordinary tool history may be saved with the session. Except for Skills explicitly
+listed by v0.47 named roles and pre-authorized by exact ID on the parent side, the Catalog, Skill Tool, bodies, parent permissions, and catalog hints do not
+enter Subagents; a role's child Catalog can only load the IDs approved this time. Skills also do not become Plan or verification
+evidence.
 
-### 观察一个本地 Skill
+### Observe a local Skill
 
-可以在工作区创建下面的文件，然后启动父 CLI：
+You can create the file below in the workspace and then start the parent CLI:
 
 ```text
 skills/verify-change/SKILL.md
@@ -231,32 +231,32 @@ skills/verify-change/SKILL.md
 ```markdown
 ---
 name: verify-change
-description: 按读取、修改、验证的顺序完成一次有界代码变更
+description: Complete a bounded code change in the order read, change, verify
 ---
 # Verify a change
-1. 读取相关实现和测试。
-2. 用已有工具完成最小修改。
-3. 用 run_shell 独立运行 verification。
+1. Read the related implementation and tests.
+2. Make the smallest change with existing tools.
+3. Run verification independently with run_shell.
 ```
 
-模型第一次请求前只能看到 `verify-change` 的 ID、来源和说明。模型调用 `skill` 并获得一次
-授权后，工具结果才出现正文；如果正文建议调用 `run_shell`，该调用仍会按自己的 Plan gate 和
-PermissionGate 规则处理。修改 Skill 文件后开始新任务，Runtime 才会发现新的文件身份和内容。
+Before the first request, the model can see only the ID, source, and description of `verify-change`. Only after the model calls `skill` and gets one
+authorization does the body appear in the tool result; if the body suggests calling `run_shell`, that call is still handled by its own Plan gate and
+PermissionGate rules. Only when a new task starts after the Skill file is changed does the Runtime discover the new file identity and content.
 
-## v0.46 受限 HTTP MCP、文本 Resource 与 Prompt
+## v0.46 Restricted HTTP MCP, Text Resources, and Prompts
 
-v0.46 在父 Runtime 中增加了一个受限的 MCP HTTP 子集。配置明确写出
-`transport="http"` 后，客户端使用标准库 `http.client` 逐请求发送 JSON-RPC；默认只接受
-HTTPS。为了离线测试，回环 HTTP 只有在同时配置 `allow_loopback_http=True` 时才允许。客户端
-发送协议要求的 `Accept: application/json, text/event-stream`，但本教学子集只接受
-`application/json` 响应；SSE、重定向、OAuth、服务端
-主动请求和自动重试都不在本版范围内。这是教学子集，不是完整 Streamable HTTP 客户端。
+v0.46 adds a restricted MCP HTTP subset to the parent Runtime. When the configuration explicitly states
+`transport="http"`, the client sends JSON-RPC per request using the standard library `http.client`; by default it accepts only
+HTTPS. For offline tests, loopback HTTP is allowed only when `allow_loopback_http=True` is also configured. The client
+sends the protocol-required `Accept: application/json, text/event-stream`, but this teaching subset accepts only
+`application/json` responses; SSE, redirects, OAuth, server-initiated
+requests, and automatic retries are out of this version's scope. This is a teaching subset, not a complete Streamable HTTP client.
 
-### HTTP 配置
+### HTTP configuration
 
-真实 URL 和认证 Header 只写在未跟踪的 `src/mini_agent/config_local.py`。配置导入不会连接
-Server；只有 `agent_enabled=True` 的项才由父 Runtime 创建连接和冻结目录。HTTP 项不能同时
-包含 stdio 的 `command`、`cwd` 或 `environment`：
+Real URLs and auth headers go only in the untracked `src/mini_agent/config_local.py`. Importing the configuration does not connect to the
+Server; only entries with `agent_enabled=True` have connections created and catalogs frozen by the parent Runtime. HTTP entries cannot also
+contain the stdio `command`, `cwd`, or `environment`:
 
 ```python
 MCP_SERVERS = [{
@@ -270,86 +270,86 @@ MCP_SERVERS = [{
 }]
 ```
 
-`url` 拒绝用户信息和片段；明文 HTTP 只允许回环地址并要求显式开关，HTTPS 可使用受控的
-远程地址。客户端管理的
-`Accept`、`Content-Type`、`Accept-Encoding`、`MCP-Protocol-Version` 和 `MCP-Session-Id`
-不能由配置覆盖。认证 Header 只留在当前进程，不进入 State、Trace、session、授权提示或
-错误文本。初始化响应中的 `MCP-Session-Id` 只在内存中携带；退出时会有界地尝试发送会话
-`DELETE`。
+`url` refuses user info and fragments; plaintext HTTP allows only loopback addresses and requires the explicit switch, and HTTPS can use controlled
+remote addresses. The client-managed
+`Accept`, `Content-Type`, `Accept-Encoding`, `MCP-Protocol-Version`, and `MCP-Session-Id`
+cannot be overridden by configuration. Auth headers stay only in the current process and do not enter State, Trace, session, authorization prompts, or
+error text. The `MCP-Session-Id` from the initialization response is carried only in memory; on exit a session
+`DELETE` is attempted within bounds.
 
-### Resource 和 Prompt 命令
+### Resource and Prompt commands
 
-Resource 与 Prompt 不注册为模型 Tool。它们由当前任务的主交互 CLI 显式选择：
+Resources and Prompts are not registered as model Tools. They are selected explicitly by the main interactive CLI of the current task:
 
 ```text
 /mcp-resources <alias>
 /mcp-resource <alias> <uri>
 /mcp-prompts <alias>
-/mcp-prompt <alias> <name> <JSON参数对象>
+/mcp-prompt <alias> <name> <JSON argument object>
 ```
 
-列表操作默认允许；读取 Resource 和获取 Prompt 默认询问。`always` 只记住当前
-`alias:uri` 或 `alias:name`，授权提示只显示别名、目标和有界参数摘要。读取和获取前会先
-从已冻结的分页目录核对 URI 或名称，因此目录外目标不会发出读取请求。
+Listing is allowed by default; reading Resources and getting Prompts ask by default. `always` remembers only the current
+`alias:uri` or `alias:name`, and the authorization prompt shows only the alias, target, and a bounded argument summary. Before reading and getting, the URI or name is first
+checked against the frozen paged catalog, so targets outside the catalog send no read request.
 
-Resource 只接受有界 UTF-8 文本。成功正文作为带来源的低信任普通 history 消息加入当前任务，
-不会立即请求 LLM；下一次用户输入时它才参与 Context，并可能随 `/save` 保存。它不会进入
-State、Trace 摘要、verification evidence 或自动 Memory 查询。正文会按 Context 预算裁剪。
+Resources accept only bounded UTF-8 text. A successful body is added to the current task as a low-trust ordinary history message with its source,
+and does not request the LLM immediately; it takes part in the Context only at the next user input and may be saved with `/save`. It does not enter
+State, Trace summaries, verification evidence, or automatic Memory queries. The body is trimmed by the Context budget.
 
-Prompt 只接受 `user` 和 `assistant` 两种原始角色的文本消息。CLI 会完整展示展开内容，
-使用 `[message ... original_role=...]` 标签保留来源角色；服务端的 `assistant` 文本仍然位于
-一次 `role=user` 输入内部，不会伪造会话中的 `role=assistant`。用户取消预览时不会进入
-history，也不会请求 LLM；确认后沿用现有 `run_task` 路径运行父 Agent。
+Prompts accept only text messages with the two raw roles `user` and `assistant`. The CLI shows the expanded content in full,
+keeping the source role with `[message ... original_role=...]` labels; the server's `assistant` text is still inside
+one `role=user` input and does not forge a `role=assistant` in the session. When the user cancels the preview, nothing enters
+history and the LLM is not requested; after confirmation, the existing `run_task` path runs the parent Agent.
 
-列表和读取都处理完整分页，检测重复游标；Resource 返回 URI 必须与请求一致，并拒绝 blob、
-图片、音频和嵌入内容。Prompt 参数必须命中冻结定义，展开结果拒绝 system/tool 角色和非文本
-内容。目录、正文、HTTP 认证和 session ID 都不会开放给 Subagent。
+Listing and reading both handle all pages and detect repeated cursors; the URI returned by a Resource must match the request, and blobs,
+images, audio, and embedded content are refused. Prompt arguments must match the frozen definition, and expanded results refuse system/tool roles and non-text
+content. The catalog, bodies, HTTP auth, and session IDs are not opened to Subagents.
 
-## v0.47 具名子代理角色
+## v0.47 Named Subagent Roles
 
-v0.47 为已有的同步 `delegate_task` 增加可选 `agent_profile`。未传该字段时继续使用原来的
-通用子代理合同、模型选择、结果 JSON 和持久化字段；传入角色后，运行时冻结该角色的提示、
-工具子集、模型别名、静态权限和可申请的 Skill ID。委派依然是单层、同步、只读调用。
+v0.47 adds an optional `agent_profile` to the existing synchronous `delegate_task`. When the field is not passed, the original
+generic subagent contract, model selection, result JSON, and persisted fields keep being used; when a role is passed, the runtime freezes the role's prompt,
+tool subset, model alias, static permissions, and requestable Skill IDs. Delegation is still a single-level, synchronous, read-only call.
 
-四个内置角色分别是 `explorer`（定位文件和实现）、`reviewer`（寻找具体缺陷和风险）、
-`tester`（分析测试并提出建议）和 `general`（通用只读调查）。前三个默认工具集为
-`read_file`、`list_dir`、`grep`；`general` 还可以使用纯计算工具 `calculate`。每次实际可用
-工具都必须同时在子代理总白名单、角色工具集和本次 `requested_tools` 中，并通过 ScopeGate。
-角色 `permissions` 只能针对角色工具写 `allow` 或 `deny`；被拒绝的工具不会出现在子模型
-工具目录中，子 Runtime 不会提示用户授权。
+The four built-in roles are `explorer` (locate files and implementations), `reviewer` (look for concrete defects and risks),
+`tester` (analyze tests and make suggestions), and `general` (generic read-only investigation). The default tool set of the first three is
+`read_file`, `list_dir`, and `grep`; `general` can also use the pure compute tool `calculate`. Each actually available
+tool must be in the subagent master allowlist, the role tool set, and this call's `requested_tools` at the same time, and pass the ScopeGate.
+Role `permissions` can only write `allow` or `deny` for role tools; refused tools do not appear in the child model's
+tool catalog, and the child Runtime does not prompt the user for authorization.
 
-本地可在未跟踪的 `config_local.py` 中增加自定义角色；`AGENT_PROFILES` 默认为空。内置名称
-不能覆盖，角色 ID 必须以小写字母开头，后面只能包含小写字母、数字、`_`、`-`，最多 64
-字符。每个角色必填 `description`、`prompt`、`tools`，并可设置 `model_profile`、
-`permissions` 和 `skills`。受跟踪的 `config_example.py` 有不含真实凭据的占位示例。
+Custom roles can be added locally in the untracked `config_local.py`; `AGENT_PROFILES` is empty by default. Built-in names
+cannot be overridden; role IDs must start with a lowercase letter, followed only by lowercase letters, digits, `_`, and `-`, at most 64
+characters. Each role requires `description`, `prompt`, and `tools`, and can set `model_profile`,
+`permissions`, and `skills`. The tracked `config_example.py` has a placeholder example without real credentials.
 
-`model_profile` 是现有 provider catalog 中的模型别名；`agent_profile` 是一组角色规则。
-角色没有配置模型时沿用子代理默认模型。显式同时传入两个字段时，模型别名必须与角色解析
-出的子模型一致；未知、越权或冲突的别名会在子代理发出 LLM 请求前拒绝，不会自动切换。
+`model_profile` is a model alias in the existing provider catalog; `agent_profile` is a set of role rules.
+When a role has no configured model, the subagent default model is used. When both fields are passed explicitly, the model alias must match the child model resolved
+from the role; unknown, unauthorized, or conflicting aliases are refused before the subagent sends an LLM request, with no automatic switch.
 
-角色列出的 Skill ID 只是可申请的本地工作流资料。启动子 Runtime 前，父侧会针对每个精确
-ID 调用当前 `PermissionGate`；拒绝的 ID 不进入子 Runtime，角色引用不存在的 ID 则拒绝此次委派。获准项使用只含这些 ID
-的子 Catalog 和独立 allow/deny 策略，正文只有在子模型按需调用 `skill(name)` 后才读取。
-正文仍是不可信 `role=tool` 结果，不增加工具能力、不自动执行其中的命令，也不会进入父
-State、Trace 摘要或 verification evidence。未传 `agent_profile` 的旧委派没有 Skill 工具。
+Skill IDs listed by a role are only requestable local workflow material. Before starting the child Runtime, the parent side calls the current `PermissionGate` for each exact
+ID; refused IDs do not enter the child Runtime, and a role referencing a nonexistent ID refuses this delegation. Approved items use a child Catalog containing only these IDs
+and a separate allow/deny policy, and the body is read only after the child model calls `skill(name)` on demand.
+The body is still an untrusted `role=tool` result; it adds no tool capabilities, does not automatically run commands in it, and does not enter the parent
+State, Trace summaries, or verification evidence. Legacy delegations without `agent_profile` have no Skill tool.
 
-`tester` 没有 shell 或测试执行工具，角色提示要求它只提出测试建议；报告校验也拒绝“测试已
-通过”一类说法，并要求明确说明本次没有执行测试。实际测试仍由父 Agent 按原计划和权限流程
-决定是否运行。
+`tester` has no shell or test execution tools, and the role prompt requires it to only suggest tests; report validation also refuses claims such as "tests
+passed" and requires stating explicitly that no tests were run this time. Whether tests are actually run is still decided by the parent Agent through the original plan and permission
+flow.
 
-显式角色的委派记录和结果只保存角色 ID 与配置指纹，不保存角色提示正文或子 Skill 正文。
-合同哈希会包含这两个角色身份字段，所以相同调查选不同角色会有不同身份；未传角色的合同
-哈希及 session 字段保持旧形状。ScopeGate 还会按 realpath 检查 `config_local.py`、工作区
-内 session 敏感目录、当前实际使用的 `SessionStore.root` 和它们的符号链接终点。
+Delegation records and results of explicit roles save only the role ID and configuration fingerprint, not the role prompt body or child Skill bodies.
+The contract hash includes these two role identity fields, so the same investigation with different roles has different identities; the contract
+hash and session fields without a role keep the old shape. The ScopeGate also checks, by realpath, `config_local.py`, session-sensitive directories
+inside the workspace, the actually used `SessionStore.root`, and the targets of their symlinks.
 
-例如，让模型使用审阅角色时，调用只需在原合同上增加一个字段：
+For example, to let the model use the review role, the call only needs one extra field on the original contract:
 
 ```json
 {
-  "goal": "检查模块的错误处理边界",
+  "goal": "Check the module's error handling boundaries",
   "scope": ["src/mini_agent"],
   "constraints": [],
-  "expected_findings": ["具体缺陷与证据"],
+  "expected_findings": ["Concrete defects and evidence"],
   "requested_tools": ["read_file", "grep"],
   "selected_parent_facts": [],
   "purpose": "investigation",
@@ -357,227 +357,227 @@ State、Trace 摘要或 verification evidence。未传 `agent_profile` 的旧委
 }
 ```
 
-运行后可在结构化委派结果中看到 `agent_profile` 与指纹，同时仍只有原有的同步 JSON 结果。
-v0.49 为已领取成功结果的后台子会话增加跨安全点续接，下面先说明新合同与恢复边界；随后保留 v0.48 的原始后台任务说明。
+After running, `agent_profile` and the fingerprint can be seen in the structured delegation result, while there is still only the original synchronous JSON result.
+v0.49 adds cross-safe-point continuation for background child sessions whose successful results were claimed; the new contract and recovery boundaries are described first below, followed by the original v0.48 background task notes.
 
-## v0.49 可续接子会话
+## v0.49 Resumable Child Sessions
 
-v0.48 的 `child_session_id` 只在当前 CLI 进程内标识后台工作。进程退出后，父会话只能记住
-启动、完成和领取等摘要，无法凭这个 ID 还原子代理的对话历史。v0.49 新增 `followup_subagent`：父模型
-在领取某轮成功结果后，可使用同一个 ID 提交一份完整的新调查合同。子代理沿用自己的 Context 历史和
-允许续接的只读观察事实，再按本轮合同执行；父历史和其他子会话仍不可见。
+In v0.48, `child_session_id` identifies background work only within the current CLI process. After the process exits, the parent session can remember only
+summaries such as start, completion, and claiming, and cannot restore the subagent's conversation history from this ID. v0.49 adds `followup_subagent`: after
+claiming a successful result of some round, the parent model can submit a complete new investigation contract with the same ID. The subagent keeps its own Context history and
+the read-only observation facts allowed for continuation, then runs by this round's contract; the parent history and other child sessions stay invisible.
 
-该工具与 `spawn_subagent` 使用相同的 `goal`、`scope`、`constraints`、`expected_findings`、
-`requested_tools`、`selected_parent_facts`、`purpose="investigation"` 和单轮 `budget` 字段，另需
-`child_session_id`。调用方不能传入或更换角色、模型。角色和模型必须与创建子会话时一致；每轮要重新
-按精确 Skill ID 经父 PermissionGate 授权，旧授权不自动延续。只有上一轮 outcome 为 `completed` 且
-父侧已领取结果时才可续接；失败、超时、取消、中断、活动中或结果未领取的会话都拒绝。
+The tool uses the same `goal`, `scope`, `constraints`, `expected_findings`,
+`requested_tools`, `selected_parent_facts`, `purpose="investigation"`, and per-round `budget` fields as `spawn_subagent`, and also requires
+`child_session_id`. The caller cannot pass or change the role or model. The role and model must match those at child session creation; each round must
+reauthorize by exact Skill ID through the parent PermissionGate, and old authorizations do not carry over automatically. Continuation is possible only when the previous round's outcome is `completed` and
+the parent side has claimed the result; failed, timed-out, cancelled, interrupted, active, or unclaimed sessions are all refused.
 
-续接调用走后台启动闸门。一轮父模型回复可以包含一个或多个 `spawn_subagent` / `followup_subagent`，
-但不能混入查询或普通工具。父 Runtime 按调用顺序提交每个启动确认；开启 `/save` 后，必须等所有确认和
-整轮 schema 4 `tool_boundary` 原子提交成功，才释放该轮 worker。任一提交失败都不会启动本轮 worker。
-状态查询不返回正文，结果仍通过 `get_subagent_result(child_session_id)` 领取；同一 ID 的结果带
-`round_index`，每轮有各自的 `delegation_id`、`result_id` 和 usage。重复领取保持幂等。
+Continuation calls go through the background start gate. One parent model reply can contain one or more `spawn_subagent` / `followup_subagent`,
+but cannot mix in queries or ordinary tools. The parent Runtime commits each start confirmation in call order; with `/save` on, only after all confirmations and
+the whole-turn schema 4 `tool_boundary` are committed atomically and successfully are the turn's workers released. Any commit failure starts no worker of the turn.
+Status queries do not return bodies, and results are still claimed through `get_subagent_result(child_session_id)`; results for the same ID carry
+`round_index`, and each round has its own `delegation_id`, `result_id`, and usage. Repeated claims stay idempotent.
 
-首版最多 4 轮（包括初始轮），单子会话累计最多 16 次 LLM 调用、48 次工具调用、64,000 tokens 和
-240 秒。每轮继续遵守已有 `SubagentBudget`；父任务的聚合预算和并发上限照常生效。续接不会增加
-`created_subagents`，但会预留本轮 LLM、工具和 token 预算。达到任一会话累计上限后，已交付结果仍可读，
-下一轮请求会在发出子 LLM 请求前拒绝。
+The first version allows at most 4 rounds (including the initial round), and each child session accumulates at most 16 LLM calls, 48 tool calls, 64,000 tokens, and
+240 seconds. Each round keeps following the existing `SubagentBudget`; the parent task's aggregate budget and concurrency limit apply as usual. Continuation does not increase
+`created_subagents`, but reserves this round's LLM, tool, and token budget. After any cumulative session limit is reached, delivered results are still readable,
+and the next round's request is refused before the child LLM request is sent.
 
-安全点使用 session `schema_version=4`，将父 State、Context、工具边界与最多三个 idle 子快照放进同一个
-原子 JSON 文件。快照只包含有界的子 Context、只读观察事实、父任务/工作区身份、冻结角色与模型来源摘要、
-Skill 文件身份、累计 usage 和最近已领取结果的 ID/hash；父 State 与 Trace 只保存生命周期元数据，
-不保存子 history 正文。活动 worker 和待领取结果仍阻止 safe point；单快照上限为 256 KiB，全部快照合计
-上限为 720 KiB。单项快照生成失败时仍交付已完成报告并结算实际用量，该子会话关闭续接资格；合计超限时保存报出相关 child ID。不截断历史或身份字段。同进程 followup 也会在子 LLM 请求前复核已冻结的 Skill 文件身份。
+Safe points use session `schema_version=4`, putting the parent State, Context, tool boundary, and at most three idle child snapshots into the same
+atomic JSON file. Snapshots contain only the bounded child Context, read-only observation facts, parent task/workspace identity, frozen role and model source summaries,
+Skill file identity, cumulative usage, and the ID/hash of the most recently claimed result; the parent State and Trace save only lifecycle metadata,
+not child history bodies. Active workers and pending results still block safe points; the limit per snapshot is 256 KiB, and the limit for all snapshots together
+is 720 KiB. When generating a single snapshot fails, the completed report is still delivered and actual usage settled, and that child session loses continuation eligibility; when the total exceeds the limit, saving reports the related child IDs. History or identity fields are not truncated. In-process followups also recheck the frozen Skill file identity before the child LLM request.
 
-`/resume` 只恢复安全点里的 idle 快照。Runtime 从当前本地配置重新绑定 provider、角色和 Skill Catalog，
-核对冻结来源指纹与 Skill 文件身份；不兼容的子会话被标记为不可续接并显示原因，父会话和其他有效子会话
-仍可恢复。恢复不会替换模型、续跑旧 worker或重放旧请求。schema 1/2/3 仍可读；这些旧格式没有子会话
-快照，因此不能提供 v0.49 的跨进程续接。
+`/resume` restores only the idle snapshots in the safe point. The Runtime rebinds the provider, role, and Skill Catalog from the current local configuration,
+and checks the frozen source fingerprints and Skill file identity; incompatible child sessions are marked as not resumable with the reason shown, and the parent session and other valid child sessions
+can still be restored. Recovery does not replace models, continue old workers, or replay old requests. Schema 1/2/3 can still be read; these old formats have no child session
+snapshots, so they cannot provide the cross-process continuation of v0.49.
 
-## v0.48 进程内后台子代理
+## v0.48 In-Process Background Subagents
 
-同步 `delegate_task` 会等子代理完成，再把一个结果交回父模型。后台任务解决的是另一种情况：
-父 Agent 启动只读调查后，可以先处理自己的模型轮次和工具调用，之后再查询并领取结果。
-`child_session_id` 是当前父任务内的 UUID；它只在这个 CLI 进程中代表一个后台任务，不能在新进程
-里续接同一份子 Context。
+The synchronous `delegate_task` waits for the subagent to finish and then hands one result back to the parent model. Background tasks solve another case:
+after the parent Agent starts a read-only investigation, it can first handle its own model rounds and tool calls, and then query and claim the result later.
+`child_session_id` is a UUID within the current parent task; it represents a background task only in this CLI process and cannot continue
+the same child Context in a new process.
 
-后台启动要求显式选择一个具名 `agent_profile`，并把 `purpose` 固定为 `investigation`。
-只有父任务在 `direct`、`exploring` 或 `executing` 阶段时才可启动；等待计划批准、诊断、崩溃调查、
-独立 verification、terminal 状态和未结算 crash recovery 都不能启动后台调查。诊断与崩溃调查仍使用
-同步 `delegate_task`，并继续引用当前失败或恢复 issue。
+A background start requires an explicitly selected named `agent_profile`, with `purpose` fixed to `investigation`.
+It can start only when the parent task is in the `direct`, `exploring`, or `executing` phase; waiting for plan approval, diagnosis, crash investigation,
+independent verification, terminal states, and unsettled crash recovery cannot start background investigations. Diagnosis and crash investigation still use
+the synchronous `delegate_task` and keep referencing the current failure or recovery issue.
 
-四个父侧工具及其职责如下。它们仍经过 Registry、ToolExecutor、PermissionGate、任务阶段门和 schema 3
-工具边界；工具的调查正文不会自动插入父 history。
+The four parent-side tools and their duties are below. They still pass through the Registry, ToolExecutor, PermissionGate, task phase gates, and the schema 3
+tool boundary; the tools' investigation bodies are not automatically inserted into the parent history.
 
-| 工具 | 作用 |
+| Tool | Purpose |
 |---|---|
-| `spawn_subagent` | 按 `delegate_task` 的合同启动具名只读调查，返回唯一启动确认：child ID、delegation ID、角色、接受状态和预算摘要 |
-| `get_subagent_status` | 查询 `queued`、`running`、`result_ready`、`claimed`、`cancelled`、`interrupted` 等有界状态与 `result_id`，不返回调查正文 |
-| `get_subagent_result` | 子任务收束后返回 `SubagentResult`；未收束时只返回状态，重复领取仍返回同一结果 ID 和正文 |
-| `cancel_subagent` | 发出协作式取消请求并返回当前状态；收束结果仍通过 `get_subagent_result` 领取 |
+| `spawn_subagent` | Starts a named read-only investigation with the `delegate_task` contract and returns a unique start confirmation: child ID, delegation ID, role, acceptance status, and budget summary |
+| `get_subagent_status` | Queries bounded states such as `queued`, `running`, `result_ready`, `claimed`, `cancelled`, `interrupted` and the `result_id`, without returning the investigation body |
+| `get_subagent_result` | Returns the `SubagentResult` after the child task finishes; before that it returns only the state, and repeated claims still return the same result ID and body |
+| `cancel_subagent` | Sends a cooperative cancellation request and returns the current state; the final result is still claimed through `get_subagent_result` |
 
-一轮父模型回复若包含启动调用，只能包含一个或多个 `spawn_subagent`，不能混入其他工具。父 Runtime
-按模型调用顺序准入、记录并回灌每个启动确认；开启 `/save` 时先提交 handler admission 和逐 call 结果。
-整轮 tool boundary 成功提交后才启动该轮 worker。这样，即使整轮提交失败，任何子代理也不会提前运行。
-父 Agent 随后可以请求下一轮模型，不必等待正在运行的只读调查。
+If one parent model reply contains start calls, it can contain only one or more `spawn_subagent` and cannot mix in other tools. The parent Runtime
+admits, records, and feeds back each start confirmation in model call order; with `/save` on, it first commits the handler admission and the per-call results.
+Only after the whole-turn tool boundary is committed successfully are the turn's workers started. So even if the whole-turn commit fails, no subagent runs early.
+The parent Agent can then request the next model round without waiting for running read-only investigations.
 
-worker 只执行子 Runtime 并向线程安全队列交出有界结果。父线程在 Runtime 安全边界收集完成项、更新
-State、结算实际用量并显示只包含 ID 和状态的通知；完整结果只在显式领取时进入对应的普通
-`role=tool` 结果。通知不构成 verification evidence，子代理 findings 和 evidence 也不进入父侧
-`verification_evidence`。CLI 等待用户输入时，输入由独立线程读取，CLI 主线程继续收集完成事件、
-显示通知并启动已排队的下一个子任务。
+Workers only run the child Runtime and hand bounded results to a thread-safe queue. The parent thread collects completed items at Runtime safe boundaries, updates
+State, settles actual usage, and shows notifications that contain only IDs and states; the full result enters the matching ordinary
+`role=tool` result only when explicitly claimed. Notifications are not verification evidence, and subagent findings and evidence do not enter the parent
+`verification_evidence`. While the CLI waits for user input, input is read by a separate thread, and the CLI main thread keeps collecting completion events,
+showing notifications, and starting the next queued child task.
 
-同步与后台子代理共用同一个聚合预算和并发限制：默认最多 3 个子代理、同时运行 2 个，且父任务可将
-并发上限设得更小。排队任务会预留总子代理数和请求额度；只有运行 worker 占用并发槽位。完成、失败、
-超时、取消都以同一个子结果身份结算一次；不能通过反复领取、恢复或改用新 ID 清零用量。
+Synchronous and background subagents share the same aggregate budget and concurrency limits: by default at most 3 subagents, 2 running at the same time, and the parent task can set
+a smaller concurrency limit. Queued tasks reserve the total subagent count and request quota; only running workers occupy concurrency slots. Completion, failure,
+timeout, and cancellation are all settled once under the same child result identity; usage cannot be reset by repeated claims, recovery, or switching to new IDs.
 
-活动后台任务和未领取结果都会阻止父任务进入 `done` 或保存普通 safe point。手动 `/save` 会列出
-活动 ID 并拒绝；自动安全点保存会顺延，不打断父 Agent。`/new`、`/reset`、EOF、`exit` 和异常退出
-先请求取消并有界等待；如果线程仍未收束，CLI 保留旧任务并报告未收束 ID。若任务已完成但结果未领取，
-在安全提交 `clean` 前会暂记 `abandoned` 事实；保存失败时撤销该事实并保留内存结果，提交成功后才释放正文。
+Active background tasks and unclaimed results both block the parent task from entering `done` or saving an ordinary safe point. Manual `/save` lists
+the active IDs and refuses; automatic safe point saving is deferred and does not interrupt the parent Agent. `/new`, `/reset`, EOF, `exit`, and abnormal exit
+first request cancellation and wait within bounds; if threads still have not finished, the CLI keeps the old task and reports the unfinished IDs. If a task finished but its result was not claimed,
+an `abandoned` fact is recorded temporarily before `clean` is committed safely; if saving fails, the fact is revoked and the in-memory result kept, and the body is released only after the commit succeeds.
 
-崩溃恢复不启动旧 worker。完整启动回合在 schema 3 中留下 active、committed 的 tool boundary；若进程
-退出时结果还未安全领取，恢复会派生新 session，把后台任务标成 `interrupted`，清除未知结果身份，按
-保留的预算上限保守结算用量，并增加待用户逐项 `/resolve` 的恢复 issue。若启动结果已提交、但包含
-它的整轮尚未 committed，则 worker 从未启动，恢复会关闭该未启动预留，不伪造已执行结果。结果领取
-按普通父工具调用保存，并检查 `child_session_id`、合同身份、结果 ID 和 hash 与 State 一致。
+Crash recovery does not start old workers. A complete start turn leaves an active, committed tool boundary in schema 3; if the result was not safely claimed when the process
+exited, recovery derives a new session, marks the background task as `interrupted`, clears the unknown result identity, settles usage conservatively at
+the kept budget limit, and adds recovery issues for the user to `/resolve` one by one. If the start result was committed but the whole turn containing
+it was not yet committed, the worker never started, and recovery closes that unstarted reservation without forging an executed result. Result claims
+are saved as ordinary parent tool calls, with a check that `child_session_id`, the contract identity, the result ID, and the hash match State.
 
-ScopeGate 从工作区根目录逐段使用不跟随符号链接的目录 fd 打开文件；读取、列表和搜索都基于实际打开的
-fd，而不在路径检查后重新按路径打开。除常见 session 敏感目录外，还会排除当前真实
-`SessionStore.root`；根目录身份变化、符号链接或越界路径会拒绝读取。
+The ScopeGate opens files segment by segment from the workspace root using directory fds that do not follow symlinks; reads, listings, and searches are all based on the actually opened
+fd, instead of reopening by path after the path check. Besides common session-sensitive directories, it also excludes the current real
+`SessionStore.root`; root directory identity changes, symlinks, or out-of-bounds paths refuse reads.
 
-在 v0.48 基线中，后台任务只支持当前 CLI 进程内运行和查询；父 Agent 不能把子结果当成权威验证。
-第 v0.49 节为已领取成功结果的子会话加入受限 followup 与跨进程安全点恢复，但不恢复活动 worker。
+In the v0.48 baseline, background tasks support only running and querying within the current CLI process; the parent Agent cannot treat child results as authoritative verification.
+The v0.49 section adds restricted followup and cross-process safe-point recovery for child sessions whose successful results were claimed, but does not restore active workers.
 
-## v0.42 具名本地 References
+## v0.42 Named Local References
 
-References 是用户在本地配置中登记的、工作区外的资料目录。它们只通过稳定 alias
-被父 Agent 发现和读取，不会自动进入 Context、Memory、Plan 或 verification evidence，
-也不会提供给 Subagent。资料内容是不可信的，不能覆盖 system/project instructions、
-PermissionGate 或用户要求。
+References are document directories outside the workspace that the user registers in local configuration. They are discovered and read by the parent Agent only through stable aliases,
+do not automatically enter Context, Memory, Plan, or verification evidence,
+and are not provided to Subagents. Their content is untrusted and cannot override system/project instructions,
+the PermissionGate, or user requirements.
 
-### 配置
+### Configuration
 
-默认配置是空列表，不影响未配置用户：
+The default configuration is an empty list and does not affect users who have not configured it:
 
 ```python
-# src/mini_agent/config_local.py（未跟踪）
+# src/mini_agent/config_local.py (untracked)
 REFERENCES = [
     {
         "alias": "python-docs",
         "path": "/absolute/or/relative/path",
-        "description": "本地 Python 设计资料",
+        "description": "Local Python design material",
     },
 ]
 ```
 
-相对 `path` 以 `src/mini_agent/config_local.py` 所在目录为基准。父 Runtime 创建时
-执行 `expanduser`、绝对化和 `realpath`，冻结真实目录；配置变更不会影响已经创建的
-catalog。alias 必须以小写字母开头，只能包含小写字母、数字、`_`、`-`，最长 64 个
-字符；重复 alias、缺少字段、缺失目录和非目录路径会阻止父 Runtime 启动。description
-最长 240 个字符，最多登记 32 个目录。
+A relative `path` is based on the directory of `src/mini_agent/config_local.py`. When the parent Runtime is created, it
+runs `expanduser`, makes the path absolute, and applies `realpath`, freezing the real directory; configuration changes do not affect an already created
+catalog. An alias must start with a lowercase letter, contain only lowercase letters, digits, `_`, and `-`, and be at most 64
+characters; duplicate aliases, missing fields, missing directories, and non-directory paths prevent the parent Runtime from starting. A description
+is at most 240 characters, and at most 32 directories can be registered.
 
-### 工具与返回值
+### Tools and return values
 
-父侧有三个只读工具：成功结果是有界 JSON；路径、文件或搜索访问失败时由
-Executor 统一记录为工具失败，不再把错误 JSON 当作成功结果：
+The parent side has three read-only tools: successful results are bounded JSON; when path, file, or search access fails, the
+Executor records it uniformly as a tool failure, and error JSON is no longer treated as a successful result:
 
-| 工具 | 参数和默认值 | 返回的关键事实 |
+| Tool | Arguments and defaults | Key facts returned |
 |---|---|---|
-| `list_references()` | 无参数 | `alias`、`description`；不返回真实根路径 |
-| `search_reference(alias, query, path=".", include="*", limit=20)` | 单 alias 内大小写不敏感的字面量搜索；`limit` 最多 100 | alias 内相对文件路径、行号、行片段、文件 SHA-256、`total_matches`、`returned_matches`、`scan_truncated`、`truncated` |
-| `read_reference(alias, path, offset=0, limit=200)` | 按 0-based offset 选取行片段；limit 最多 200 | 带行号的 UTF-8 行、实际 `returned_lines`、自洽的起止行、`omitted_lines`、总行数、文件 SHA-256、`truncated` |
+| `list_references()` | No arguments | `alias`, `description`; does not return the real root path |
+| `search_reference(alias, query, path=".", include="*", limit=20)` | Case-insensitive literal search within one alias; `limit` at most 100 | Alias-relative file path, line number, line snippet, file SHA-256, `total_matches`, `returned_matches`, `scan_truncated`, `truncated` |
+| `read_reference(alias, path, offset=0, limit=200)` | Selects a line slice by 0-based offset; limit at most 200 | Numbered UTF-8 lines, actual `returned_lines`, consistent start and end lines, `omitted_lines`, total lines, file SHA-256, `truncated` |
 
-单个文件最多读取 1 MiB；搜索最多访问 2,000 个文件、10,000 个目录项并读取 64 MiB
-正文，保留 100 条命中。结果还报告实际 `scanned_files`、`visited_entries` 和
-`scanned_bytes`。达到搜索资源预算时设置 `scan_truncated=true`；仅因命中/展示 JSON
-上限移除结果项时设置 `truncated=true`，两者不混淆。文件和目录按 alias 内相对路径
-排序，搜索后文件发生变化时，后续读取按新内容重新计算摘要。
+A single file is read up to 1 MiB; a search visits at most 2,000 files and 10,000 directory entries and reads 64 MiB
+of body, keeping 100 matches. Results also report the actual `scanned_files`, `visited_entries`, and
+`scanned_bytes`. When the search resource budget is reached, `scan_truncated=true` is set; when result items are removed only because of the match/display JSON
+limit, `truncated=true` is set; the two are not confused. Files and directories are sorted by alias-relative path,
+and if a file changes after a search, later reads recompute the digest from the new content.
 
-### 权限、敏感路径与恢复
+### Permissions, sensitive paths, and recovery
 
-`list_references` 默认 `allow`。`search_reference` 和 `read_reference` 默认 `ask`，
-权限 pattern 是精确的 `alias:relative_path`，例如 `python-docs:guide`；`always` 只记住
-这一个 pattern，不自动授权整个子树。查询词或读取的
-offset/limit 只用于提示，不会成为真实根路径。登记 alias 不会自动批准读取，权限拒绝
-发生在 handler 之前。
+`list_references` defaults to `allow`. `search_reference` and `read_reference` default to `ask`,
+and the permission pattern is the exact `alias:relative_path`, for example `python-docs:guide`; `always` remembers only
+this one pattern and does not automatically authorize the whole subtree. The query or the read
+offset/limit is used only in the prompt and never becomes the real root path. Registering an alias does not automatically approve reads, and permission refusal
+happens before the handler.
 
-绝对路径、空路径、`.` 文件读取、`..`、NUL、越界符号链接、目录符号链接遍历、目录、
-设备文件、非 UTF-8 文件和过大文件都会被拒绝。名为 `config_local.py` 的目标、位于
-MemoryStore 根或默认 `~/.mini_agent/sessions` 内的 Reference 根会拒绝启动；较宽的
-Reference 根包含敏感子目录时，递归搜索跳过该子树，显式读取报错。错误不显示真实根。
+Absolute paths, empty paths, `.` file reads, `..`, NUL, out-of-bounds symlinks, directory symlink traversal, directories,
+device files, non-UTF-8 files, and oversized files are all refused. A target named `config_local.py`, and a Reference root inside the
+MemoryStore root or the default `~/.mini_agent/sessions`, refuse to start; when a broader
+Reference root contains sensitive subdirectories, recursive search skips that subtree and explicit reads report an error. Errors do not show the real root.
 
-References 的根只保留在进程内 `ReferenceCatalog`。完整正文可以随普通 tool history
-进入 Context，并遵循既有 `/save` session 行为；State/Trace 的 `output_excerpt` 只保留
-alias、相对路径、行号、数量、SHA-256 和截断状态，不保留正文或真实根。路径和文件错误
-由 handler 抛出，再由 Executor 记录为 `outcome="failed"`、`error_kind="reference_access_error"`。
-恢复时 registry
-从当前本地配置重新组装 catalog，不信任 session 中的旧配置。References 可作为 crash
-recovery 的普通只读调查，但不能证明 workspace drift；只有
-`run_shell(purpose="verification")` 能产生 verification evidence。
+The roots of References are kept only in the in-process `ReferenceCatalog`. The full body can enter the Context with ordinary tool history
+and follows the existing `/save` session behavior; the State/Trace `output_excerpt` keeps only
+the alias, relative path, line numbers, counts, SHA-256, and truncation status, not the body or the real root. Path and file errors
+are raised by the handler and then recorded by the Executor as `outcome="failed"`, `error_kind="reference_access_error"`.
+On recovery, the registry
+reassembles the catalog from the current local configuration and does not trust the old configuration in the session. References can be used as ordinary read-only investigation in crash
+recovery but cannot prove workspace drift; only
+`run_shell(purpose="verification")` can produce verification evidence.
 
-## v0.41 相关记忆检索
+## v0.41 Relevant Memory Retrieval
 
-v0.41 在 v0.40 的 Memory 文件之上增加两条只读路径。父 Agent 可以显式调用 `search_memories(query, limit=5)`，默认最多返回 5 条、最多允许 10 条；显式工具会拒绝纯空白 `query`，底层检索 API 则把空查询解释为空集合，不会退化为列出全部记忆。结果包含 `memory_id`、标题、240 字符以内片段、来源、更新时间、分数和 `matched_fields`，并始终标记 `source_status="unverified"`。来源字符串不会被当作路径访问，也不会被宣称为当前文件证据；需要正文时继续调用 `read_memory(memory_id)`。
+v0.41 adds two read-only paths on top of the v0.40 Memory files. The parent Agent can explicitly call `search_memories(query, limit=5)`, which returns at most 5 entries by default and allows at most 10; the explicit tool refuses a whitespace-only `query`, while the underlying retrieval API interprets an empty query as an empty set and does not degrade into listing all memories. Results contain `memory_id`, title, a snippet of up to 240 characters, source, update time, score, and `matched_fields`, and are always marked `source_status="unverified"`. The source string is not accessed as a path and is not claimed as current file evidence; when the body is needed, call `read_memory(memory_id)`.
 
-父 Runtime 默认在每次请求 LLM 前，以 `AgentState.task` 和 history 中最近一条 `role=user` 文本重新检索。候选最多 4 条、资料区最多 2400 字符，按标题、标签、来源、正文的词法命中加权并稳定排序；低排名候选按完整条目丢弃。候选只存在于本次 prepared Context 的临时 system 资料区，明确标记为不可信，不进入 history、State、Plan、Trace、verification evidence 或 session。子代理既没有 Memory 工具，也没有自动候选。
+By default, before each LLM request, the parent Runtime retrieves again using `AgentState.task` and the latest `role=user` text in history. Candidates are at most 4 and the material area at most 2400 characters, weighted by lexical matches in title, tags, source, and body and sorted stably; low-ranked candidates are dropped as whole entries. Candidates exist only in the temporary system material area of this prepared Context, are explicitly marked untrusted, and do not enter history, State, Plan, Trace, verification evidence, or session. Subagents have neither Memory tools nor automatic candidates.
 
-自动检索默认开启。复制 `config_example.py` 时可在不提交的 `config_local.py` 中设置：
+Automatic retrieval is on by default. When copying `config_example.py`, you can set in the uncommitted `config_local.py`:
 
 ```python
 MEMORY_RETRIEVAL_ENABLED = False
 ```
 
-关闭后不读取 Memory 文件，也不生成资料区；`ContextManager` 没有绑定 retriever 时同样保持旧消息形状。每次准备消息都重新读取快照，因此其他进程刚提交或修订的记忆会在下一次 LLM 请求中生效。
+When off, Memory files are not read and no material area is generated; when `ContextManager` has no bound retriever, it also keeps the old message shape. Each message preparation rereads the snapshot, so memories another process just committed or revised take effect on the next LLM request.
 
-Memory 文件缺失表示空集合；如果文件损坏、schema 未知或读取失败，当前 Context 会加入一条有界的“记忆检索不可用”提示，并在下一次请求重试。错误不会冒泡成 LLM 顶层异常，也不会修改 Memory、State、history 或 session。检索候选不会绕过 PermissionGate、Plan 或验证边界。
+A missing Memory file means an empty set; if the file is corrupted, the schema is unknown, or reading fails, the current Context adds a bounded "memory retrieval unavailable" notice and retries on the next request. The error does not bubble up as a top-level LLM exception and does not change Memory, State, history, or session. Retrieval candidates do not bypass the PermissionGate, Plan, or verification boundaries.
 
-## v0.40 轻量持久 Memory
+## v0.40 Lightweight Durable Memory
 
-Memory 是按规范化工作区隔离的长期资料集合，与当前任务的 `AgentState`、Plan、verification evidence 和 `/save` session 分开。它不会自动从对话提炼，也不会自动注入每次模型请求；父 Agent 必须显式调用工具。`source` 只是用户或 Agent 提供的来源说明，不代表内容已经独立验证。
+Memory is a long-term material collection isolated by the normalized workspace, separate from the current task's `AgentState`, Plan, verification evidence, and `/save` session. It is not extracted from conversations automatically and is not automatically injected into each model request; the parent Agent must call the tools explicitly. `source` is only a source note provided by the user or Agent and does not mean the content has been independently verified.
 
-父侧提供五个工具：`list_memories(limit=20, offset=0)` 只返回 ID、revision、标题、标签、来源和时间，并附 `total` 与 `next_offset`；`read_memory(memory_id)` 才返回单条正文；`remember(title, body, tags, source)` 新建；`revise_memory(memory_id, expected_revision, title, body, tags, source)` 修订；`forget_memory(memory_id, expected_revision)` 遗忘。查看默认 `allow`，三个修改工具默认 `ask`；授权提示展示受 schema 上限约束的拟写内容、目标 ID 和 revision，并继续支持 `once/always/reject`。
+The parent side provides five tools: `list_memories(limit=20, offset=0)` returns only ID, revision, title, tags, source, and time, plus `total` and `next_offset`; only `read_memory(memory_id)` returns a single body; `remember(title, body, tags, source)` creates; `revise_memory(memory_id, expected_revision, title, body, tags, source)` revises; `forget_memory(memory_id, expected_revision)` forgets. Viewing defaults to `allow`, and the three change tools default to `ask`; the authorization prompt shows the proposed content bounded by schema limits, the target ID, and the revision, and keeps supporting `once/always/reject`.
 
-默认存储根目录是 `~/.mini_agent/memory`，可在不提交的 `config_local.py` 中设置 `MEMORY_DIR`。`MEMORY_DIR` 按真实路径校验，不能位于当前工作区内，也不能通过符号链接指向工作区；这样子代理的工作区只读工具无法绕过 Memory 工具边界读取正文。工作区外的自定义目录继续可用。每个规范化工作区真实路径的 SHA-256 作为文件名，JSON 使用 `schema_version=1`。单个工作区最多 256 条；标题、正文、标签、来源上限分别是 120、2000、8×32、240 字符，整个 JSON 不超过 1 MiB。目录权限是 `0700`，文件是 `0600`；缺失文件表示空集合，损坏文件或未知 schema 只报错，不覆盖。
+The default storage root is `~/.mini_agent/memory`, and `MEMORY_DIR` can be set in the uncommitted `config_local.py`. `MEMORY_DIR` is validated by real path and cannot be inside the current workspace or point to the workspace through a symlink; this way the subagent's read-only workspace tools cannot bypass the Memory tool boundary to read bodies. Custom directories outside the workspace keep working. The SHA-256 of each normalized workspace real path is used as the file name, and the JSON uses `schema_version=1`. A single workspace has at most 256 entries; the limits for title, body, tags, and source are 120, 2000, 8×32, and 240 characters, and the whole JSON is at most 1 MiB. Directory permissions are `0700` and file permissions `0600`; a missing file means an empty set, and a corrupted file or unknown schema only reports an error without overwriting.
 
-修改流程在工作区专属 lock 下执行“重读 → 校验 → 修改 → 临时文件写入并同步 → 原子替换 → 目录同步”。锁最多等待 2 秒，不会自动抢占遗留锁。若替换已发生但目录同步失败，工具返回独立的 `memory_commit_uncertain`，State 将其归为结果不确定、不可直接重试的失败；当前进程后续记忆写入停止，但只读查看仍可用于核查。工具结果、State 和恢复提示都会说明文件可能已经替换，不能据此断言未写入。`expected_revision` 冲突不会写盘。
+The change flow runs "reread → validate → change → write and sync a temporary file → atomic replace → directory sync" under a workspace-specific lock. The lock waits at most 2 seconds and does not automatically take over stale locks. If the replacement happened but the directory sync failed, the tool returns a separate `memory_commit_uncertain`, and State classifies it as a failure with an uncertain result that cannot be retried directly; later memory writes in the current process stop, but read-only viewing can still be used for checking. Tool results, State, and recovery notices all state that the file may already have been replaced and that it cannot be asserted as not written. An `expected_revision` conflict does not write to disk.
 
-记忆修改工具仍是 `effect_class=possible`，所以会预留 generation、使旧 verification 失效，并受只读规划和 crash recovery gate 约束。开启 `/save` 后，相关工具调用会像其他调用一样先提交 `handler_admitted`，再提交 State、对应 `role=tool` 和 boundary；如果 Memory 文件已写入但父结果未提交，恢复不会重放 handler，而是把调用标为不确定事实。Memory 文件不参与 session 回滚。
+Memory change tools are still `effect_class=possible`, so they reserve a generation, invalidate old verification, and are bound by the read-only planning and crash recovery gates. With `/save` on, the related tool calls, like other calls, first commit `handler_admitted`, then commit State, the matching `role=tool`, and the boundary; if the Memory file was written but the parent result was not committed, recovery does not replay the handler but marks the call as an uncertain fact. Memory files do not take part in session rollback.
 
-Memory 不加入子代理固定白名单；子代理仍只能使用 `calculate`、`read_file`、`list_dir`、`grep`。State 摘要和普通终端输出不展开正文，但工具参数仍属于当前模型 history；开启 `/save` 后，单次记忆正文可能随 Context 进入 session。因此本版只是不复制整份 Memory 快照，不承诺 session 绝无某次记忆正文。References 属于 v0.42。
+Memory is not added to the fixed subagent allowlist; subagents can still use only `calculate`, `read_file`, `list_dir`, and `grep`. State summaries and ordinary terminal output do not expand bodies, but tool arguments still belong to the current model history; with `/save` on, a single memory body may enter the session with the Context. So this version only avoids copying the whole Memory snapshot and does not promise that the session never contains any memory body. References belong to v0.42.
 
-### v0.40 配置
+### v0.40 configuration
 
 ```python
 MEMORY_DIR = "~/.mini_agent/memory"
 ```
 
-## v0.39 持久委派交付
+## v0.39 Durable Delegation Delivery
 
-v0.38 的调度器允许子代理乱序完成，但结果在父 Context 写入前只存在于当前进程。如果父进程在这个窗口退出，子代理可能已经消耗了模型额度，父 Agent 却没有足够事实重建同一个 `role=tool` 结果。v0.39 把这两个时刻明确分开：结果合同校验通过后先保存为 `result_ready`，再按模型调用顺序交付。
+The v0.38 scheduler allows subagents to finish out of order, but before being written into the parent Context the results exist only in the current process. If the parent process exits in this window, the subagent may already have used model quota while the parent Agent lacks enough facts to rebuild the same `role=tool` result. v0.39 separates these two moments explicitly: after the result contract validation passes, the result is first saved as `result_ready`, then delivered in model call order.
 
-开启 `/save` 后，schema 3 的 `tool_boundary` 可以包含有界的 `pending_delegation_results`。每条记录保存 `invocation_id`、`delegation_id`、结果 ID、规范化结果原文、摘要和 hash；原文按 UTF-8 计数，单条和总区都有上限。它只覆盖尚未提交的 `delegate_task`，不保存子代理的完整 Context、history、隐藏提示词或凭据。
+With `/save` on, the schema 3 `tool_boundary` can contain bounded `pending_delegation_results`. Each record saves the `invocation_id`, `delegation_id`, result ID, normalized raw result, summary, and hash; the raw text is counted in UTF-8, and both single records and the total area have limits. It covers only `delegate_task` calls not yet committed and does not save the subagent's full Context, history, hidden prompts, or credentials.
 
-父侧提交的顺序是：先保存委派合同、预留额度和 `created/running` 状态；子结果完成后校验并保存 `result_ready`；轮到该父调用时，把父 attempt、State 中的 `committed` 生命周期、对应 `role=tool` 和 boundary 中的结果引用放入同一次原子 session 提交。前序调用仍在运行时，后序结果可以先变成 `result_ready`，但不会越过父模型调用顺序交付。
+The parent-side commit order is: first save the delegation contract, the quota reservation, and the `created/running` state; after the child result finishes, validate it and save `result_ready`; when that parent call's turn comes, put the parent attempt, the `committed` lifecycle in State, the matching `role=tool`, and the result reference in the boundary into the same atomic session commit. While earlier calls are still running, later results can become `result_ready` first, but are not delivered ahead of the parent model call order.
 
-恢复 active pending boundary 时，已有且通过 hash、调用身份、State 状态和顺序校验的结果会在派生 session 中按父顺序直接交付，不会重新调用子 LLM。`created/running` 且没有持久结果的记录转为 `interrupted`：不生成子结果 ID/hash，也不标记为 `committed`；对应父工具调用仍由 v0.33 生成不确定结果和待用户处理的 issue。实际子用量未知，聚合预算按原预留上限保守占用，不会因派生新 session 重置，也不会显示为已确认的子实际 usage。
+When recovering an active pending boundary, existing results that pass hash, call identity, State status, and order checks are delivered directly in parent order in the derived session, without calling the child LLM again. Records in `created/running` with no durable result become `interrupted`: no child result ID/hash is generated, and they are not marked `committed`; the matching parent tool call still gets an uncertain result and an issue for the user to handle from v0.33. Actual child usage is unknown, and the aggregate budget is occupied conservatively at the original reservation limit; it is not reset by deriving a new session and is not shown as confirmed actual child usage.
 
-Trace 和 Structured State 只显示父调用、合同摘要、生命周期、usage 和结果引用，不读取子 history 或原始待交付结果。工作区和项目指令仍在恢复时重新检查；旧结果只能作为父 Agent 的调查材料，不能扩大新的委派权限或代替父验证。
+Trace and Structured State show only parent calls, contract summaries, lifecycle, usage, and result references, and do not read child history or raw pending results. The workspace and project instructions are still rechecked on recovery; old results can only be investigation material for the parent Agent and cannot widen new delegation permissions or replace parent verification.
 
-## v0.38 有界并行子代理
+## v0.38 Bounded Parallel Subagents
 
-v0.38 允许父模型在一个 assistant 回合提交多个彼此独立的 `delegate_task`。子代理仍是同步创建、depth=1、只读实例，但 `DelegationScheduler` 以固定 `MAX_CONCURRENCY` 运行已预留的合同。三个调用 A、B、C 在并发上限 2 时会先运行 A/B，B 完成后可启动 C；完成顺序可以乱序，父 `role=tool` 结果和 durable boundary 仍严格按 A、B、C 提交。
+v0.38 allows the parent model to submit several independent `delegate_task` calls in one assistant turn. Subagents are still synchronously created, depth=1, read-only instances, but `DelegationScheduler` runs reserved contracts with a fixed `MAX_CONCURRENCY`. With three calls A, B, C and a concurrency limit of 2, A/B run first, and C can start after B finishes; the completion order can be out of order, but parent `role=tool` results and the durable boundary are still committed strictly in the order A, B, C.
 
-父任务聚合预算在子代理启动前按模型顺序批量预留，在结果生成后按实际 usage 结算。预留额度和运行槽位分开：排队的 `created` 合同占用总子代理数和请求额度，但只有已经运行的 worker 占用并发槽位。默认上限是 3 个子代理、并发 2、24 次 LLM 调用、72 次只读工具调用和 96,000 个 token。模型可以在 `delegate_task.budget` 中请求更小的单次额度，不能扩大父账本；provider usage 缺失时沿用保守估算并标记来源，实际 usage 超过预留时照实记账并阻止后续委派。
+The parent task aggregate budget is reserved in batch in model order before subagents start, and settled by actual usage after results are produced. Reserved quota and run slots are separate: queued `created` contracts occupy the total subagent count and request quota, but only running workers occupy concurrency slots. The default limits are 3 subagents, concurrency 2, 24 LLM calls, 72 read-only tool calls, and 96,000 tokens. The model can request a smaller per-call quota in `delegate_task.budget` but cannot enlarge the parent ledger; when provider usage is missing, the conservative estimate is used with its source marked, and when actual usage exceeds the reservation, it is recorded as is and later delegations are blocked.
 
-每个 worker 使用独立的 State、Context、模型绑定、连接、流解析缓冲、预算计数和取消事件，只共享不可变工具定义与只读项目指令快照。一个子代理失败、超时或取消不会取消同批其他任务；父任务整体取消时，Manager 会广播到全部活动和待启动任务。`/new`、`/reset`、EOF、`exit` 和异常退出先请求取消，再有界等待；若仍未收束，CLI 保留旧任务并报告所有未收束的 `subagent_id`。
+Each worker uses its own State, Context, model binding, connection, stream parse buffer, budget counters, and cancellation event, sharing only immutable tool definitions and a read-only project instructions snapshot. One subagent failing, timing out, or being cancelled does not cancel other tasks in the same batch; when the parent task as a whole is cancelled, the Manager broadcasts to all active and pending tasks. `/new`, `/reset`, EOF, `exit`, and abnormal exit first request cancellation, then wait within bounds; if tasks still have not finished, the CLI keeps the old task and reports all unfinished `subagent_id`s.
 
-用户中断子代理调用时，Runtime 先提交每个已完成或取消的父工具结果，再停止父循环；不会继续请求父模型。子代理的上下文压缩若需要额外的模型摘要请求，也必须先检查剩余调用数、token 和时间，并限制摘要输出；预算不足时退回裁剪并结束子任务。
+When the user interrupts a subagent call, the Runtime first commits each completed or cancelled parent tool result, then stops the parent loop; it does not keep requesting the parent model. If a subagent's context compaction needs an extra model summary request, it must also first check the remaining calls, tokens, and time, and limit the summary output; when the budget is insufficient, it falls back to trimming and ends the child task.
 
-活动或 `result_ready` 委派会阻止父任务进入 `done`，也会阻止 safe point。v0.39 为 `result_ready` 增加了有界原文保存；没有这份原文的旧 v0.38 session 仍按 v0.33 规则把已准入调用交给 issue，不自动重跑子代理。
+Active or `result_ready` delegations block the parent task from entering `done` and also block safe points. v0.39 added bounded raw-text saving for `result_ready`; old v0.38 sessions without this raw text still hand admitted calls to issues by v0.33 rules and do not rerun subagents automatically.
 
-### v0.38 配置
+### v0.38 configuration
 
 ```python
 MAX_SUBAGENTS = 3
@@ -587,15 +587,15 @@ MAX_TOTAL_TOOL_CALLS = 72
 MAX_TOTAL_TOKENS = 96_000
 ```
 
-`MAX_CONCURRENCY` 必须是正整数且不大于 `MAX_SUBAGENTS`。这些值可以由本地配置覆盖；核心运行时仍只使用标准库线程和锁。
+`MAX_CONCURRENCY` must be a positive integer not greater than `MAX_SUBAGENTS`. These values can be overridden by local configuration; the core runtime still uses only standard library threads and locks.
 
-## v0.36 多 provider 与统一协议适配
+## v0.36 Multiple Providers and Unified Protocol Adaptation
 
-v0.36 将“模型服务配置”和“协议转换”从 Agent Runtime 中分离出来。`provider` 是服务配置身份，`protocol` 是请求/响应格式，`model profile` 是本地允许模型使用的别名。父 Agent 和 Subagent 在启动前分别冻结 `ModelBinding`，因此可以使用不同 provider/model，但仍进入同一个 `AgentRuntime.run()`。
+v0.36 separates "model service configuration" and "protocol conversion" from the Agent Runtime. `provider` is a service configuration identity, `protocol` is the request/response format, and `model profile` is a local alias the model is allowed to use. The parent Agent and Subagents each freeze a `ModelBinding` before starting, so they can use different providers/models but still enter the same `AgentRuntime.run()`.
 
-### 配置格式
+### Configuration format
 
-推荐在未跟踪的 `src/mini_agent/config_local.py` 中覆盖以下映射；仓库里的 `config_example.py` 只有占位值：
+It is recommended to override the mappings below in the untracked `src/mini_agent/config_local.py`; the repository's `config_example.py` has only placeholder values:
 
 ```python
 PROVIDERS = {
@@ -629,172 +629,172 @@ SUBAGENT_MODEL_PROFILE = "child-anthropic"
 SUBAGENT_ALLOWED_MODEL_PROFILES = ("child-anthropic",)
 ```
 
-`openai_chat` 使用完整的 `/chat/completions` endpoint，`anthropic_messages` 使用完整的 `/v1/messages` endpoint。两个映射必须同时定义；只定义一半会在启动时失败。模型只能通过 `delegate_task(model_profile="child-anthropic")` 请求获准别名，不能传 endpoint、key、真实 model ID 或认证头。选择顺序是显式且获准的 profile、子默认 profile、父 profile；未知或越权别名不会回退。
+`openai_chat` uses the full `/chat/completions` endpoint, and `anthropic_messages` uses the full `/v1/messages` endpoint. Both mappings must be defined together; defining only half fails at startup. The model can request approved aliases only through `delegate_task(model_profile="child-anthropic")` and cannot pass endpoints, keys, real model IDs, or auth headers. The selection order is an explicit and approved profile, the child default profile, then the parent profile; unknown or unauthorized aliases do not fall back.
 
-只配置旧的 `BASE_URL`、`API_KEY`、`MODEL` 时，程序会生成 `legacy-default` provider/profile，并在 OpenAI-compatible base URL 后补 `/chat/completions`。新旧配置不能局部混用。真实值不得提交到版本库。
+When only the old `BASE_URL`, `API_KEY`, and `MODEL` are configured, the program generates a `legacy-default` provider/profile and appends `/chat/completions` to the OpenAI-compatible base URL. New and old configuration cannot be partly mixed. Real values must not be committed to the repository.
 
-### 协议、请求和 usage
+### Protocols, requests, and usage
 
-首批支持 OpenAI-compatible Chat Completions 与 Anthropic Messages。OpenAI 使用 Bearer 认证和工具 schema；Anthropic 使用 `x-api-key`、`anthropic-version`、顶层 system、`tool_use` 与 `tool_result` block。两种协议都归一为内部 assistant message 和按 call ID 对应的 `role=tool` 结果；Runtime、工具执行和完成判定不读取 provider 原生字段。
+The first supported protocols are OpenAI-compatible Chat Completions and Anthropic Messages. OpenAI uses Bearer auth and tool schemas; Anthropic uses `x-api-key`, `anthropic-version`, a top-level system, and `tool_use` and `tool_result` blocks. Both protocols are normalized into internal assistant messages and `role=tool` results matched by call ID; the Runtime, tool execution, and completion decision do not read provider-native fields.
 
-所有请求继续使用标准库 `http.client`，每次请求独立 connection，并发送 `Accept-Encoding: identity`。适配器不自动重试、不执行工具、不修改 State、不判断完成，也不做跨 provider fallback。流式 tool arguments 未闭合、流在结束标志前中断或收到 provider error 时，本次响应会被拒绝，不会进入 executor。
+All requests keep using the standard library `http.client`, with a separate connection per request, and send `Accept-Encoding: identity`. Adapters do not retry automatically, run tools, change State, decide completion, or do cross-provider fallback. When streaming tool arguments are not closed, the stream breaks before the end marker, or a provider error is received, the response is refused and does not enter the executor.
 
-`ProviderUsage.source` 为 `provider`、`estimated` 或 `mixed`。服务方提供完整 usage 时优先使用；缺失字段由保守 token 估算补足。Context 摘要也使用当前父/子 binding，并计入同一个 `UsageMeter`，不会成为免费调用。父、子 Context window 和 output reserve 分别来自各自 profile。
+`ProviderUsage.source` is `provider`, `estimated`, or `mixed`. When the service provides complete usage, it is preferred; missing fields are filled by conservative token estimates. Context summaries also use the current parent/child binding and count toward the same `UsageMeter`, and do not become free calls. The parent and child Context windows and output reserves each come from their own profile.
 
-### 脱敏和恢复
+### Redaction and recovery
 
-State、Context、session、Trace、工具结果和用户可见错误最多保存 profile、provider ID、protocol 和 fingerprint；不保存 API key、真实 endpoint、认证头或真实 model ID。fingerprint 只由非认证配置生成，不包含 API key 或额外请求头，因此轮换凭据不会改变它。v0.36 创建的带模型绑定记录的会话在恢复时重新加载本地 catalog 并比较父 binding；配置缺失或 fingerprint 变化时报告问题，不重发历史请求，也不自动切换 profile。旧版会话没有模型绑定记录，无法核对原模型来源，恢复前需由用户自行核对本地配置。
+State, Context, session, Trace, tool results, and user-visible errors save at most the profile, provider ID, protocol, and fingerprint; they do not save the API key, real endpoint, auth headers, or real model ID. The fingerprint is generated only from non-auth configuration and does not contain the API key or extra request headers, so rotating credentials does not change it. Sessions created by v0.36 with model binding records reload the local catalog on recovery and compare the parent binding; missing configuration or a changed fingerprint is reported as a problem, historical requests are not resent, and profiles are not switched automatically. Old sessions have no model binding records, so the original model source cannot be checked, and the user must check the local configuration before recovery.
 
-v0.36 是 v0.37 的 provider 基线：它仍只有一个同步、depth=1、只读 Subagent，但没有本课新增的父聚合预算、后台取消和生命周期记录。v0.38 才引入多个子代理并行，v0.39 才处理跨进程委派结果交付。
+v0.36 is the provider baseline of v0.37: it still has only one synchronous, depth=1, read-only Subagent, but none of that lesson's new parent aggregate budget, background cancellation, and lifecycle records. Only v0.38 introduces several subagents in parallel, and only v0.39 handles cross-process delegation result delivery.
 
-## v0.35 共享父子运行循环
+## v0.35 Shared Parent/Child Run Loop
 
-父 Agent 和只读 Subagent 现在都通过同一个 `AgentRuntime.run()` 驱动“请求 LLM → 规范化 tool call → 执行或拒绝工具 → 按模型顺序回灌结果 → 判断完成”的循环。父侧使用 `ParentRuntimePolicy` 继续管理 Plan、Repair、进程、session、verification 和完成提醒；子侧使用 `SubagentRuntimePolicy` 管理固定预算、scope 观察、结果合同和一次格式修正。策略不能请求 LLM 或进入 handler。
+The parent Agent and read-only Subagents now both drive the loop "request LLM → normalize tool calls → run or refuse tools → feed back results in model order → decide completion" through the same `AgentRuntime.run()`. The parent side uses `ParentRuntimePolicy` to keep managing Plan, Repair, processes, session, verification, and completion reminders; the child side uses `SubagentRuntimePolicy` to manage the fixed budget, scope observation, the result contract, and one format correction. Policies cannot request the LLM or enter handlers.
 
-这次收敛不改变 v0.34 的外部委派能力：仍然只能同步创建一个 depth=1 子代理，子代理只能使用 `calculate`、`read_file`、`list_dir`、`grep`，父 Agent 仍独占修改、权限、主计划、generation、权威 verification 和完成判定。非法 tool call 也会获得唯一的规范化 ID 和对应 `role=tool` 结果；持久化回合仍须先提交 `handler_admitted`，整轮提交完成前不会请求下一次 LLM。
+This convergence does not change the external delegation capability of v0.34: only one depth=1 subagent can still be created synchronously, the subagent can use only `calculate`, `read_file`, `list_dir`, and `grep`, and the parent Agent still exclusively owns changes, permissions, the main plan, generation, authoritative verification, and the completion decision. Illegal tool calls also get a unique normalized ID and a matching `role=tool` result; durable turns must still commit `handler_admitted` first, and the next LLM request is not made before the whole turn is committed.
 
-## v0.34 最小受控子代理委派
+## v0.34 Minimal Controlled Subagent Delegation
 
-父 Agent 可以通过 `delegate_task` 同步委派一个单层只读调查。子代理拥有独立的 State、Context、loop、项目提示词和固定 PermissionGate；它只看见 `calculate`、`read_file`、`list_dir`、`grep`，不能写文件、运行 shell、操作进程、调用计划/恢复/验证工具或再次委派。父 Agent 仍独占工作区修改、主 Plan、权限、generation、权威 verification 和完成判定。
+The parent Agent can synchronously delegate one single-level read-only investigation through `delegate_task`. The subagent has its own State, Context, loop, project prompt, and fixed PermissionGate; it sees only `calculate`, `read_file`, `list_dir`, and `grep`, and cannot write files, run shell, operate processes, call plan/recovery/verification tools, or delegate again. The parent Agent still exclusively owns workspace changes, the main Plan, permissions, generation, authoritative verification, and the completion decision.
 
-工具参数为：`goal`（必填字符串）、`scope`（1–8 个工作区相对路径）、`constraints`、`expected_findings`、`requested_tools`（非空且只能是四个只读工具）、`selected_parent_facts`、`purpose`（`investigation` / `diagnosis` / `crash_investigation`），诊断或崩溃调查还必须带正确的 `source_id`；可选 `budget` 包含 `max_rounds`、`max_llm_calls`、`max_tool_calls`、`max_tokens`、`max_result_bytes`、`timeout_seconds`。
+The tool arguments are: `goal` (required string), `scope` (1–8 workspace-relative paths), `constraints`, `expected_findings`, `requested_tools` (non-empty and only the four read-only tools), `selected_parent_facts`, `purpose` (`investigation` / `diagnosis` / `crash_investigation`); diagnosis or crash investigation must also carry the correct `source_id`; the optional `budget` contains `max_rounds`, `max_llm_calls`, `max_tool_calls`, `max_tokens`, `max_result_bytes`, and `timeout_seconds`.
 
-scope 会拒绝绝对路径、`..`、`config_local.py`、符号链接逃逸和工作区外路径；每一次子文件工具调用都会再次检查。selected facts 不得包含明显的 API key、Authorization、Bearer、token、secret 或 password 内容。父任务处于 `awaiting_approval`、`verification_required`、`blocked` 或 `failed` 时拒绝委派；诊断和 crash investigation 必须精确引用当前活动事实。
+The scope refuses absolute paths, `..`, `config_local.py`, symlink escapes, and paths outside the workspace; each child file tool call checks again. Selected facts must not contain obvious API key, Authorization, Bearer, token, secret, or password content. Delegation is refused when the parent task is in `awaiting_approval`, `verification_required`, `blocked`, or `failed`; diagnosis and crash investigation must reference the current active fact exactly.
 
-v0.34 固定护栏为 8 rounds、8 次 LLM calls、24 次 tool calls、32,000 个保守估算 token、12 KiB 最终 JSON 和 120 秒墙钟时间。超限返回 `budget_exhausted`；超时只在同步边界检查，不强制中断已经发出的 HTTP 请求。子代理的失败、超时或预算耗尽也会返回一个结构化 tool result，不自动创建父 FailureEvent。
+The fixed guardrails of v0.34 are 8 rounds, 8 LLM calls, 24 tool calls, 32,000 conservatively estimated tokens, 12 KiB of final JSON, and 120 seconds of wall-clock time. Exceeding them returns `budget_exhausted`; timeouts are checked only at sync boundaries and do not forcibly interrupt HTTP requests already sent. Subagent failures, timeouts, or budget exhaustion also return a structured tool result and do not automatically create a parent FailureEvent.
 
-子代理最终只允许输出以下报告体：
+The subagent is finally allowed to output only the report body below:
 
 ```json
 {"summary":"...","findings":[],"evidence":[],"limitations":[]}
 ```
 
-Runtime 会补充 UUID、父子 ID、`outcome`、usage、时间戳和合同 hash，并校验证据 ID 唯一、finding 引用不悬空、scope 内路径、正行号、合法工具名和 SHA-256 observation hash。非法报告只获得一次受保护格式修正；再次非法或修正阶段再次调用工具时返回 `failed/invalid_result`。子 evidence 不写入父 `verification_evidence`，只能作为父 Agent 的调查输入。
+The Runtime adds the UUID, parent and child IDs, `outcome`, usage, timestamps, and the contract hash, and validates that evidence IDs are unique, finding references are not dangling, paths are within scope, line numbers are positive, tool names are legal, and observation hashes are SHA-256. An illegal report gets only one protected format correction; another illegal report or another tool call in the correction phase returns `failed/invalid_result`. Child evidence is not written into the parent `verification_evidence` and can only be investigation input for the parent Agent.
 
-v0.34 每个父工具回合只允许一个 `delegate_task`，同步等待后父 Context 只收到一个按模型顺序提交的 `role=tool` JSON 结果。未实现多子代理并行、后台取消、父任务聚合预算、持久化 DelegationRecord 或跨 session 恢复；`/new`、`/reset` 和退出会在当前同步 handler 返回后才继续处理。
+v0.34 allows only one `delegate_task` per parent tool turn; after the synchronous wait, the parent Context receives only one `role=tool` JSON result committed in model order. Multi-subagent parallelism, background cancellation, the parent task aggregate budget, persisted DelegationRecords, and cross-session recovery are not implemented; `/new`, `/reset`, and exit continue only after the current synchronous handler returns.
 
-## v0.33 会话持久化、崩溃恢复与安全交接
+## v0.33 Session Persistence, Crash Recovery, and Safe Handoff
 
-### 开启、更新和关闭会话
+### Turn on, update, and turn off sessions
 
-`/save` 是明确的本地落盘选择。它只能在有活动任务时使用：第一次调用创建随机 `session_id` 并显示 ID，之后再次调用更新同一个文件。开启后，完整的 agent 回合返回 CLI、计划审批等状态决定完成时，Runtime 会自动保存一份 `active` 安全点；替换前保存失败不会覆盖旧文件，也不会显示“已保存”。文件已替换但最终同步或锁清理失败时，CLI 会单独报告提交状态未确认及 session ID，不能据此断言磁盘仍是旧版本或新版本已持久化。
+`/save` is an explicit choice to write to local disk. It can be used only when there is an active task: the first call creates a random `session_id` and shows the ID, and later calls update the same file. Once on, when a complete agent turn returns to the CLI or a state decision such as plan approval completes, the Runtime automatically saves an `active` safe point; a save failure before replacement does not overwrite the old file and does not show "saved". When the file has been replaced but the final sync or lock cleanup fails, the CLI separately reports that the commit status is unconfirmed, with the session ID, and it cannot be asserted from this that the disk still has the old version or that the new version is persisted.
 
 ```text
 /save
-已保存会话：<session_id>
+Session saved: <session_id>
 ```
 
-`/new <任务>`、`/reset`、EOF、`exit` 和正常结束会先执行现有的有界后台进程清理，再把旧会话写成 `clean`。清理失败、stdin 写入在途、仍有活动进程、未结算 attempt 或异常退出都不会提交 `clean`；CLI 会保留旧任务或报告具体原因。任务切换后不会把旧 session 身份自动带到新任务，新任务需要再次输入 `/save`。
+`/new <task>`, `/reset`, EOF, `exit`, and normal finish first run the existing bounded background process cleanup and then write the old session as `clean`. Cleanup failure, an in-flight stdin write, still active processes, unsettled attempts, or abnormal exit do not commit `clean`; the CLI keeps the old task or reports the specific reason. After a task switch, the old session identity is not carried to the new task automatically, and the new task needs `/save` again.
 
-### 文件位置、格式和隐私边界
+### File location, format, and privacy boundaries
 
-默认文件位于当前用户的 `~/.mini_agent/sessions/`，目录只允许当前用户访问，每个 session 是一个不超过 16 MiB 的 JSON 文件。写入使用同目录临时文件、文件 `fsync` 和 `os.replace`，并用同名独占锁文件拒绝并发写入；遗留锁不会被自动抢占。新写入 envelope 使用 `schema_version=4`，包含 `session_id`、包版本、规范化工作区根目录、保存时间、保存 generation、`active/clean`、State、Context、工作区清单、`tool_boundary`、idle `child_sessions` 快照和覆盖其他字段的 SHA-256 完整性值。schema 1 仍可读取诊断，schema 2/3 的 clean 安全点仍可恢复，并在恢复占用时升级为 schema 4。
+By default, files are in the current user's `~/.mini_agent/sessions/`; the directory allows access only by the current user, and each session is one JSON file of at most 16 MiB. Writes use a temporary file in the same directory, file `fsync`, and `os.replace`, and a same-name exclusive lock file refuses concurrent writes; stale locks are not taken over automatically. Newly written envelopes use `schema_version=4`, containing `session_id`, package version, normalized workspace root, save time, saved generation, `active/clean`, State, Context, workspace manifest, `tool_boundary`, idle `child_sessions` snapshots, and a SHA-256 integrity value covering the other fields. Schema 1 can still be read for diagnosis, clean safe points of schema 2/3 can still be resumed, and they are upgraded to schema 4 when claimed for resume.
 
-State 导出的是权威计划、执行、失败、恢复、generation、预算私有计数、原始恢复参数和检查点**元数据**；不会写入锁、`ProcessManager`、`Popen`、线程或检查点前镜像字节。Context 导出普通任务历史、摘要、压缩标记、摘要轮数和待消费 Runtime Notice，但不导出受保护的 system prompt。assistant 工具调用必须与按序的 `role=tool` 结果一一配对。
+State exports the authoritative plan, execution, failure, recovery, generation, private budget counters, raw recovery arguments, and checkpoint **metadata**; it does not write locks, `ProcessManager`, `Popen`, threads, or checkpoint pre-image bytes. Context exports the ordinary task history, summaries, compaction markers, summary round count, and pending Runtime Notices, but not the protected system prompt. Assistant tool calls must pair one to one with ordered `role=tool` results.
 
-会话可能包含普通对话、文件内容和工具输出，应按本地敏感数据看待。`write_process` 的 assistant 参数会保留合法 JSON 形状和 `tool_call_id`，但将 `function.arguments.input` 替换为明确的脱敏占位。如果非空正文也出现在普通历史文本、摘要或 Runtime Notice 中，本次保存会拒绝，而不是把正文写入文件或盲目替换其他文字；空输入发送 EOF 不改写摘要。通用历史文本不会被笼统地宣称“无敏感信息”，API key、`BASE_URL`、`MODEL` 和 `config_local.py` 不会被 SessionStore 读取或序列化。
+Sessions may contain ordinary conversation, file content, and tool output, and should be treated as local sensitive data. The assistant arguments of `write_process` keep a valid JSON shape and the `tool_call_id`, but `function.arguments.input` is replaced with an explicit redaction placeholder. If the non-empty body also appears in ordinary history text, summaries, or Runtime Notices, this save is refused, instead of writing the body to the file or blindly replacing other text; empty input that sends EOF does not rewrite summaries. Generic history text is not broadly claimed to be "free of sensitive information"; API keys, `BASE_URL`, `MODEL`, and `config_local.py` are not read or serialized by SessionStore.
 
-### 读取校验与故障诊断
+### Read validation and fault diagnosis
 
-SessionStore 提供读取、大小检查、schema 检查、字段/引用检查、工具结果配对检查和 SHA-256 校验。使用下面的命令请求恢复：
+SessionStore provides reading, size checks, schema checks, field/reference checks, tool result pairing checks, and SHA-256 validation. Request a resume with the command below:
 
 ```bash
 PYTHONPATH=src python -m mini_agent --resume <session_id>
 ```
 
-恢复只接受 schema 2/3/4 中 `schema_version`、`save_kind=safe_point`、`handoff_status=clean` 且工作区清单仍匹配的完整 committed 会话。CLI 会先构造新的 State、Context、工具注册表、ProcessManager 和 PermissionGate，再在 session 独占锁内复核原提交与工作区清单，把会话改写为 schema 4 的后继 generation `active` 版本；schema 4 中的 idle 子会话也会从当前本地角色、模型和 Skill Catalog 重新核对身份。提交成功后显示原任务状态并等待输入，不自动请求 LLM。工作区变化、无法完整检查的路径、`active` 会话、pending tool boundary、损坏文件和锁竞争都会在调用 LLM 或工具前拒绝。恢复后的正常退出才重新写入 `clean`；异常退出留下 `active`，不能再次直接恢复。
+Resume accepts only complete committed sessions in schema 2/3/4 with `schema_version`, `save_kind=safe_point`, `handoff_status=clean`, and a workspace manifest that still matches. The CLI first builds a new State, Context, tool registry, ProcessManager, and PermissionGate, then rechecks the original commit and workspace manifest inside the session exclusive lock, and rewrites the session as a schema 4 `active` version of the successor generation; idle child sessions in schema 4 also have their identity rechecked against the current local roles, models, and Skill Catalog. After a successful commit, it shows the original task state and waits for input, without automatically requesting the LLM. Workspace changes, paths that cannot be fully checked, `active` sessions, pending tool boundaries, corrupted files, and lock contention are all refused before calling the LLM or tools. Only a normal exit after resume writes `clean` again; an abnormal exit leaves `active`, which cannot be resumed directly again.
 
-v0.30 的 schema 1 会话仍可读取诊断，但不能续跑。旧验证资格在恢复时清空，`verification_history` 只用于审计和 Trace 回放；恢复后的任务需要独立验证。旧 PID、旧 `process_id` 和没有前镜像字节的旧 `ready` checkpoint 只保留审计记录，不能控制进程或执行回滚。
+Schema 1 sessions of v0.30 can still be read for diagnosis but cannot continue running. Old verification eligibility is cleared on resume, and `verification_history` is used only for audit and Trace replay; the resumed task needs independent verification. Old PIDs, old `process_id`s, and old `ready` checkpoints without pre-image bytes keep only audit records and cannot control processes or run rollback.
 
-- `session 文件不存在`：检查 `~/.mini_agent/sessions/` 和显示的 `session_id`，不要手工拼接其他路径。
-- `schema 1 会话只供诊断`：使用当前代码重新完成一个 `/save` 和正常 clean 交接，之后再用 `--resume`。
-- `工作区检查失败`：恢复前还原任务涉及文件和目录；清单按结构化文件参数、`files_changed`、失败和 checkpoint 记录建立，递归 `grep` 覆盖搜索范围内未匹配的文件。任务路径含符号链接或搜索范围超限时只保留诊断用途；shell 命令文本不会被猜测为路径或副作用。
-- `只有 clean 会话可以恢复`：active 会话可能对应进程清理或异常退出后的不确定窗口，先保留它用于诊断。
-- `session SHA-256 校验失败`、`JSON` 或引用错误：文件可能损坏或被手工修改；保留原文件以便诊断，不能把它当作可继续任务。
-- `session 文件超过上限`：历史或工具输出过大；先保留旧提交，不删除或截断半个工具回合。
-- `session 已被其他写入者锁定`：另一个 CLI 可能正在写入，或存在需要人工检查的遗留锁；Runtime 不会自动抢锁。
-- `会话保存失败`：若失败发生在替换前，上一份文件保持不变；CLI 不会伪造成功提示。若是清理失败，先处理报告中的 `process_id`、PID 或 stdin 原因。
-- `会话提交状态未确认`：文件可能已经换成新内容，但目录同步或锁清理没有完成；用显示的 session ID 检查磁盘文件和独占锁，不要假定旧提交仍在。
+- `session file does not exist`: check `~/.mini_agent/sessions/` and the shown `session_id`; do not hand-build other paths.
+- `schema 1 session is for diagnosis only`: use the current code to complete a new `/save` and a normal clean handoff, then use `--resume`.
+- `workspace check failed`: restore the files and directories the task touched before resuming; the manifest is built from structured file arguments, `files_changed`, failure, and checkpoint records, and recursive `grep` covers unmatched files within the search scope. When task paths contain symlinks or the search scope exceeds limits, it is kept for diagnosis only; shell command text is not guessed as paths or side effects.
+- `only clean sessions can be resumed`: an active session may correspond to an uncertain window after process cleanup or abnormal exit; keep it for diagnosis first.
+- `session SHA-256 validation failed`, `JSON` or reference errors: the file may be corrupted or edited by hand; keep the original file for diagnosis, and do not treat it as a task that can continue.
+- `session file exceeds the limit`: history or tool output is too large; keep the old commit first, and do not delete or truncate half a tool turn.
+- `session is locked by another writer`: another CLI may be writing, or there is a stale lock that needs manual checking; the Runtime does not take the lock automatically.
+- `session save failed`: if the failure happened before replacement, the previous file stays unchanged; the CLI does not forge a success message. If cleanup failed, first handle the `process_id`, PID, or stdin reason in the report.
+- `session commit status unconfirmed`: the file may already have been replaced with new content, but the directory sync or lock cleanup did not complete; use the shown session ID to check the disk file and the exclusive lock, and do not assume the old commit is still there.
 
-## v0.30 会话持久化与安全点
+## v0.30 Session Persistence and Safe Points
 
-v0.30 引入 `/save`、本地 schema 1 session、脱敏 history、原子安全点和 `active/clean` 生命周期。v0.31 增加 schema 2 和工作区清单；v0.32 增加 schema 3 的持久化工具边界；v0.33 在 active pending 边界上建立崩溃恢复交接。clean 安全点仍按原流程恢复，pending 半轮则派生新 session，不覆盖源文件，也不自动补做 handler。
+v0.30 introduces `/save`, local schema 1 sessions, redacted history, atomic safe points, and the `active/clean` lifecycle. v0.31 adds schema 2 and the workspace manifest; v0.32 adds the schema 3 durable tool boundary; v0.33 builds crash recovery handoff on the active pending boundary. Clean safe points still resume through the original flow, while pending half turns derive a new session, without overwriting the source file or automatically completing handlers.
 
-### `--resume` 的两种分流
+### The two branches of `--resume`
 
 ```bash
 PYTHONPATH=src python -m mini_agent --resume <session_id>
 ```
 
-- `clean + safe_point`：检查 workspace manifest，claim 原 session，创建新的 resume generation，等待用户输入。
-- `active + schema 3/4 + pending tool_boundary`：显示源 session、派生 session、workspace 变化和 issue 分类；claim 后只在新 session 上运行。
-- schema 1、schema 2 active、没有 pending 证据或损坏的 session：拒绝进入运行时，不调用 LLM、handler 或 PermissionGate。
+- `clean + safe_point`: check the workspace manifest, claim the original session, create a new resume generation, and wait for user input.
+- `active + schema 3/4 + pending tool_boundary`: show the source session, the derived session, workspace changes, and issue categories; after the claim, run only on the new session.
+- Schema 1, schema 2 active, sessions without pending evidence, or corrupted sessions: refused before entering the runtime, without calling the LLM, handlers, or the PermissionGate.
 
-崩溃恢复使用私有的 `crash_recovery_claims.json` sidecar，位置与 session 目录相同。它只保存源 session ID、源完整性摘要、派生 ID、恢复 ID 和 `preparing/committed` 阶段，不保存工具原始参数、shell 命令、stdin 或模型配置。先提交 `preparing` 意图，再写入并校验派生 session，最后提交 `committed`；中途失败可用同一派生 ID 重试。sidecar 或派生 session 的耐久性未确认时，不向 CLI 返回可运行对象；已 `committed` 的同一源完整性重复 claim 会报告已有的派生 session。
+Crash recovery uses a private `crash_recovery_claims.json` sidecar, in the same location as the session directory. It saves only the source session ID, the source integrity digest, the derived ID, the recovery ID, and the `preparing/committed` phase, not raw tool arguments, shell commands, stdin, or model configuration. It first commits the `preparing` intent, then writes and validates the derived session, and finally commits `committed`; a failure in the middle can be retried with the same derived ID. When the durability of the sidecar or derived session is unconfirmed, no runnable object is returned to the CLI; a repeated claim of the same already `committed` source integrity reports the existing derived session.
 
 ### `/resolve`
 
-恢复报告中的每个 issue 都必须逐项处理，一次只接受一个 issue：
+Each issue in the recovery report must be handled one by one, and only one issue is accepted at a time:
 
 ```text
-/resolve <issue_id> investigate <必填反馈>
-/resolve <issue_id> continue <必填反馈>
-/resolve <issue_id> block <必填反馈>
+/resolve <issue_id> investigate <required feedback>
+/resolve <issue_id> continue <required feedback>
+/resolve <issue_id> block <required feedback>
 ```
 
-`investigate` 只记录用户决定并允许只读调查；`continue` 要求本次恢复 generation 中已有成功、获准、`effect_class=none` 的调查 attempt；`block` 立即终止任务并保留其他 issue。所有 issue 都 continue 后会创建 `crash_recovery` replan trigger，必须重新提交或复核计划，再重新授权和独立 verification。未结算 issue 存在时，副作用工具、verification、计划提交、普通输入和完成状态均会被拒绝。
+`investigate` only records the user decision and allows read-only investigation; `continue` requires that this recovery generation already has a successful, approved investigation attempt with `effect_class=none`; `block` ends the task immediately and keeps the other issues. After all issues are `continue`, a `crash_recovery` replan trigger is created, and the plan must be resubmitted or reviewed, then reauthorized and independently verified. While unsettled issues exist, side-effect tools, verification, plan submission, ordinary input, and completion are all refused.
 
-工作区变化不能证明 handler 执行或未执行，但会生成一个必须调查并由用户结算的 `workspace-drift` issue；准备和 claim 阶段比较路径、类型、可用性、目录成员及内容 hash 的结构化摘要。已准入调用不重放：`effect_class=none` 记录为 `uncertain_state_or_result`，可能有副作用的调用记录为 `uncertain_side_effect`；未进入 handler 的调用才会得到 `interrupted_before_handler` 的明确未执行结果。旧 PID、进程 ID 和 stdin 写入线程不跨进程继承，可能遗留的进程以 `orphaned` 事实保留，并通过独立 process issue 阻止任务完成；用户 `continue` 不会恢复 PID 控制权。
+Workspace changes cannot prove that a handler ran or did not run, but they create a `workspace-drift` issue that must be investigated and settled by the user; the prepare and claim phases compare structured summaries of path, type, availability, directory members, and content hash. Admitted calls are not replayed: `effect_class=none` is recorded as `uncertain_state_or_result`, and calls that may have side effects are recorded as `uncertain_side_effect`; only calls that did not enter the handler get an explicit not-executed result of `interrupted_before_handler`. Old PIDs, process IDs, and stdin writer threads are not inherited across processes; possibly leftover processes are kept as `orphaned` facts and block task completion through a separate process issue; a user `continue` does not restore PID control.
 
-## v0.29 后台进程有界文本输入
+## v0.29 Bounded Text Input for Background Processes
 
-`start_process(command, cwd?, stdin_mode?)` 的 `stdin_mode` 默认是 `closed`，保持 v0.28 及以前的 EOF 行为；只有显式设为 `pipe` 的进程才接受 `write_process(process_id, input, close_stdin?)`。输入必须是 UTF-8 文本，单次编码后最多 4096 字节；空输入只允许配合 `close_stdin=true`，用于单独发送 EOF。
+The `stdin_mode` of `start_process(command, cwd?, stdin_mode?)` defaults to `closed`, keeping the EOF behavior of v0.28 and earlier; only processes explicitly set to `pipe` accept `write_process(process_id, input, close_stdin?)`. Input must be UTF-8 text, at most 4096 bytes per call after encoding; empty input is allowed only with `close_stdin=true`, to send EOF alone.
 
-`write_process` 的写入与关闭共用一次独立权限检查，默认 `ask`，作用类别为 `possible`。授权提示只显示 `process_id`、编码后的字节数和关闭标志，不显示正文；未知或跨任务 ID 在授权及 generation 预留前拒绝，参数错误也不进入授权。已启用但已经关闭、提前退出或已有在途写入的进程会在授权后、generation 预留前返回明确状态。每个进程串行处理写入，专用线程最多等待 2 秒；前一次写入仍在途时返回 `write_pending`，不能据此重试或把它当作已写入。成功结果的 `written_bytes` 是完成写入与 flush 后的字节数；管道错误时该字段为 0，`delivery_uncertain=true` 表示可能已投递部分字节，不能自动重试。结果只包含进程 ID、写入字节数、`stdin_state`、`closed` 及有界状态原因，不回灌正文。
+Writing and closing in `write_process` share one separate permission check, `ask` by default, with effect class `possible`. The authorization prompt shows only the `process_id`, the encoded byte count, and the close flag, not the body; unknown or cross-task IDs are refused before authorization and generation reservation, and argument errors also do not enter authorization. Processes that have stdin enabled but already closed, exited early, or have an in-flight write return an explicit state after authorization and before generation reservation. Each process handles writes serially, and the dedicated thread waits at most 2 seconds; while a previous write is still in flight, `write_pending` is returned, which cannot be used to retry or be treated as written. The `written_bytes` of a successful result is the byte count after the write and flush complete; on pipe errors the field is 0, and `delivery_uncertain=true` means some bytes may have been delivered and no automatic retry is allowed. Results contain only the process ID, written byte count, `stdin_state`, `closed`, and a bounded state reason, without feeding back the body.
 
-成功写入不构成 verification。继续用 `read_process` 或 `wait_process` 观察响应；进程退出、控制和 `/new`、`/reset`、EOF、`exit` 或异常清理时都会有界回收写入线程和 stdin 管道。活动进程或在途写入都阻止任务进入 `done`；清理无法确认时保留旧任务登记并报告进程 ID、PID 和原因。此版只支持管道字节流，不支持 PTY、终端回显、控制字符、终端尺寸或交互式 shell 语义。
+A successful write is not verification. Keep observing the response with `read_process` or `wait_process`; process exit, control, and `/new`, `/reset`, EOF, `exit`, or abnormal cleanup all reap writer threads and the stdin pipe within bounds. Active processes or in-flight writes both block the task from entering `done`; when cleanup cannot be confirmed, the old task registration is kept, and the process ID, PID, and reason are reported. This version supports only pipe byte streams, not PTY, terminal echo, control characters, terminal size, or interactive shell semantics.
 
-## v0.28 后台进程控制与任务收口
+## v0.28 Background Process Control and Task Closing
 
-`terminate_process(process_id)` 向当前任务登记的进程请求正常终止；`kill_process(process_id)` 强制结束。两个工具独立授权，默认均为 `ask`，且只接受任务专属 ID，不接受系统 PID。未知、过期或跨任务 ID 在权限询问前返回 `unknown_process_id`，不预留执行 attempt 或 generation。有效调用获准后按可能有副作用的工具预留 generation；计划只读阶段、待批准计划和修复阶段的限制仍然适用。
+`terminate_process(process_id)` requests normal termination of a process registered for the current task; `kill_process(process_id)` forces it to end. The two tools are authorized separately, both `ask` by default, and accept only task-specific IDs, not system PIDs. Unknown, expired, or cross-task IDs return `unknown_process_id` before the permission prompt, reserving no execution attempt or generation. After approval, valid calls reserve a generation as tools that may have side effects; the limits of the read-only planning phase, plans awaiting approval, and the repair phase still apply.
 
-正常终止和强制结束各最多等待 2 秒。`terminated` 或 `killed` 表示直接子进程、受管进程组及输出管道均已确认退出；`still_running` 表示本次未确认退出，进程仍阻止任务完成，可继续观察或尝试 `kill_process`。`already_exited` 表示调用时已自然退出。控制失败返回 `control_failed`，不会产生最终进程事件。Windows 只能确认直接子进程及管道，结果会注明无法确认任意 shell 派生进程树。
+Normal termination and forced kill each wait at most 2 seconds. `terminated` or `killed` means the direct child process, the managed process group, and the output pipes have all been confirmed as exited; `still_running` means exit was not confirmed this time, the process still blocks task completion, and you can keep observing or try `kill_process`. `already_exited` means it had already exited naturally at the time of the call. A control failure returns `control_failed` and produces no final process event. Windows can confirm only the direct child process and pipes, and the result notes that the process tree derived by an arbitrary shell cannot be confirmed.
 
-前台同步点为确认的主动退出提交一条 `terminated` 或 `killed` 事件，引用启动 attempt 和控制 attempt，并开启退出后的 generation。旧验证随之失效。只有进程稳定退出、计划步骤完成、修复义务解决，并在新 generation 独立执行 `run_shell(purpose="verification")` 后，任务才能完成。进程控制不能替代诊断阶段的合法 `recover` 或 `request_replan`。
+The foreground sync point commits one `terminated` or `killed` event for a confirmed active exit, referencing the start attempt and the control attempt, and opens the post-exit generation. Old verification becomes invalid with it. Only after the process has exited stably, plan steps are complete, repair obligations are resolved, and `run_shell(purpose="verification")` is run independently in the new generation can the task complete. Process control cannot replace a legal `recover` or `request_replan` in the diagnosis phase.
 
-## v0.27 后台进程观察与有界等待
+## v0.27 Background Process Observation and Bounded Waits
 
-`start_process` 返回的 `process_id` 可在同一任务的后续轮次使用。`get_process(process_id)` 查询状态、最终退出码和 stdout/stderr 的累计**字节**位置，不消费日志；`list_processes()` 列出本任务登记的进程元数据，结果过长时从最早记录开始省略并报告 `omitted_count`。未知、过期和跨任务 ID 返回 `unknown_process_id`，不能用系统 PID 查询其他进程。
+The `process_id` returned by `start_process` can be used in later rounds of the same task. `get_process(process_id)` queries the state, the final exit code, and the cumulative **byte** positions of stdout/stderr, without consuming logs; `list_processes()` lists the metadata of processes registered for this task, and when the result is too long, it omits from the earliest records and reports `omitted_count`. Unknown, expired, and cross-task IDs return `unknown_process_id`, and system PIDs cannot be used to query other processes.
 
-`read_process(process_id, max_chars?)` 分别读取 stdout 和 stderr 自上次成功读取以来的新内容。默认合计最多 2000 字符，参数范围 1–4000；完整 JSON 最多 8000 字符。返回 `next_stdout_offset`、`next_stderr_offset`、逐流 `*_output_gap` 和 `*_lost_bytes`。位置按原始字节计，UTF-8 字符跨收集块时不会重复或丢失；非法字节显示为替代字符。每条流只保留最近 64 KiB，读取太晚时须检查缺口标记。日志正文只在本次工具结果中出现，不进入长期 State 或 Trace。
+`read_process(process_id, max_chars?)` reads the new content of stdout and stderr separately since the last successful read. By default at most 2000 characters in total, with an argument range of 1–4000; the full JSON is at most 8000 characters. It returns `next_stdout_offset`, `next_stderr_offset`, per-stream `*_output_gap`, and `*_lost_bytes`. Positions are counted in raw bytes, and UTF-8 characters that span collected chunks are not repeated or lost; illegal bytes are shown as replacement characters. Each stream keeps only the latest 64 KiB, and when reading too late, the gap markers must be checked. Log bodies appear only in this tool result and do not enter long-term State or Trace.
 
-`wait_process(process_id, timeout_ms?)` 必须独占一个工具回合。默认等待 1000 毫秒，可设 0–30000 毫秒；遇到未读输出返回 `output_available`，确认退出返回 `exited`，二者都不消费日志。超时返回 `still_running`，完整工具结果回灌后任务进入 `awaiting_process` 交回 CLI；再次输入会先同步进程事实，再继续原任务。超时不是进程失败、验证证据或完成状态。自然非零退出单独记录一次 `FailureEvent`，引用启动 attempt 和退出事件，并进入现有诊断流程；退出还会使运行期间的旧验证失效。
+`wait_process(process_id, timeout_ms?)` must own a tool turn exclusively. It waits 1000 milliseconds by default and can be set to 0–30000 milliseconds; on unread output it returns `output_available`, on confirmed exit it returns `exited`, and neither consumes logs. On timeout it returns `still_running`, and after the full tool result is fed back, the task enters `awaiting_process` and returns to the CLI; the next input first syncs process facts and then continues the original task. A timeout is not a process failure, verification evidence, or a completion state. A natural non-zero exit is recorded once as a separate `FailureEvent`, referencing the start attempt and the exit event, and enters the existing diagnosis flow; the exit also invalidates old verification from while it was running.
 
-## v0.26 后台进程启动与任务边界
+## v0.26 Background Process Start and Task Boundaries
 
-长命令会让同步执行器一直等到命令退出；开发服务器、文件监听器或持续构建因此无法在同一个 Agent 任务中继续工作。v0.26 增加 `start_process(command, cwd?)`：它沿用 `run_shell` 的 shell 字符串语义，但创建进程后立即返回任务专属的 `process_id`。`run_shell` 仍保持同步执行、30 秒超时和原有 `[exit=N]` 返回格式。
+Long commands make the synchronous executor wait until the command exits; development servers, file watchers, or continuous builds therefore cannot keep working within the same Agent task. v0.26 adds `start_process(command, cwd?)`: it keeps the shell string semantics of `run_shell`, but returns a task-specific `process_id` immediately after creating the process. `run_shell` keeps synchronous execution, the 30-second timeout, and the original `[exit=N]` return format.
 
-后台进程的运行态由 CLI 生命周期内的 `ProcessManager` 持有。State 只保存可快照的 `ProcessRecord` 和 append-only `ProcessEvent`：任务 ID、启动 attempt、generation、PID、状态、时间、退出码、stdout/stderr 累计字节位置和最终事件 ID；不保存 `Popen`、管道、线程、完整日志或输入正文。每个任务最多有 4 个活动进程，每条输出流最多保留 64 KiB；v0.29 以前启动时 stdin 连接 `DEVNULL`，v0.29 只有显式 `stdin_mode="pipe"` 才建立 stdin 管道。
+The run state of background processes is held by the `ProcessManager` for the CLI lifetime. State saves only snapshottable `ProcessRecord`s and append-only `ProcessEvent`s: task ID, start attempt, generation, PID, state, time, exit code, cumulative stdout/stderr byte positions, and final event ID; it does not save `Popen`, pipes, threads, full logs, or input bodies. Each task has at most 4 active processes, and each output stream keeps at most 64 KiB; before v0.29, stdin connected to `DEVNULL` at start, and from v0.29 a stdin pipe is created only with an explicit `stdin_mode="pipe"`.
 
-成功结果是有界 JSON，例如：
+A successful result is bounded JSON, for example:
 
 ```json
 {"process_id":"proc-1","pid":12345,"status":"running","start_attempt_id":"a-3"}
 ```
 
-这只表示进程已经创建。自然零退出记录 `exited`，自然非零退出记录 `failed`，并引用启动 attempt；同步退出会使当前 verification 失效、开启一个新的 generation。进程状态、启动结果和缓冲位置都不是 verification evidence，退出后仍需用独立的 `run_shell(purpose="verification")` 验证最终状态。
+This only means the process has been created. A natural zero exit records `exited`, and a natural non-zero exit records `failed`, both referencing the start attempt; a synced exit invalidates the current verification and opens a new generation. The process state, start result, and buffer positions are not verification evidence; after exit, an independent `run_shell(purpose="verification")` is still needed to verify the final state.
 
-模型在后台进程仍运行时给出无 `tool_calls` 的文本，Runtime 会把任务置为 `awaiting_process`，交回 CLI，不把它判为 `done`，也不额外消耗一轮 LLM。CLI 显示 task/process ID、累计输出位置和剩余计划、修复、验证义务；下一次用户输入会先同步退出事实，再恢复原任务。
+When the model gives text without `tool_calls` while a background process is still running, the Runtime sets the task to `awaiting_process` and returns to the CLI, without judging it `done` and without using an extra LLM round. The CLI shows the task/process ID, cumulative output positions, and the remaining plan, repair, and verification obligations; the next user input first syncs exit facts, then resumes the original task.
 
-`/new`、`/reset`、EOF、`exit`、`KeyboardInterrupt` 和异常退出都会在清空 State 前清理当前任务的进程：先请求正常终止并等待最多 2 秒，再强制结束并等待最多 2 秒；确认进程结束后有界等待收集线程读到 stdout/stderr 的 EOF，才关闭管道。已确认退出的进程只回收句柄，不会再次向旧进程组 ID 发信号，以免该 ID 被系统复用后误伤无关进程。POSIX 还须确认受管进程组已消失；外层 shell 先退出时，同组后代或仍持有管道的后代都会继续阻止任务完成和释放活动额度。Windows 只能确认直接子进程与两条管道，无法证明任意 shell 派生进程树已结束；因此有后台进程登记时报告清理不完整，`/new` 和 `/reset` 保留旧任务，用户须在不再需要该任务后退出 CLI。清理不完整时保留旧任务和 Manager 登记信息，报告 PID、process ID 和原因；POSIX 无法控制脱离进程组且关闭继承管道的后代。
+`/new`, `/reset`, EOF, `exit`, `KeyboardInterrupt`, and abnormal exit all clean up the current task's processes before clearing State: first request normal termination and wait at most 2 seconds, then force a kill and wait at most 2 seconds; after the process end is confirmed, wait within bounds for the collector threads to read EOF on stdout/stderr before closing the pipes. Processes confirmed as exited only have their handles reaped, and no further signals are sent to the old process group ID, to avoid hurting unrelated processes after the system reuses that ID. POSIX must also confirm that the managed process group is gone; when the outer shell exits first, descendants in the same group or descendants still holding pipes keep blocking task completion and the release of active quota. Windows can confirm only the direct child process and the two pipes and cannot prove that the process tree derived by an arbitrary shell has ended; so when background processes are registered, cleanup is reported as incomplete, `/new` and `/reset` keep the old task, and the user must exit the CLI after no longer needing that task. When cleanup is incomplete, the old task and Manager registration are kept, and the PID, process ID, and reason are reported; POSIX cannot control descendants that left the process group and closed inherited pipes.
 
-## v0.25 计划轨迹回放与验收
+## v0.25 Plan Trace Replay and Acceptance
 
-`AgentState.snapshot()` 的 `trace_events` 是任务内连续的只读轨迹索引。每条事件保存 `sequence_id`、发生时的 `generation_id` / `revision_id`、已有记录的类型和 ID；verification 使用 `verification_history` 的索引。事件不复制工具原始输出，不推进 generation，不改变预算，也不参与完成判定。
+The `trace_events` of `AgentState.snapshot()` is a continuous read-only trace index within the task. Each event saves the `sequence_id`, the `generation_id` / `revision_id` at the time, and the type and ID of an existing record; verification uses the index of `verification_history`. Events do not copy raw tool output, do not advance the generation, do not change the budget, and do not take part in the completion decision.
 
-这三个字段承担不同职责：`generation` 表示环境副作用或恢复后的验证代次，`revision` 表示计划结构版本，`sequence_id` 连接跨列表的发生顺序。同一 generation 内提交多个 revision 后，调查、执行和验证的 revision 归属以事件为准，不能只按 generation 或数组位置推断。
+These three fields have different duties: `generation` is the verification generation after environment side effects or recovery, `revision` is the plan structure version, and `sequence_id` links the order of occurrence across lists. After several revisions are committed within the same generation, the revision that investigation, execution, and verification belong to is decided by events and cannot be inferred only from the generation or array position.
 
-Trace API 保留原调用方式，并增加 revision 查询：
+The Trace API keeps the original call style and adds revision queries:
 
 ```python
 from mini_agent.trace import build_trace, render_trace
@@ -804,7 +804,7 @@ revision_report = build_trace(state.snapshot(), revision_id=2)
 print(render_trace(revision_report))
 ```
 
-`generation_id` 与 `revision_id` 不能同时指定；非法 ID 抛 `TraceQueryError`。完整报告新增 `plan_revisions` 和有序 `plan_timeline`。每个 revision 视图包含 parent、trigger 前因、模型提交的 `reason`、Runtime 重算的结构差异、步骤及 progress、plan-only 用户决定，以及生效期间的调查、执行、failure、recovery、verification 和 generation。`causal_edges` 新增 parent、trigger、revision 相关边，并以 `resolved` / `UNRESOLVED` 标记完整性。
+`generation_id` and `revision_id` cannot be specified together; illegal IDs raise `TraceQueryError`. The full report adds `plan_revisions` and an ordered `plan_timeline`. Each revision view contains the parent, the trigger antecedent, the model-submitted `reason`, the structural diff recomputed by the Runtime, steps and progress, plan-only user decisions, and the investigation, execution, failure, recovery, verification, and generation while it was in effect. `causal_edges` adds parent, trigger, and revision-related edges and marks completeness with `resolved` / `UNRESOLVED`.
 
 ```text
 /trace
@@ -812,63 +812,63 @@ print(render_trace(revision_report))
 /trace revision <revision_id>
 ```
 
-revision 查询会把所选 revision 的 trigger 来源保留为前因；generation 查询展示该代提交或生效的 revision，并用 `generation_role` 区分两者。历史 generation 的结论依据按该代末的计划与进度事件重建，不借用后续 revision；没有顺序终态记录时，历史终态摘要标为 `not_recorded`。旧 snapshot 没有计划数据时沿用 v0.21 结果；有计划记录却没有 `trace_events` 时保留可直接验证的结构事实，并将跨记录先后和执行归属标记为不完整。Trace 不重新执行任务，也不把后续 generation 的通过证据倒推成旧方案正确。
+A revision query keeps the trigger source of the selected revision as the antecedent; a generation query shows the revisions committed or in effect in that generation, distinguishing the two with `generation_role`. The conclusion basis of a historical generation is rebuilt from the plan and progress events at the end of that generation, without borrowing later revisions; when there is no ordered terminal record, the historical terminal summary is marked `not_recorded`. When an old snapshot has no plan data, the v0.21 result is kept; when there are plan records but no `trace_events`, directly verifiable structural facts are kept, and the cross-record order and execution attribution are marked incomplete. Trace does not rerun the task and does not infer backward from passing evidence of later generations that the old plan was correct.
 
-## v0.24 证据驱动重规划与停滞收口
+## v0.24 Evidence-Driven Replanning and Stall Closing
 
-执行中的计划不能因为模型一句“需要调整”就被静默改写。模型只能独占调用 `request_replan(kind, source_id, reason)`：`failure` 必须精确引用当前 `active_failure_id`，`observation` 必须引用当前 active revision 提交之后成功且获准的只读 `ExecutionAttempt`。调用通过后进入 `exploring`，只允许只读调查或独占 `commit_plan`；后续修订必须引用当前 parent revision 和活动 trigger。
+A plan in execution cannot be silently rewritten just because the model says "needs adjustment". The model can only call `request_replan(kind, source_id, reason)` exclusively: `failure` must reference the current `active_failure_id` exactly, and `observation` must reference a successful and approved read-only `ExecutionAttempt` after the current active revision was committed. After the call passes, the task enters `exploring`, which allows only read-only investigation or an exclusive `commit_plan`; later revisions must reference the current parent revision and the active trigger.
 
-Direct Path 因 failure 或 blocked 恢复进入 Explore 时可能还没有 parent。此时首次 `commit_plan` 必须带活动 trigger、不能提供 `parent_revision_id`；普通任务的初始计划仍然不带 trigger 和 parent。有效后续 revision 消耗总 replan 预算，计划差异由 Runtime 保存为 `retained`、`added`、`cancelled`、`replaced`，并标出保留步骤的依赖变化及目标、约束和成功标准的变化。无变化提交只增加当前 trigger 的无进展计数，第二次达到上限后阻塞。
+When the Direct Path enters Explore because of a failure or blocked recovery, there may be no parent yet. In that case the first `commit_plan` must carry the active trigger and cannot provide `parent_revision_id`; the initial plan of an ordinary task still carries no trigger and no parent. Valid later revisions use the total replan budget, and the Runtime saves plan differences as `retained`, `added`, `cancelled`, and `replaced`, marking dependency changes of kept steps and changes of the goal, constraints, and success criteria. A submission with no change only increases the no-progress count of the current trigger, and the task blocks the second time the limit is reached.
 
-默认最多 3 次有效后续修订。第三次修订仍可以执行，请求第四次时进入 `blocked`。失败修订不会删除 FailureEvent、repair cycle、generation 或旧验证记录；提交新方案只表示诊断形成了新路径，实际修改与当前 generation 的独立 verification 仍必须发生。
+By default there are at most 3 valid later revisions. The third revision can still run, and requesting a fourth enters `blocked`. A failed revision does not delete the FailureEvent, repair cycle, generation, or old verification records; submitting a new plan only means the diagnosis formed a new path, and the actual changes and independent verification of the current generation must still happen.
 
-模型不能自行恢复 `blocked` 或 `failed`。用户可对 blocked 任务输入 `/resume <反馈>`；该命令记录 `resume_blocked` 决定和恢复前终态原因，再进入 `running / exploring`。如果 blocked 来自 `recover(ask/block)`，Runtime 会保留后继 generation 的独立 verification 要求，并先恢复为 `diagnosis_required`，所以新修订提交后仍必须验证；其他 blocked 来源沿用普通恢复路径。如果已有 active plan，修订必须引用它；没有 active plan 时走带 trigger、无 parent 的首次提交。预算耗尽、failed 或已有活动恢复 trigger 时请使用 `/new <任务>`。
+The model cannot recover `blocked` or `failed` on its own. The user can enter `/resume <feedback>` for a blocked task; the command records the `resume_blocked` decision and the terminal reason before recovery, then enters `running / exploring`. If the block came from `recover(ask/block)`, the Runtime keeps the independent verification requirement of the successor generation and first restores to `diagnosis_required`, so verification is still required after the new revision is submitted; other block sources follow the ordinary recovery path. If an active plan exists, the revision must reference it; without an active plan, the first submission with a trigger and no parent is used. When the budget is exhausted, the task is failed, or there is already an active recovery trigger, use `/new <task>`.
 
-停滞检测在一个完整工具回合的所有调用执行或拒绝、State 按模型顺序更新、结果展示并回灌所有 `role=tool` 消息之后运行。默认 `MAX_STAGNANT_ROUNDS=3`：第二个连续无进展回合注入一次受保护 Runtime Notice，第三个记录 `repeated_action`、`no_new_observation`、`explore_without_commit` 或 `execute_without_progress` 并进入 blocked。它只保存动作、调查结果 hash 和短摘要，不复制完整工具输出；Planning gate 与 Repair gate 给出的合法下一动作优先于提醒文字。
+Stall detection runs after all calls of a complete tool turn are run or refused, State is updated in model order, and results are shown and all `role=tool` messages are fed back. The default is `MAX_STAGNANT_ROUNDS=3`: the second consecutive no-progress turn injects one protected Runtime Notice, and the third records `repeated_action`, `no_new_observation`, `explore_without_commit`, or `execute_without_progress` and enters blocked. It saves only actions, investigation result hashes, and short summaries, without copying full tool output; the legal next action given by the Planning gate and Repair gate takes priority over the reminder text.
 
-本版新增配置：
+New configuration in this version:
 
-| 配置项 | 默认值 | 说明 |
+| Setting | Default | Description |
 | --- | ---: | --- |
-| `MAX_ATTEMPT_FINGERPRINTS` | `4` | 同一工具及参数指纹的执行上限；必须不小于 `MAX_STAGNANT_ROUNDS + 1`。 |
-| `MAX_REPLAN_REVISIONS` | `3` | 单任务有效后续计划 revision 总数。 |
-| `MAX_NO_PROGRESS_REPLANS` | `2` | 同一活动 trigger 的无结构变化提交次数。 |
-| `MAX_STAGNANT_ROUNDS` | `3` | 连续无进展完整工具回合上限，必须大于 1。 |
+| `MAX_ATTEMPT_FINGERPRINTS` | `4` | Execution limit per tool and argument fingerprint; must be at least `MAX_STAGNANT_ROUNDS + 1`. |
+| `MAX_REPLAN_REVISIONS` | `3` | Total valid later plan revisions per task. |
+| `MAX_NO_PROGRESS_REPLANS` | `2` | Number of submissions with no structural change for the same active trigger. |
+| `MAX_STAGNANT_ROUNDS` | `3` | Limit of consecutive no-progress complete tool turns; must be greater than 1. |
 
-## v0.23 只读规划与用户交接
+## v0.23 Read-Only Planning and User Handoff
 
-普通任务仍从 `direct` 开始。模型认为任务需要先规划时，独占调用 `begin_plan` 进入 `exploring`；尚未提交计划时可用 `cancel_planning` 回到 Direct Path。命令行使用 `PYTHONPATH=src python -m mini_agent --plan "<任务>"` 时，首条任务从 `plan_only / exploring` 开始，不能取消强制规划。该命令处理首条任务后仍进入交互循环。
+Ordinary tasks still start from `direct`. When the model thinks a task needs planning first, it calls `begin_plan` exclusively to enter `exploring`; before a plan is submitted, `cancel_planning` returns to the Direct Path. When the command line uses `PYTHONPATH=src python -m mini_agent --plan "<task>"`, the first task starts from `plan_only / exploring`, and mandatory planning cannot be cancelled. After handling the first task, the command still enters the interactive loop.
 
-`exploring` 只允许无副作用调查、独占调用 `commit_plan`，以及普通模式尚无计划时的 `cancel_planning`。shell、文件写入、verification、恢复和进度更新会在 PermissionGate 之前被拒绝；同回合混合 `commit_plan` 与其他调用会整体拒绝。`--plan` 首次提交还要求至少一条成功、获准且已执行的只读调查记录，否则返回 `plan_rejected`。每个被拒绝的调用仍有对应工具结果，但不运行 handler、不推进 generation、不生成验证证据。
+`exploring` allows only side-effect-free investigation, an exclusive `commit_plan` call, and `cancel_planning` in ordinary mode when there is no plan yet. Shell, file writes, verification, recovery, and progress updates are refused before the PermissionGate; mixing `commit_plan` with other calls in the same turn is refused as a whole. The first submission in `--plan` also requires at least one successful, approved, executed read-only investigation record, otherwise it returns `plan_rejected`. Each refused call still has a matching tool result, but no handler runs, no generation advances, and no verification evidence is produced.
 
-普通模式提交计划后进入 `executing`。`--plan` 模式提交后停在 `awaiting_approval`，CLI 从 State 中的 `active_plan` 打印完整待批计划及当前 revision ID，再等待用户决定；即使 `OUTPUT_MODE=quiet` 也会显示，模型不会重新复述计划或继续执行。继续调查后使用 `/review`，CLI 会再次打印同一份计划和决定命令。交接命令：
+In ordinary mode, submitting a plan enters `executing`. In `--plan` mode, it stops at `awaiting_approval` after submission; the CLI prints the full pending plan and the current revision ID from `active_plan` in State, then waits for the user's decision; this is shown even with `OUTPUT_MODE=quiet`, and the model does not restate the plan or keep executing. After continued investigation, use `/review`, and the CLI prints the same plan and decision commands again. Handoff commands:
 
-| 命令 | 作用 |
+| Command | Effect |
 | --- | --- |
-| `/approve <revision_id>` | 批准当前待批 revision，继续执行。 |
-| `/reject <revision_id> <反馈>` | 驳回当前 revision，保存反馈并返回只读调查。 |
-| `/continue <revision_id> <反馈>` | 保留当前 revision，带反馈继续只读调查。 |
-| `/review <revision_id>` | 继续调查后若方案未变，将原 revision 重新交付审批。 |
+| `/approve <revision_id>` | Approve the current pending revision and continue execution. |
+| `/reject <revision_id> <feedback>` | Reject the current revision, save the feedback, and return to read-only investigation. |
+| `/continue <revision_id> <feedback>` | Keep the current revision and continue read-only investigation with feedback. |
+| `/review <revision_id>` | If the plan did not change after continued investigation, hand the original revision over for approval again. |
 
-驳回或继续调查后若提交修订，`commit_plan` 必须同时提供当前 `parent_revision_id` 和 `trigger_id`。用户决定、反馈触发记录和旧 revision 都保存在当前任务 State；`/reset` 或 `/new <任务>` 会清除它们。批准旧 revision、重复批准、无反馈驳回或驳回后直接 `/review` 都会拒绝。计划批准只改变规划阶段，不写入 PermissionGate 的 allow 规则；后续工具继续单独授权，修改后仍须独立 verification。失败/观察触发重规划、修订预算及停滞检测见本手册开头的 v0.24。
+If a revision is submitted after rejection or continued investigation, `commit_plan` must provide both the current `parent_revision_id` and the `trigger_id`. User decisions, feedback trigger records, and old revisions are all saved in the current task State; `/reset` or `/new <task>` clears them. Approving an old revision, approving twice, rejecting without feedback, or `/review` directly after rejection are all refused. Plan approval only changes the planning phase and does not write PermissionGate allow rules; later tools keep being authorized separately, and independent verification is still required after changes. For replanning triggered by failures/observations, revision budgets, and stall detection, see v0.24 at the start of this manual.
 
 ## v0.22 Plan Contract
 
-复杂任务可以通过 `commit_plan` 提交结构化计划。计划包含 `goal`、`constraints`、任务级 `success_criteria` 和 1–50 个带稳定 `step_id` 的步骤；步骤可以声明 `depends_on`、步骤级 `success_criteria` 和 `replaces`。简单任务继续走 Direct Path，不需要创建计划。
+Complex tasks can submit a structured plan through `commit_plan`. The plan contains `goal`, `constraints`, task-level `success_criteria`, and 1–50 steps with stable `step_id`s; steps can declare `depends_on`, step-level `success_criteria`, and `replaces`. Simple tasks keep using the Direct Path and do not need a plan.
 
-普通任务的初次 `commit_plan` 不提供 `parent_revision_id` 或 trigger，成功后创建 revision 1；`--plan` 模式进入 `awaiting_approval`。结构发生变化时，必须先由用户反馈、失败或观察创建活动 trigger，再提交带当前 active revision 作为 parent 的完整新计划；Direct failure 或 blocked resume 没有 parent 时，首个修订计划只带 trigger。旧 revision 不会被覆盖。只改变步骤状态时使用 `update_plan_progress`，状态只能按 `pending → in_progress → completed` 推进，依赖未完成或已有其他进行中步骤时会被拒绝。
+The first `commit_plan` of an ordinary task provides no `parent_revision_id` or trigger and creates revision 1 on success; `--plan` mode enters `awaiting_approval`. When the structure changes, an active trigger must first be created by user feedback, a failure, or an observation, and then a complete new plan with the current active revision as parent is submitted; when a Direct failure or blocked resume has no parent, the first revised plan carries only the trigger. Old revisions are not overwritten. To change only step states, use `update_plan_progress`; states can only advance `pending → in_progress → completed`, and requests are refused when dependencies are incomplete or another step is already in progress.
 
-计划校验和 revision 提交在同一把 State 锁内完成。无效参数或违反计划不变量的请求会收到 `plan_rejected`，不会创建 `FailureEvent`、进入 Repair Loop、推进 generation 或产生验证证据。两个计划工具默认 `ALLOW`、`effect_class=none`，也不能成为 `recover` 的 retry、adjust 或 rollback 目标。计划写入不代表环境已经正确，步骤完成仍不能替代独立 verification。
+Plan validation and revision commit happen under the same State lock. Requests with invalid arguments or that violate plan invariants get `plan_rejected`, without creating a `FailureEvent`, entering the Repair Loop, advancing the generation, or producing verification evidence. Both plan tools default to `ALLOW` and `effect_class=none`, and cannot be retry, adjust, or rollback targets of `recover`. Plan writes do not mean the environment is correct, and step completion still cannot replace independent verification.
 
-`AgentState.snapshot()` 同时提供完整的 `plan_revisions`、append-only 的 `plan_progress_history`、当前推导出的 `active_plan` 和 `planning_state`。`current_goal`、`unfinished_todos()` 与 `snapshot()["todos"]` 只是 active plan 的只读兼容投影。Structured State 只显示有界的目标、当前步骤、最多五个 ready 步骤、最多十个阻塞步骤及数量摘要；压缩后仍从 State 重建，不从历史摘要恢复计划。
+`AgentState.snapshot()` also provides the full `plan_revisions`, the append-only `plan_progress_history`, the currently derived `active_plan`, and `planning_state`. `current_goal`, `unfinished_todos()`, and `snapshot()["todos"]` are only read-only compatibility projections of the active plan. Structured State shows only a bounded goal, the current step, at most five ready steps, at most ten blocked steps, and a count summary; after compaction it is still rebuilt from State, and the plan is not recovered from history summaries.
 
-v0.21 的 `/trace` 继续只读回放 generation、执行、失败、恢复和验证事实；本版不把完整 Plan 因果链加入 Trace。
+The v0.21 `/trace` keeps replaying generation, execution, failure, recovery, and verification facts read-only; this version does not add the full Plan causal chain to Trace.
 
-## v0.21 任务轨迹回放（Trace & Replay，只读）
+## v0.21 Task Trace Replay (Trace & Replay, read-only)
 
-`/trace` 回放当前进程、当前任务已经保存的结构化事实：Todo revision、generation、执行尝试、失败、恢复动作、验证证据和终态。`/trace 3` 只显示 generation 3；计划链和 revision 查询见上面的 v0.25 说明。命令在 `run_task()` 之前拦截，不追加 user history，不调用 LLM、工具 handler 或 PermissionGate，也不修改 State、预算或 generation。
+`/trace` replays the structured facts already saved for the current process and current task: Todo revisions, generations, execution attempts, failures, recovery actions, verification evidence, and terminal states. `/trace 3` shows only generation 3; for the plan chain and revision queries, see the v0.25 notes above. The command is intercepted before `run_task()`, appends no user history, does not call the LLM, tool handlers, or PermissionGate, and does not change State, budget, or generation.
 
-回放也可通过标准库 Python API 使用：
+Replay is also available through a standard library Python API:
 
 ```python
 from mini_agent.trace import build_trace, render_trace
@@ -877,93 +877,93 @@ report = build_trace(state.snapshot(), generation_id=None)
 print(render_trace(report))
 ```
 
-`report["integrity"]` 为 `complete` 时，当前保存的引用可以完整验收；为 `incomplete` 时，`issues` 会说明断链、缺失的历史验证证据或跨 generation 证据，报告仍保留可确认的原始记录，不能据此推测缺失事实。失败诊断优先使用已有 `cause_hint`，否则显示关联恢复动作的 `reason`，两者都没有时显示“未记录诊断”。
+When `report["integrity"]` is `complete`, the currently saved references can be fully accepted; when it is `incomplete`, `issues` explain broken chains, missing historical verification evidence, or cross-generation evidence, and the report still keeps the confirmable raw records, but missing facts must not be guessed from it. Failure diagnosis prefers an existing `cause_hint`, otherwise it shows the `reason` of the linked recovery action, and when neither exists it shows "no diagnosis recorded".
 
-v0.21 的 Trace 对缺失的 `todo_revisions` 会安全降级为空；v0.22 不再把 Todo revision 作为计划写入来源，计划历史改由本节开头的 `plan_revisions` 和 `plan_progress_history` 保存。
+The v0.21 Trace safely degrades to empty for missing `todo_revisions`; v0.22 no longer uses Todo revisions as the plan write source, and plan history is saved instead by the `plan_revisions` and `plan_progress_history` described at the start of this section.
 
-## v0.20 Repair Loop（修复循环）
+## v0.20 Repair Loop
 
-失败后的执行不能直接跳回普通写入。`AgentState.snapshot()["repair_loop"]` 显示当前阶段、活动 failure/recovery 和周期预算：
+Execution after a failure cannot jump directly back to ordinary writes. `AgentState.snapshot()["repair_loop"]` shows the current phase, the active failure/recovery, and the cycle budget:
 
-| 阶段 | 允许的下一步 |
+| Phase | Allowed next step |
 |---|---|
-| `idle` | 正常调查、执行和计划推进 |
-| `diagnosis_required` | 只读调查、独占调用 `recover` 处理当前 `active_failure_id`，或独占调用 `request_replan` |
-| `verification_required` | 下一工具回合只能是单个 `run_shell(purpose="verification")` |
+| `idle` | Normal investigation, execution, and plan progress |
+| `diagnosis_required` | Read-only investigation, an exclusive `recover` call to handle the current `active_failure_id`, or an exclusive `request_replan` call |
+| `verification_required` | The next tool turn can only be a single `run_shell(purpose="verification")` |
 
-agent loop 在回合级检查批量调用，ToolExecutor 在权限和 handler 前再次检查；不合规调用会收到协议错误且不会运行 handler、询问权限或推进 generation。恢复目标携带受 State 锁保护的 reservation，是 verification 阶段唯一的受控执行例外；恢复结果回灌后仍必须有独立 verification。
+The agent loop checks batched calls at the turn level, and the ToolExecutor checks again before permissions and the handler; non-compliant calls get a protocol error and do not run the handler, ask for permission, or advance the generation. The recovery target carries a reservation protected by the State lock and is the only controlled execution exception in the verification phase; after the recovery result is fed back, independent verification is still required.
 
-`MAX_REPAIR_CYCLES` 默认是 3。初始失败、schema/参数拒绝、权限拒绝以及 `ask`/`block` 不消耗周期；`retry`、`adjust`、`rollback` 只有在目标授权并激活 successor generation 后才计入。验证失败会重新进入 `diagnosis_required`，而不是直接增加周期；需要第四次恢复时以明确的 `failed` 原因收口。恢复成功本身不代表任务完成，只有当前 generation 的验证通过且 active Plan Contract 的步骤完成，完成提醒才会消失；没有 active plan 时沿用 Direct Path 的验证条件。
+`MAX_REPAIR_CYCLES` defaults to 3. The initial failure, schema/argument refusals, permission refusals, and `ask`/`block` use no cycles; `retry`, `adjust`, and `rollback` count only after the target is authorized and the successor generation is activated. A verification failure re-enters `diagnosis_required` instead of directly adding a cycle; when a fourth recovery would be needed, the task closes with an explicit `failed` reason. Recovery success by itself does not mean task completion; only when verification of the current generation passes and the steps of the active Plan Contract are complete does the completion reminder disappear; without an active plan, the Direct Path verification conditions apply.
 
-Structured State 和上下文压缩后的 critical state 会保留 `repair_loop`、最近失败/恢复动作、generation 与预算。完成提醒会按阶段说明唯一合法的推进动作；相同 `progress_marker` 下再次只输出文本仍会进入既有 `blocked` 保护。v0.24 另外保留活动 trigger 的来源与理由、replan 剩余预算、`LoopStagnationState` 的计数和 gate 允许的下一动作。
+Structured State and the critical state after context compaction keep `repair_loop`, the latest failure/recovery actions, the generation, and the budget. The completion reminder states the only legal advancing action by phase; outputting only text again under the same `progress_marker` still enters the existing `blocked` protection. v0.24 also keeps the active trigger's source and reason, the remaining replan budget, the counts of `LoopStagnationState`, and the next actions the gate allows.
 
-## v0.19 检查点与回滚（Checkpoint / Rollback）
+## v0.19 Checkpoint / Rollback
 
-`write_file` 和 `edit_file` 在权限放行、attempt/generation 预留后，会为单个工作区内普通文件保存前镜像。前镜像最多 `MAX_CHECKPOINT_BYTES`（默认 1 MiB），不存在的文件记录为 `absent` tombstone；符号链接、工作区外路径、目录/特殊文件、无效父目录和读取失败只会让检查点变为 `unavailable`，不会改变原文件工具行为。
+After permission is granted and the attempt/generation is reserved, `write_file` and `edit_file` save a pre-image for a single ordinary file inside the workspace. A pre-image is at most `MAX_CHECKPOINT_BYTES` (default 1 MiB), and a nonexistent file is recorded as an `absent` tombstone; symlinks, paths outside the workspace, directories/special files, invalid parent directories, and read failures only make the checkpoint `unavailable`, without changing the original file tool behavior.
 
-文件工具结果和 critical Structured State 会保留检查点 ID、相对路径、attempt、generation、状态和哈希；上下文压缩或超长状态降级后仍保留这些恢复元数据。若获准的文件 handler 抛错但前后镜像明确，任务保持可恢复并提示回滚；前后镜像不可用时才按未知副作用阻塞。internal 工具不能作为 retry/adjust 目标，原始 mode 为 `0` 也会按原值恢复。
+File tool results and the critical Structured State keep the checkpoint ID, relative path, attempt, generation, state, and hash; these recovery metadata are kept after context compaction or degradation of oversized state. If an approved file handler raises an error but the pre- and post-images are clear, the task stays recoverable and suggests rollback; only when pre- and post-images are unavailable does it block as an unknown side effect. Internal tools cannot be retry/adjust targets, and an original mode of `0` is also restored as is.
 
-模型通过 `recover(action="rollback", checkpoint_id=...)` 请求恢复。`rollback_checkpoint` 是内部工具，不出现在 LLM schema 中，也拒绝模型直接调用；RecoveryRuntime 会使用检查点保存的规范化相对路径经过同一 PermissionGate 授权。恢复前重新计算当前文件的类型和 SHA-256，发现外部修改就拒绝写入并进入 `blocked`。普通文件使用同目录临时文件、原 mode 和 `os.replace` 原子恢复；absent tombstone 只在后镜像仍匹配时删除目标。
+The model requests recovery through `recover(action="rollback", checkpoint_id=...)`. `rollback_checkpoint` is an internal tool that does not appear in the LLM schema and refuses direct model calls; RecoveryRuntime uses the normalized relative path saved in the checkpoint for authorization through the same PermissionGate. Before recovery, it recomputes the current file's type and SHA-256, and if an external change is found, it refuses to write and enters `blocked`. Ordinary files are restored atomically using a temporary file in the same directory, the original mode, and `os.replace`; an absent tombstone deletes the target only when the post-image still matches.
 
-恢复成功只证明恢复操作本身完成：它会打开新的 generation、清除旧 verification evidence，并要求下一轮独立 verification。检查点元数据保留在 Structured State 中，但不包含前镜像内容或绝对路径；`/reset` 和 `/new` 会清除本任务全部检查点及私有字节。
+A successful recovery only proves the recovery operation itself completed: it opens a new generation, clears old verification evidence, and requires independent verification in the next round. Checkpoint metadata is kept in Structured State, but contains no pre-image content or absolute paths; `/reset` and `/new` clear all checkpoints and private bytes of this task.
 
-配置项：
+Settings:
 
-| 配置项 | 默认值 | 说明 |
+| Setting | Default | Description |
 |---|---:|---|
-| `MAX_CHECKPOINT_BYTES` | `1_048_576` | 单个前镜像的最大字节数，可在 `config_local.py` 覆盖 |
+| `MAX_CHECKPOINT_BYTES` | `1_048_576` | Maximum bytes of a single pre-image; can be overridden in `config_local.py` |
 
 ## v0.18 Recovery Policy
 
-`recover` 支持 retry、adjust、ask、block。v0.18.1 修复了拒绝记录和预算边界：schema、引用、参数、预算或权限拒绝都会只记录一次带 `recovery_id` 的 rejected action，不推进 generation。目标权限检查前先在 State 锁内预留额度；获准后才打开后继 generation 和 attempt。权限拒绝释放未使用的目标执行及重试额度，但恢复申请仍计数，连续无效申请达到恢复动作上限也会阻塞。恢复目标复用当前会话的同一把 PermissionGate，不重复询问同一次授权；恢复后必须独立 verification。
+`recover` supports retry, adjust, ask, and block. v0.18.1 fixed rejection records and budget boundaries: schema, reference, argument, budget, or permission refusals all record only one rejected action with a `recovery_id` and do not advance the generation. Quota is reserved under the State lock before the target permission check; only after approval are the successor generation and attempt opened. A permission refusal releases unused target execution and retry quota, but the recovery request still counts, and consecutive invalid requests reaching the recovery action limit also block. The recovery target reuses the same PermissionGate of the current session and does not ask again for the same authorization; after recovery, independent verification is required.
 
-`edit_file` 的没有匹配和多处匹配是确定性的参数前置条件失败（`error_kind=edit_no_match` / `edit_multiple_matches`），不会改文件或进入未知副作用阻塞；已获准进入 handler 的其他异常仍会使 possible-effect generation 保持推进。Structured State 在 `running` 时也显示恢复通知、最近失败/恢复动作和脱敏预算。进入 `blocked` 或 `failed` 后，Executor 不再询问权限或运行 handler，当前批次剩余调用以 `task_terminal` 结果逐一回灌。
+No match and multiple matches in `edit_file` are deterministic argument precondition failures (`error_kind=edit_no_match` / `edit_multiple_matches`); they do not change the file or enter the unknown side effect block; other exceptions after being approved into the handler still keep the possible-effect generation advanced. Structured State also shows recovery notices, the latest failure/recovery actions, and the redacted budget while `running`. After entering `blocked` or `failed`, the Executor no longer asks for permissions or runs handlers, and the remaining calls of the current batch are fed back one by one with `task_terminal` results.
 
-## v0.17 失败模型
+## v0.17 Failure Model
 
-每个任务从 generation 0 开始。可能产生副作用的工具（文件写入、编辑和所有 shell 命令）在权限放行后、handler 前原子推进 generation；即使 handler 失败也不会回退。`purpose="verification"` 只指定命令结果用作验证证据，不证明 shell 命令只读，因此验证命令也会打开新 generation，证据绑定这一代。Executor 产出结构化 `ExecutionResult`，State 保存 `ExecutionAttempt`、`FailureEvent` 和绑定 generation 的 verification evidence。参数以 canonical JSON 的 SHA-256 指纹计数，Structured State 仅显示 hash/脱敏摘要。全只读回合可并发，包含 shell 的回合按模型顺序串行提交；verification 不得与其他可能有副作用的调用同轮。
+Each task starts from generation 0. Tools that may have side effects (file writes, edits, and all shell commands) advance the generation atomically after permission is granted and before the handler; it does not roll back even if the handler fails. `purpose="verification"` only specifies that the command result is used as verification evidence and does not prove the shell command is read-only, so verification commands also open a new generation, and the evidence binds to that generation. The Executor produces a structured `ExecutionResult`, and State saves `ExecutionAttempt`, `FailureEvent`, and generation-bound verification evidence. Arguments are counted by the SHA-256 fingerprint of canonical JSON, and Structured State shows only the hash/redacted summary. All-read-only turns can run concurrently, and turns containing shell are committed serially in model order; verification cannot be in the same turn as other calls that may have side effects.
 
-## v0.16 计划驱动执行（Plan-driven Execution）
+## v0.16 Plan-driven Execution
 
-复杂任务通常按 Plan → Execute → Observe → Verify 推进；如果观察结果或验证结果暴露问题，模型再 Replan（重排 Todo）并继续执行。文件修改以及所有实际执行的 `run_shell` 都按可能改变环境处理，会使旧验证失效；使用 `run_shell` 的 `purpose="verification"` 且退出码为 0 的结果作为完成证据，建议将最终测试或检查作为最后一个 verification 调用。验证命令本身应只检查结果，不承担文件修改；Runtime 保守记账可能的副作用，但不提供通用 shell 沙箱。
+Complex tasks usually move forward as Plan → Execute → Observe → Verify; if observation or verification results expose problems, the model then Replans (reorders the Todo) and keeps executing. File changes and all actually executed `run_shell` calls are treated as possibly changing the environment and invalidate old verification; a `run_shell` result with `purpose="verification"` and exit code 0 is used as completion evidence, and it is suggested to make the final test or check the last verification call. The verification command itself should only check results and not take on file changes; the Runtime conservatively accounts for possible side effects but provides no general shell sandbox.
 
-v0.16.1 修复了完成提醒：当模型在 Todo 未完成或仍需验证时输出阶段性文本，运行时注入明确的 Runtime Notice，要求下一回复调用推进工具（更新 Todo、调查/操作或验证），而不是只口头描述下一步。提醒按进展状态最多一次：完整 Todo、非 Todo 工具结果、验证证据数量、generation 或 `verification_required` 发生变化后，可以再次提醒；相同标记下再次输出无工具文本才标记 `blocked`。没有 `progress_marker` 的旧式 State 保持一次提醒兼容行为。这种保守策略不依赖第三方库或命令解析。
+v0.16.1 fixed the completion reminder: when the model outputs interim text while the Todo is incomplete or verification is still required, the runtime injects an explicit Runtime Notice requiring the next reply to call a progress tool (update the Todo, investigate/operate, or verify), instead of only describing the next step in words. The reminder is given at most once per progress state: after the full Todo, non-Todo tool results, the verification evidence count, the generation, or `verification_required` change, it can remind again; only outputting tool-free text again under the same marker marks `blocked`. Old-style State without `progress_marker` keeps the one-reminder compatible behavior. This conservative policy does not depend on third-party libraries or command parsing.
 
-## v0.15 任务清单与状态（Todo / Task State）
+## v0.15 Todo / Task State
 
-以下是历史版本行为；从 v0.22 起 `update_todo` 不再注册为模型可见工具，当前计划写入请看本手册开头的 Plan Contract。
+The following is historical version behavior; from v0.22, `update_todo` is no longer registered as a model-visible tool, and for current plan writes see the Plan Contract at the start of this manual.
 
-模型可调用 `update_todo` 提交完整任务列表。状态为 `pending`、`in_progress` 或 `completed`，最多一个进行中项；更新失败时旧状态不变。Todo 属于 AgentState，Execution State（工具历史、文件、错误）仍由执行器维护；每轮请求通过 Structured State 注入，压缩后也会恢复。v0.15 不自动规划、持久化或阻断完成。
+The model can call `update_todo` to submit the complete task list. States are `pending`, `in_progress`, or `completed`, with at most one item in progress; on update failure the old state is unchanged. The Todo belongs to AgentState, while Execution State (tool history, files, errors) is still maintained by the executor; each request injects it through Structured State, and it is restored after compaction. v0.15 does not plan automatically, persist, or block completion.
 
-## v0.14 项目级指令（Project Instructions）
+## v0.14 Project Instructions
 
-启动时 Agent 会从 Git 根目录到当前工作目录按顺序读取 `AGENTS.md`，并将带来源标记的内容作为受保护 system context 注入每次请求。非 Git 目录只检查当前目录；总长度上限为 12,000 字符。项目级指令不会放宽权限，也不会因 trimming 或 compaction 消失。
+At startup, the Agent reads `AGENTS.md` in order from the Git root to the current working directory and injects the content with source markers into each request as protected system context. Non-Git directories check only the current directory; the total length limit is 12,000 characters. Project instructions do not relax permissions and do not disappear through trimming or compaction.
 
-## 1. 环境准备
+## 1. Environment Setup
 
-### 1.1 依赖
-- Python 3.10+（项目统一使用 Python 3.10 及以上版本）
-- 核心运行时零第三方依赖，仅 Python 标准库
-- 可选 CLI 体验依赖：`prompt_toolkit>=3.0,<4`
+### 1.1 Dependencies
+- Python 3.10+ (the project uses Python 3.10 or later throughout)
+- The core runtime has zero third-party dependencies and uses only the Python standard library
+- Optional CLI experience dependency: `prompt_toolkit>=3.0,<4`
 
-### 1.2 安装方式
+### 1.2 Installation
 
-**方式一：开发模式安装（推荐）**
+**Option 1: development mode install (recommended)**
 ```bash
 cd agent-from-scratch
 pip install -e .
 ```
-安装后可从任意目录运行 `python -m mini_agent`。
+After installation, `python -m mini_agent` can be run from any directory.
 
-需要多行编辑、Shift+Enter 换行和多行粘贴时，额外安装：
+For multi-line editing, Shift+Enter line breaks, and multi-line paste, also install:
 
 ```bash
 pip install -e '.[interactive]'
 ```
 
-未安装该 extra 时，CLI 自动回退到标准库 `input()`，核心功能不受影响。
+Without this extra, the CLI automatically falls back to the standard library `input()`, and core features are not affected.
 
-**方式二：免安装，用 PYTHONPATH**
+**Option 2: no install, use PYTHONPATH**
 ```bash
 # Windows PowerShell
 $env:PYTHONPATH="src"
@@ -974,96 +974,96 @@ python -m mini_agent
 PYTHONPATH=src python -m mini_agent
 ```
 
-### 1.3 配置
-配置分两层：`config.py`（占位模板，进 git）+ `config_local.py`（真实配置，不进 git）。
+### 1.3 Configuration
+Configuration has two layers: `config.py` (placeholder template, in git) + `config_local.py` (real configuration, not in git).
 
-首次使用：复制 `src/mini_agent/config_example.py` 为 `src/mini_agent/config_local.py`，填入真实值。`config.py` 会自动 `import *` 加载 `config_local.py` 覆盖占位值。
+First use: copy `src/mini_agent/config_example.py` to `src/mini_agent/config_local.py` and fill in real values. `config.py` automatically runs `import *` to load `config_local.py` and override the placeholder values.
 
-| 配置项 | 占位值 | 说明 |
+| Setting | Placeholder | Description |
 |---|---|---|
-| `BASE_URL` | `https://gateway.example.invalid/v1` | 旧配置兼容路径的 LLM 网关地址 |
-| `API_KEY` | `sk-PLACEHOLDER_API_KEY` | 网关密钥占位值 |
-| `MODEL` | `model-PLACEHOLDER` | 旧配置兼容路径的模型名占位值 |
-| `PROVIDERS` / `MODEL_PROFILES` | `{}` / `{}` | 两者同时为空时启用旧三元组兼容；推荐填写 v0.36 多 provider 映射 |
-| `PARENT_MODEL_PROFILE` | `default` | 新配置中的父 profile 别名 |
-| `SUBAGENT_MODEL_PROFILE` | `None` | 子默认 profile；为空时按白名单回退到父 profile |
-| `SUBAGENT_ALLOWED_MODEL_PROFILES` | `("default",)` | `delegate_task.model_profile` 可请求的 profile 白名单 |
-| `AGENT_PROFILES` | `{}` | v0.47 本地自定义具名子代理角色；不能覆盖四个内置角色 |
-| `MAX_ITERATIONS` | `50` | agent loop 最大轮数 |
-| `CONTEXT_WINDOW` | `128000` | 模型上下文窗口的 token 估算值 |
-| `OUTPUT_MODE` | `normal` | 终端输出级别：`quiet`、`normal` 或 `debug` |
-| `MAX_SESSION_FILE_BYTES` | `16777216` | 单个 session JSON 文件上限；默认 16 MiB |
-| `MAX_SUBAGENTS` | `3` | 一个父任务最多创建的子代理数 |
-| `MAX_CONCURRENCY` | `2` | 同时运行的子代理数，必须不大于 `MAX_SUBAGENTS` |
-| `MAX_TOTAL_LLM_CALLS` | `24` | 父任务委派子代理可消耗的 LLM 调用总数 |
-| `MAX_TOTAL_TOOL_CALLS` | `72` | 父任务委派子代理可消耗的只读工具调用总数 |
-| `MAX_TOTAL_TOKENS` | `96000` | 父任务委派子代理可消耗的输入和输出 token 总数 |
+| `BASE_URL` | `https://gateway.example.invalid/v1` | LLM gateway address for the old configuration compatibility path |
+| `API_KEY` | `sk-PLACEHOLDER_API_KEY` | Gateway key placeholder |
+| `MODEL` | `model-PLACEHOLDER` | Model name placeholder for the old configuration compatibility path |
+| `PROVIDERS` / `MODEL_PROFILES` | `{}` / `{}` | When both are empty, the old triple compatibility is used; filling in the v0.36 multi-provider mappings is recommended |
+| `PARENT_MODEL_PROFILE` | `default` | Parent profile alias in the new configuration |
+| `SUBAGENT_MODEL_PROFILE` | `None` | Child default profile; when empty, falls back to the parent profile by the allowlist |
+| `SUBAGENT_ALLOWED_MODEL_PROFILES` | `("default",)` | Allowlist of profiles that `delegate_task.model_profile` can request |
+| `AGENT_PROFILES` | `{}` | v0.47 local custom named subagent roles; cannot override the four built-in roles |
+| `MAX_ITERATIONS` | `50` | Maximum agent loop rounds |
+| `CONTEXT_WINDOW` | `128000` | Token estimate of the model context window |
+| `OUTPUT_MODE` | `normal` | Terminal output level: `quiet`, `normal`, or `debug` |
+| `MAX_SESSION_FILE_BYTES` | `16777216` | Limit of a single session JSON file; default 16 MiB |
+| `MAX_SUBAGENTS` | `3` | Maximum subagents one parent task can create |
+| `MAX_CONCURRENCY` | `2` | Subagents running at the same time; must not be greater than `MAX_SUBAGENTS` |
+| `MAX_TOTAL_LLM_CALLS` | `24` | Total LLM calls subagents delegated by the parent task can use |
+| `MAX_TOTAL_TOOL_CALLS` | `72` | Total read-only tool calls subagents delegated by the parent task can use |
+| `MAX_TOTAL_TOKENS` | `96000` | Total input and output tokens subagents delegated by the parent task can use |
 
-进程运行参数是固定实现默认值，不需要写入配置：每任务最多 4 个活动进程；每进程 stdout、stderr 各保留最多 64 KiB；任务边界正常终止和强制结束各等待最多 2 秒。v0.27 的读取和等待额度见本手册开头。
+Process run parameters are fixed implementation defaults and do not need to be written into configuration: each task has at most 4 active processes; each process keeps at most 64 KiB each of stdout and stderr; normal termination and forced kill at task boundaries each wait at most 2 seconds. For the v0.27 read and wait quotas, see the start of this manual.
 
-> 真实配置写进 `config_local.py`（不进 git）；无 `config_local.py` 时回退到 `config.py` 占位值。
+> Real configuration goes in `config_local.py` (not in git); without `config_local.py`, the `config.py` placeholder values are used.
 
 ---
 
-## 2. 运行
+## 2. Running
 
-### 2.1 单次任务模式
+### 2.1 Single task mode
 ```bash
-python -m mini_agent "你好"
+python -m mini_agent "hello"
 ```
-任务完成后进入交互模式，可继续追问。
+After the task completes, it enters interactive mode, where you can keep asking.
 
-### 2.2 交互模式
+### 2.2 Interactive mode
 ```bash
 python -m mini_agent
 ```
-启动后进入交互提示符。安装 `interactive` extra 后，Enter 提交、Shift+Enter 换行，粘贴多行文本后按 Enter 提交；未安装时使用标准库单行输入。输入 `exit` 或 `quit` 退出，或按 Ctrl+C/Ctrl+D。
+After startup it enters the interactive prompt. With the `interactive` extra installed, Enter submits, Shift+Enter inserts a line break, and after pasting multi-line text, press Enter to submit; without it, standard library single-line input is used. Enter `exit` or `quit` to exit, or press Ctrl+C/Ctrl+D.
 
-普通后续输入默认继续当前任务。使用 `/new <任务>` 清空旧任务并开始新任务，使用
-`/reset` 清空当前任务和任务级状态；输入 `/save` 可显式开启本地 session 保存。两个任务边界命令会先清理该任务登记的后台进程，清理不完整时保留旧任务并报告原因。会话内已经授予的权限和项目级指令不受影响。
+Ordinary follow-up input continues the current task by default. Use `/new <task>` to clear the old task and start a new one, and use
+`/reset` to clear the current task and task-level state; enter `/save` to explicitly turn on local session saving. The two task boundary commands first clean up the background processes registered for the task, and when cleanup is incomplete they keep the old task and report the reason. Permissions already granted in the session and project instructions are not affected.
 
 ---
 
-## 3. 当前能力（v0.49，含 v0.18.1 完成提醒修复）
+## 3. Current Capabilities (v0.49, including the v0.18.1 completion reminder fix)
 
-v0.13 在 v0.12 的预算与裁剪之上加入历史压缩和 Context Observability。完整 `history` 保留在本地；每次 LLM 调用前，`ContextManager` 都生成一个可发送的、协议合法的上下文副本。预算超限且存在旧轮次时，旧历史会先尝试压缩为摘要，摘要失败则退回 v0.12 的 trimming。终端默认使用 `OUTPUT_MODE = "normal"` 显示简短进度；设置为 `debug` 可查看 token 分桶、裁剪/压缩事件和有界工具细节，设置为 `quiet` 可隐藏过程输出。`CONTEXT_OBSERVABILITY = False` 仍可关闭默认 observer。
+v0.13 adds history compaction and Context Observability on top of the v0.12 budget and trimming. The full `history` is kept locally; before each LLM call, `ContextManager` produces a sendable, protocol-valid copy of the context. When the budget is exceeded and old rounds exist, old history first tries to compact into a summary, and if the summary fails it falls back to the v0.12 trimming. The terminal uses `OUTPUT_MODE = "normal"` by default to show short progress; set it to `debug` to see token buckets, trimming/compaction events, and bounded tool details, or to `quiet` to hide process output. `CONTEXT_OBSERVABILITY = False` can still turn off the default observer.
 
-v0.14 在启动时加载适用的 `AGENTS.md`，并将项目级指令作为受保护 system context 注入每次请求。详情见[第 14 课](../tutorials/14-project-instructions.md)。
+v0.14 loads the applicable `AGENTS.md` at startup and injects project instructions into each request as protected system context. For details, see [Lesson 14](../tutorials/14-project-instructions.md).
 
-v0.41 在父 Context 请求 LLM 前自动检索少量相关 Memory 候选，也提供显式 `search_memories`。候选是临时、不可信的 system 资料区，最多 4 条和 2400 字符，单独计入 `ContextStats.memory`，不会进入 State、history 或 session；失败只在当前请求降级并在下一次重试。v0.42 提供父侧具名本地 References，v0.43 的 MCP Client 只通过独立命令运行，v0.44 将显式启用的 MCP Tool 接入父 Runtime，v0.45 增加本地 Skills 的元数据提示与按需加载，v0.46 增加 JSON-only HTTP、文本 Resource 和文本 Prompt，v0.47 增加具名同步子代理角色，v0.48 增加进程内后台子代理，v0.49 增加可续接子会话和 schema 4 空闲快照。详情见[第 42 课](../tutorials/42-local-references.md)、[第 43 课](../tutorials/43-stdio-mcp-client.md)、[第 44 课](../tutorials/44-mcp-tools-runtime.md)、[第 45 课](../tutorials/45-local-skills.md)、[第 46 课](../tutorials/46-mcp-http-resources-prompts.md)、[第 47 课](../tutorials/47-agent-profiles.md)、[第 48 课](../tutorials/48-background-subagents.md)和[第 49 课](../tutorials/49-resumable-child-session.md)。
+v0.41 automatically retrieves a few relevant Memory candidates before the parent Context requests the LLM, and also provides an explicit `search_memories`. Candidates are a temporary, untrusted system material area, at most 4 entries and 2400 characters, counted separately in `ContextStats.memory`, and do not enter State, history, or session; a failure only degrades the current request and retries next time. v0.42 provides parent-side named local References, the v0.43 MCP Client runs only through a standalone command, v0.44 connects explicitly enabled MCP Tools to the parent Runtime, v0.45 adds metadata hints and on-demand loading of local Skills, v0.46 adds JSON-only HTTP, text Resources, and text Prompts, v0.47 adds named synchronous subagent roles, v0.48 adds in-process background subagents, and v0.49 adds resumable child sessions and schema 4 idle snapshots. For details, see [Lesson 42](../tutorials/42-local-references.md), [Lesson 43](../tutorials/43-stdio-mcp-client.md), [Lesson 44](../tutorials/44-mcp-tools-runtime.md), [Lesson 45](../tutorials/45-local-skills.md), [Lesson 46](../tutorials/46-mcp-http-resources-prompts.md), [Lesson 47](../tutorials/47-agent-profiles.md), [Lesson 48](../tutorials/48-background-subagents.md), and [Lesson 49](../tutorials/49-resumable-child-session.md).
 
-### 3.1 上下文架构
+### 3.1 Context architecture
 
-完整的上下文生产线、双轨记录、预算反馈环和运行时不变量见[上下文架构说明](context-architecture.md)。本节保留操作层面的字段和配置速查。
+For the full context production line, dual-track records, budget feedback loop, and runtime invariants, see the [context architecture notes](context-architecture.md). This section keeps an operational quick reference of fields and configuration.
 
-`AgentState` 保存任务执行事实，独立于会被 LLM 消费的 `messages`：
+`AgentState` saves task execution facts, separate from the `messages` consumed by the LLM:
 
-| State 字段 | 内容 |
+| State field | Content |
 |---|---|
-| `task` / `current_goal` | 当前任务与目标 |
-| `tool_history` | 工具名、参数、成功状态、结果摘要 |
-| `files_changed` | 成功写入或编辑过的文件路径 |
-| `errors` | 权限拒绝或工具失败记录 |
+| `task` / `current_goal` | Current task and goal |
+| `tool_history` | Tool name, arguments, success status, result summary |
+| `files_changed` | Paths of files successfully written or edited |
+| `errors` | Permission refusal or tool failure records |
 | `status` | `running` / `awaiting_process` / `done` / `blocked` / `failed` |
-| `task_id` | 每次 `begin_task` 分配且不复用的任务 ID |
-| `processes` / `process_events` | 当前任务的后台进程投影与 append-only 生命周期事件，含 stdin 能力、状态和在途标记 |
-| `awaiting_process` | 进程仍运行或 stdin 写入未收束时的非终态 CLI 交接信息 |
-| `todos` | active Plan Contract 的只读兼容投影 |
-| `plan_revisions` / `plan_progress_history` | 不可变计划结构历史与独立步骤进度事件；完整历史不直接注入 LLM 上下文 |
-| `planning_state` / `active_plan` | 当前计划阶段、active revision 和应用进度事件后的执行视图 |
-| `replan_triggers` / `user_plan_decisions` | 活动 trigger、四类来源、用户决定及恢复前终态原因 |
-| `loop_stagnation` | progress epoch、连续无进展回合数、短指纹、告警类型和最近原因 |
-| `verification_evidence` | 最近 verification 命令、退出码与结果；只有当前 generation 的 `[exit=0]` 才算通过 |
-| `verification_history` | append-only 的任务内 verification 审计记录；跨 generation 回放使用，不参与完成判定或 LLM 上下文 |
-| `failures` / `recovery_actions` | 最近失败的工具、failure/attempt/generation、分类与可重试性，以及恢复动作状态和因果引用 |
-| `repair_loop` | 当前修复阶段、活动 failure/recovery、已使用/剩余 repair cycle 和要求的下一动作 |
-| `delegations` / `delegation_budget` | 委派交付状态、outcome、短摘要/hash、活动委派和父任务剩余额度；不含子 history |
-| `checkpoints` / `rollback_checkpoints` | 单文件前后镜像元数据；后者只列出当前可回滚的 `ready` 检查点，不含文件内容 |
-| `budgets` / `recovery_notice` | replan、无进展、失败重试、参数指纹、恢复动作和 repair cycle 的剩余额度及当前恢复提示 |
+| `task_id` | Task ID assigned on each `begin_task`, never reused |
+| `processes` / `process_events` | Background process projections and append-only lifecycle events of the current task, including stdin capability, state, and in-flight markers |
+| `awaiting_process` | Non-terminal CLI handoff information while a process still runs or a stdin write has not finished |
+| `todos` | Read-only compatibility projection of the active Plan Contract |
+| `plan_revisions` / `plan_progress_history` | Immutable plan structure history and separate step progress events; the full history is not injected directly into the LLM context |
+| `planning_state` / `active_plan` | Current plan phase, active revision, and the execution view after applying progress events |
+| `replan_triggers` / `user_plan_decisions` | Active triggers, four source kinds, user decisions, and the terminal reason before recovery |
+| `loop_stagnation` | Progress epoch, consecutive no-progress turn count, short fingerprints, warning type, and latest reason |
+| `verification_evidence` | Latest verification command, exit code, and result; only `[exit=0]` of the current generation counts as passing |
+| `verification_history` | Append-only in-task verification audit records; used for cross-generation replay, not for the completion decision or LLM context |
+| `failures` / `recovery_actions` | Tool, failure/attempt/generation, classification, and retryability of recent failures, plus recovery action state and causal references |
+| `repair_loop` | Current repair phase, active failure/recovery, used/remaining repair cycles, and the required next action |
+| `delegations` / `delegation_budget` | Delegation delivery state, outcome, short summary/hash, active delegations, and the parent task's remaining quota; no child history |
+| `checkpoints` / `rollback_checkpoints` | Single-file pre/post-image metadata; the latter lists only `ready` checkpoints that can currently be rolled back, without file content |
+| `budgets` / `recovery_notice` | Remaining quotas for replans, no-progress, failure retries, argument fingerprints, recovery actions, and repair cycles, plus the current recovery notice |
 
-v0.31 另有一份独立的 session 导出，不改变上表的公开 `snapshot()` 或 Trace 投影；导出格式是保存和恢复协议，不是 Trace 回放视图。
+v0.31 also has a separate session export, which does not change the public `snapshot()` or Trace projection in the table above; the export format is a save and restore protocol, not a Trace replay view.
 
-所有 LLM 请求都经 `ContextManager.prepare_messages()`。它按 `len(text) // 3` 估算 token，保留输出空间，并在超限时先截断最老的 tool result、再删除最老的完整历史轮次。工具执行结果通过 `ToolExecutor(on_result=state.record_tool)` 更新 State，agent loop 不直接维护第二份状态。
+All LLM requests go through `ContextManager.prepare_messages()`. It estimates tokens as `len(text) // 3`, reserves output space, and when over the limit first truncates the oldest tool result, then deletes the oldest complete history rounds. Tool execution results update State through `ToolExecutor(on_result=state.record_tool)`, and the agent loop does not keep a second copy of state directly.
 
 ```python
 state = AgentState()
@@ -1072,222 +1072,222 @@ context = ContextManager(state, history)
 tool_executor = ToolExecutor(registry, on_result=state.record_tool)
 ```
 
-每轮带 `tool_calls` 的 assistant 消息，都会在进入下一轮或返回前追加全部对应的 `role=tool` 消息，避免达到迭代上限时留下协议不完整的消息序列。
+For each assistant message with `tool_calls`, all matching `role=tool` messages are appended before entering the next round or returning, to avoid leaving a protocol-incomplete message sequence when the iteration limit is reached.
 
-### 3.2 持久化工具执行边界
+### 3.2 Durable tool execution boundary
 
-输入 `/save` 后，session 文件升级为 schema 4。它仍然是单个原子 JSON 文件，同时保存 State、Context、最后一个工具回合的 `tool_boundary` 和可续接的 idle 子快照；不会额外创建 journal。`session_generation` 是每次提交递增的序号。
+After `/save` is entered, the session file is upgraded to schema 4. It is still a single atomic JSON file that saves State, Context, the `tool_boundary` of the last tool turn, and resumable idle child snapshots together; no extra journal is created. `session_generation` is a sequence number incremented on each commit.
 
-工具回合的持久化顺序是固定的：先写入 assistant 消息和按模型顺序排列的 pending call；通过权限、参数和计划前置检查后，在 handler 真正开始前提交 `handler_admitted`；handler 返回后，先记账 State，再追加对应的 `role=tool`，然后原子提交该 call 的结果。对 `delegate_task`，子结果先进入 boundary 的 `result_ready` 区；交付时再把父 attempt、State 的 `committed` 生命周期、`role=tool` 和边界状态一起提交。所有 call 都 committed 后，才允许再次请求 LLM。`run_shell` 包括 `purpose="verification"` 始终按 `possible` 记录；`recover` 可能进入另一个工具或执行回滚，外层边界也保守记录为 `possible`，实际恢复 attempt 和 generation 仍由 `RecoveryRuntime` 管理。
+The persistence order of a tool turn is fixed: first write the assistant message and the pending calls in model order; after the permission, argument, and plan precondition checks pass, commit `handler_admitted` before the handler really starts; after the handler returns, first account State, then append the matching `role=tool`, then atomically commit that call's result. For `delegate_task`, the child result first enters the boundary's `result_ready` area; on delivery, the parent attempt, the `committed` lifecycle in State, the `role=tool`, and the boundary state are committed together. Only after all calls are committed may the LLM be requested again. `run_shell`, including `purpose="verification"`, is always recorded as `possible`; `recover` may enter another tool or run a rollback, so the outer boundary is also conservatively recorded as `possible`, while the actual recovery attempt and generation are still managed by `RecoveryRuntime`.
 
-这条边界解决的是“工具已经执行，但结果还没有落盘”的窗口。串行副作用工具按模型顺序完成；effect class 为 `none` 的调用可以并发产生结果，但准入提交和主线程的结果提交仍按模型顺序进行。权限拒绝、参数错误、计划校验失败和 handler 异常都各自产生确定的工具结果；存储失败会停止后续 handler 与模型请求，不会被包装成普通工具失败。
+This boundary solves the window where "the tool already ran, but the result is not yet on disk". Serial side-effect tools complete in model order; calls with effect class `none` can produce results concurrently, but admission commits and main-thread result commits still happen in model order. Permission refusals, argument errors, plan validation failures, and handler exceptions each produce a definite tool result; a storage failure stops later handlers and model requests and is not wrapped as an ordinary tool failure.
 
-进程自然退出属于异步 State 事实，会单独提交，不伪造新的工具回复。`write_process.input` 只在保存时保留占位符；如果正文出现在其他持久化文本中，保存会拒绝。
+A natural process exit is an asynchronous State fact and is committed separately, without forging a new tool reply. `write_process.input` is kept only as a placeholder when saving; if the body appears in other persisted text, saving is refused.
 
-v0.33 增加了 pending 边界的崩溃恢复交接，v0.39 又能直接消费已持久化的委派原结果。`--resume` 仍保留 v0.31 的 clean safe point 路径；遇到 active pending boundary 时，新的 session 会保存按模型顺序合成的 `role=tool` 结果和恢复 State，但不会重放旧调用。恢复 generation 的当前 verification 资格会清除，append-only verification history、FailureEvent、RecoveryAction 和计划历史仍保留供审计。
+v0.33 adds crash recovery handoff for pending boundaries, and v0.39 can directly consume persisted raw delegation results. `--resume` still keeps the v0.31 clean safe point path; when an active pending boundary is found, the new session saves `role=tool` results synthesized in model order and the recovery State, but does not replay old calls. The current verification eligibility of the recovery generation is cleared, while the append-only verification history, FailureEvents, RecoveryActions, and plan history are kept for audit.
 
-### 3.3 上下文预算与裁剪
+### 3.3 Context budget and trimming
 
-`CONTEXT_WINDOW` 可在 `config_local.py` 中按模型窗口覆盖。`ContextBudget` 默认保留 15% 给模型输出，历史层最多使用窗口的 45%；system 消息和首条 user task 是保底内容，永不删除。
+`CONTEXT_WINDOW` can be overridden in `config_local.py` according to the model window. `ContextBudget` reserves 15% for model output by default, and the history layer uses at most 45% of the window; system messages and the first user task are guaranteed content and are never deleted.
 
-裁剪顺序固定如下：
+The trimming order is fixed:
 
-1. 旧 tool result 保留首尾并标记省略内容。
-2. 仍超限时，从最老的完整轮次开始删除。
-3. 一轮中的 `assistant(tool_calls)` 与所有对应 `role=tool` 结果始终成组，绝不拆散。
+1. Old tool results keep the head and tail and mark the omitted content.
+2. When still over the limit, delete from the oldest complete round.
+3. Within a round, `assistant(tool_calls)` and all matching `role=tool` results always stay grouped and are never split.
 
-终端会输出 `[Context]` 日志，展示超限、截断和轮次删除的估算 token 节省量。保底内容本身超过预算时，agent 保留它们并继续请求，不会因裁剪逻辑崩溃。
+The terminal outputs `[Context]` logs showing the estimated token savings of over-limit handling, truncation, and round deletion. When the guaranteed content itself exceeds the budget, the agent keeps it and keeps requesting, without crashing because of the trimming logic.
 
-### 3.4 上下文压缩
+### 3.4 Context compaction
 
-当预算超限且存在足够旧的历史轮次时，`ContextManager` 会调用一次不带工具 schema、也不向终端流式输出的摘要请求。摘要结果以 `[Historical Summary]` system 消息注入；近期轮次仍按完整 tool-calling 轮次保留。`AgentState.snapshot()` 每次重新渲染为 `[Structured State]`，用于锚定真实执行事实。
+When the budget is exceeded and there are old enough history rounds, `ContextManager` makes one summary request without tool schemas and without streaming to the terminal. The summary is injected as a `[Historical Summary]` system message; recent rounds are still kept as complete tool-calling rounds. `AgentState.snapshot()` is re-rendered as `[Structured State]` each time, to anchor real execution facts.
 
-摘要允许有损，State 不依赖摘要推断。摘要请求失败、返回空内容或没有可压缩的旧轮次时，ContextManager 自动退回 trimming；原始 `history` 始终不被修改。
+The summary is allowed to be lossy, and State does not depend on the summary for inference. When the summary request fails, returns empty content, or there are no old rounds to compact, ContextManager automatically falls back to trimming; the original `history` is never changed.
 
 ### 3.5 System Prompt
 
-启动时由 `prompt.py` 的 `build_system_prompt()` 组装 `messages[0]`，分三层：
+At startup, `build_system_prompt()` in `prompt.py` assembles `messages[0]` in three layers:
 
-| 层 | 函数/常量 | 内容 |
+| Layer | Function/constant | Content |
 |---|---|---|
-| 身份 | `header(agent_name)` | 告诉模型是哪个 agent（当前只有 build，为多 agent 预留） |
-| 行为规范 | `_CORE_RULES` | tone、专业客观性、工具用法、安全约束 |
-| 环境信息 | `environment()` | 工作目录、git 状态、平台、日期（动态生成） |
+| Identity | `header(agent_name)` | Tells the model which agent it is (currently only build, reserved for multi-agent) |
+| Behavior rules | `_CORE_RULES` | Tone, professional objectivity, tool usage, safety constraints |
+| Environment info | `environment()` | Working directory, git status, platform, date (generated dynamically) |
 
-查看当前 system prompt：
+View the current system prompt:
 ```bash
 $env:PYTHONPATH="src"; python -c "from mini_agent.prompt import build_system_prompt; print(build_system_prompt())"
 ```
 
-### 3.6 工具
+### 3.6 Tools
 
-| 工具 | 参数 | 权限 | 说明 |
+| Tool | Arguments | Permission | Description |
 |---|---|---|---|
-| `calculate` | `expression: str` | allow | 计算数学表达式（仅数字与 `+-*/()` ） |
-| `read_file` | `path: str, offset?: int, limit?: int` | allow | 读取文本文件，支持分段读取，输出带行号前缀 |
-| `write_file` | `path: str, content: str` | **ASK** | 写文件（完整覆盖），每次执行前问用户 |
-| `edit_file` | `path: str, old_string: str, new_string: str, replace_all?: bool` | **ASK** | 精确字符串替换，多匹配时需 replace_all 或更长上下文 |
-| `list_dir` | `path?: str` | allow | 列出目录内容，目录加 `/` 后缀，上限 200 条 |
-| `grep` | `pattern: str, path?: str, include?: str` | allow | 正则搜索文件内容，返回 `file:line: content`，上限 100 条 |
-| `list_references` | 无 | allow | 列出 alias 和说明，不显示真实根路径 |
-| `search_reference` | `alias, query, path?, include?, limit?` | **ASK** | alias 内字面量搜索；最多 2,000 个文件、10,000 个目录项、64 MiB 正文 |
-| `read_reference` | `alias, path, offset?, limit?` | **ASK** | 读取有界 UTF-8 行片段；成功结果为有界 JSON，失败进入统一工具错误协议 |
-| `run_shell` | `command: str` | **按命令模式** | 执行 shell 命令，超时 30s，输出截断 2000 字符 |
-| `start_process` | `command: str, cwd?: str, stdin_mode?: "closed" / "pipe"` | **独立按命令模式 ASK** | 启动后台 shell 命令，立即返回 `process_id`；默认 stdin 关闭，每任务最多 4 个活动进程 |
-| `get_process` | `process_id: str` | allow | 查询本任务进程的状态、退出码与两流累计位置 |
-| `read_process` | `process_id: str, max_chars?: int` | allow | 读取两流新增输出、下一字节位置与缓冲缺口 |
-| `list_processes` | 无 | allow | 列出本任务登记的有界进程元数据 |
-| `wait_process` | `process_id: str, timeout_ms?: int` | allow | 独占回合，有界等待未读输出或退出；超时交回 CLI |
-| `write_process` | `process_id: str, input: str, close_stdin?: bool` | **ASK** | 向显式开启管道的进程写入最多 4096 字节 UTF-8 文本；可单独发送 EOF；单次最多等待 2 秒 |
-| `rollback_checkpoint` | 内部 `checkpoint_id` | **仅 RecoveryRuntime** | 不进入模型 schema；恢复一个已授权且未冲突的单文件检查点 |
+| `calculate` | `expression: str` | allow | Evaluates math expressions (only digits and `+-*/()`) |
+| `read_file` | `path: str, offset?: int, limit?: int` | allow | Reads text files, supports partial reads, output has line number prefixes |
+| `write_file` | `path: str, content: str` | **ASK** | Writes a file (full overwrite), asks the user before each run |
+| `edit_file` | `path: str, old_string: str, new_string: str, replace_all?: bool` | **ASK** | Exact string replacement; with multiple matches, replace_all or more context is needed |
+| `list_dir` | `path?: str` | allow | Lists directory content, directories get a `/` suffix, limit 200 entries |
+| `grep` | `pattern: str, path?: str, include?: str` | allow | Regex search of file content, returns `file:line: content`, limit 100 entries |
+| `list_references` | none | allow | Lists aliases and descriptions, without showing real root paths |
+| `search_reference` | `alias, query, path?, include?, limit?` | **ASK** | Literal search within an alias; at most 2,000 files, 10,000 directory entries, 64 MiB of body |
+| `read_reference` | `alias, path, offset?, limit?` | **ASK** | Reads a bounded UTF-8 line slice; success is bounded JSON, failure enters the unified tool error protocol |
+| `run_shell` | `command: str` | **By command pattern** | Runs a shell command, 30 s timeout, output truncated at 2000 characters |
+| `start_process` | `command: str, cwd?: str, stdin_mode?: "closed" / "pipe"` | **Separate ASK by command pattern** | Starts a background shell command and returns a `process_id` immediately; stdin closed by default, at most 4 active processes per task |
+| `get_process` | `process_id: str` | allow | Queries the state, exit code, and cumulative positions of both streams of a process of this task |
+| `read_process` | `process_id: str, max_chars?: int` | allow | Reads new output of both streams, the next byte positions, and buffer gaps |
+| `list_processes` | none | allow | Lists bounded metadata of processes registered for this task |
+| `wait_process` | `process_id: str, timeout_ms?: int` | allow | Exclusive turn, bounded wait for unread output or exit; returns to the CLI on timeout |
+| `write_process` | `process_id: str, input: str, close_stdin?: bool` | **ASK** | Writes at most 4096 bytes of UTF-8 text to a process with an explicitly enabled pipe; can send EOF alone; waits at most 2 seconds per call |
+| `rollback_checkpoint` | internal `checkpoint_id` | **RecoveryRuntime only** | Not in the model schema; restores an authorized, non-conflicting single-file checkpoint |
 
-### 3.7 权限交互
+### 3.7 Permission interaction
 
-v0.09 权限系统升级为二维匹配：`(tool_name, pattern) -> action`。`PermissionGate` 从工具参数中提取 pattern（文件工具提取 `path`，`run_shell` 和 `start_process` 各自提取 `command`，其他返回 `*`），用 `fnmatch` 做 wildcard 匹配。`start_process` 有自己的规则表，不继承 `run_shell` 已放行的命令。`write_process` 使用自己的 `ask` 规则，不继承启动命令或其他工具的授权。
+In v0.09, the permission system was upgraded to two-dimensional matching: `(tool_name, pattern) -> action`. `PermissionGate` extracts a pattern from tool arguments (file tools extract `path`, `run_shell` and `start_process` each extract `command`, others return `*`) and does wildcard matching with `fnmatch`. `start_process` has its own rule table and does not inherit commands already allowed for `run_shell`. `write_process` uses its own `ask` rule and does not inherit the authorization of the start command or other tools.
 
-**规则格式**（`permission.py` 的 `PERMISSION_RULES`）：
+**Rule format** (`PERMISSION_RULES` in `permission.py`):
 
 ```python
-# 简单格式（一维兼容，pattern 默认 "*"）
+# Simple format (one-dimensional compatible, pattern defaults to "*")
 {"write_file": "ask", "read_file": "allow"}
 
-# 复杂格式（二维，按 pattern 细控）
+# Complex format (two-dimensional, fine control by pattern)
 {"read_file": {"*": "allow", "*.env": "deny", "*.env.example": "allow"}}
 
-# run_shell 二维权限（按命令前缀控制）
+# run_shell two-dimensional permissions (controlled by command prefix)
 {"run_shell": {"git *": "allow", "python *": "allow", "*": "ask"}}
 ```
 
-**匹配规则**：
-- `findLast` 语义：从后往前找第一个匹配的规则，后出现的优先级更高
-- 复杂格式中 `*` 自动排最前（优先级最低），具体模式排后面（优先级更高）
-- 未匹配任何规则时默认 `ask`（安全优先）
-- `always` 回复时存 `(tool_name, pattern)` 到 approved，后续同类操作免问
+**Matching rules**:
+- `findLast` semantics: search from the end for the first matching rule; later rules have higher priority
+- In the complex format, `*` is automatically placed first (lowest priority), and specific patterns are placed after it (higher priority)
+- When no rule matches, the default is `ask` (safety first)
+- An `always` reply saves `(tool_name, pattern)` into approved, and later operations of the same kind are not asked again
 
-**run_shell 权限规则**（v0.10）：
+**run_shell permission rules** (v0.10):
 
-| 命令模式 | 动作 | 说明 |
+| Command pattern | Action | Description |
 |---|---|---|
-| `git *` | allow | git 操作放行 |
-| `python *` | allow | python 脚本/测试放行 |
-| `pip *` | allow | pip 安装放行 |
-| `ls *` | allow | 只读命令放行 |
-| `cat *` | allow | 只读命令放行 |
-| `echo *` | allow | 只读命令放行 |
-| `*` | ask | 其他命令每次问用户 |
+| `git *` | allow | git operations allowed |
+| `python *` | allow | python scripts/tests allowed |
+| `pip *` | allow | pip installs allowed |
+| `ls *` | allow | read-only command allowed |
+| `cat *` | allow | read-only command allowed |
+| `echo *` | allow | read-only command allowed |
+| `*` | ask | other commands ask the user each time |
 
-`start_process` 默认对所有命令 ASK。用户选择 `always` 后只保存 `start_process` 对应的命令 pattern；它不会改变同一命令在 `run_shell` 中的授权。
+`start_process` asks for all commands by default. After the user chooses `always`, only the command pattern for `start_process` is saved; it does not change the authorization of the same command in `run_shell`.
 
-`write_process` 的授权提示只显示安全元数据，例如：
+The authorization prompt of `write_process` shows only safe metadata, for example:
 
 ```
-允许执行 write_process(process_id=proc-1, bytes=7, close_stdin=True)? [once/always/reject]
+Allow write_process(process_id=proc-1, bytes=7, close_stdin=True)? [once/always/reject]
 ```
 
-输入正文不会出现在提示中。`write_pending` 表示两秒内尚不能确认投递完成；等待下一次 `get_process` 或 `wait_process` 的状态，不要重复投递同一输入。
+The input body does not appear in the prompt. `write_pending` means delivery could not be confirmed within two seconds; wait for the state from the next `get_process` or `wait_process`, and do not deliver the same input again.
 
-`write_file`/`edit_file` 执行前会提示：
+Before `write_file`/`edit_file` run, the prompt is:
 ```
-允许执行 write_file({...})? [once/always/reject]
+Allow write_file({...})? [once/always/reject]
 ```
-- `once`：本次允许，下次再问
-- `always`：本轮运行内总是允许该 pattern，不再问
-- 其他输入：拒绝执行，工具返回拒绝原因给 LLM
+- `once`: allow this time, ask again next time
+- `always`: always allow this pattern within this run, without asking again
+- Any other input: refuse execution, and the tool returns the refusal reason to the LLM
 
-> 二维权限示例：配置 `{"read_file": {"*": "allow", "*.env": "deny"}}` 后，读取 `.env` 文件会被拒绝，其他文件正常放行。
+> Two-dimensional permission example: after configuring `{"read_file": {"*": "allow", "*.env": "deny"}}`, reading `.env` files is refused, and other files are allowed normally.
 
-### 3.8 工具调用流程
-1. LLM 返回 `tool_calls`（一轮可含多个，代码用线程池并发执行）
-2. `ToolExecutor` 先过权限闸门（`PermissionGate.guard`）
-3. 通过则调 handler，失败则捕获异常返回错误信息给 LLM
-4. 结果作为 `role=tool` 消息回灌，进入下一轮；Executor 回调同时更新 AgentState
+### 3.8 Tool call flow
+1. The LLM returns `tool_calls` (one round can contain several, and the code runs them concurrently in a thread pool)
+2. `ToolExecutor` first passes the permission gate (`PermissionGate.guard`)
+3. If it passes, the handler is called; on failure, the exception is caught and an error message returned to the LLM
+4. The result is fed back as a `role=tool` message and enters the next round; the Executor callback also updates AgentState
 
-`start_process` 的成功结果只证明句柄已创建。Runtime 在每轮上下文、完整工具结果回灌、完成判断和用户恢复前同步进程；自然退出会记录最终事件并使旧 verification 失效。模型可用 v0.27 的观察工具查询状态和新增日志；重复空结果不算新事实。模型在仍有活动进程或 stdin 写入在途时只回复文本，或 `wait_process` 超时，都会进入 `awaiting_process`，CLI 显示继续方式而不把任务标为完成。v0.28 提供模型可调用的 terminate_process/kill_process；v0.29 增加显式管道的 write_process；任务边界清理仍由 Runtime 执行。写入成功后必须继续观察，不能替代独立 verification。
+A successful result of `start_process` only proves the handle was created. The Runtime syncs processes before each round's context, the full tool result feedback, the completion decision, and user resume; a natural exit records the final event and invalidates old verification. The model can use the v0.27 observation tools to query state and new logs; repeated empty results do not count as new facts. When the model replies only with text while processes are still active or a stdin write is in flight, or `wait_process` times out, the task enters `awaiting_process`, and the CLI shows how to continue without marking the task complete. v0.28 provides model-callable terminate_process/kill_process; v0.29 adds write_process for explicit pipes; task boundary cleanup is still done by the Runtime. After a successful write, observation must continue, and it cannot replace independent verification.
 
-如果一批调用中途使任务进入 `blocked`/`failed`，剩余调用仍各自产生拒绝结果并全部回灌，下一轮模型只能解释终态原因；它们不会再次触发权限询问或 handler。
+If a batch of calls puts the task into `blocked`/`failed` in the middle, the remaining calls still each produce a refusal result and are all fed back, and the next model round can only explain the terminal reason; they do not trigger permission prompts or handlers again.
 
-### 3.9 相对路径约定
-工具的相对路径（如 `examples/input.txt`）按进程的**当前工作目录**解析，不会自动相对已安装的包目录。使用仓库示例时，建议先进入仓库根目录：
+### 3.9 Relative path convention
+Relative paths of tools (such as `examples/input.txt`) are resolved against the process's **current working directory**, not automatically relative to the installed package directory. When using repository examples, it is suggested to enter the repository root first:
 ```bash
-# 在 agent-from-scratch/ 目录下运行
-python -m mini_agent "读取 examples/input.txt"
+# Run in the agent-from-scratch/ directory
+python -m mini_agent "Read examples/input.txt"
 ```
 
-### 3.10 终端输出
+### 3.10 Terminal output
 
-CLI 的输入提示固定为 `你 › `。助手正文通过 SSE 流式到达时，只有收到第一个非空 chunk 才显示 `助手 › `，随后直接追加正文；因此空回复不会留下空标题。agent loop 将 `call_llm` 的 `on_content` 回调连接到这一层，最终正文不会再次整段重播。
+The CLI input prompt is fixed as `You › `. When assistant text arrives as an SSE stream, `Assistant › ` is shown only after the first non-empty chunk is received, and the text is then appended directly; so an empty reply leaves no empty heading. The agent loop connects the `on_content` callback of `call_llm` to this layer, and the final text is not replayed as a whole again.
 
-输出模式由 `OUTPUT_MODE` 控制：
+The output mode is controlled by `OUTPUT_MODE`:
 
-| 模式 | 显示内容 |
+| Mode | Content shown |
 |---|---|
-| `normal` | 助手正文、工具批次（按工具名计数）和按调用顺序排列的结构化结果 |
-| `debug` | normal 内容，加上轮次、工具参数和工具结果；参数与结果各最多 1200 个字符 |
-| `quiet` | 隐藏助手正文、工具进度和运行时状态；显式 CLI 通知及权限确认仍显示 |
+| `normal` | Assistant text, tool batches (counted by tool name), and structured results in call order |
+| `debug` | normal content, plus rounds, tool arguments, and tool results; arguments and results each at most 1200 characters |
+| `quiet` | Hides assistant text, tool progress, and runtime state; explicit CLI notices and permission confirmations are still shown |
 
-normal 模式的成功工具结果只显示工具名和安全摘要，不展开结果正文。文件工具摘要只包含 `path`，`run_shell` 只包含 `command`，每个摘要最多 100 个字符；写入内容、grep pattern 等其他参数不显示。失败、拒绝、超时和无效结果显示最多 240 个字符的原因。debug 模式才显示有界的完整结果。上述限制只作用于终端，完整 tool message 仍会回灌模型。
+In normal mode, successful tool results show only the tool name and a safe summary, without expanding the result body. File tool summaries contain only `path`, `run_shell` only `command`, and each summary is at most 100 characters; other arguments such as written content and grep patterns are not shown. Failures, refusals, timeouts, and invalid results show a reason of at most 240 characters. Only debug mode shows the bounded full result. These limits apply only to the terminal; the full tool message is still fed back to the model.
 
-`call_llm` 的 `stream_output` 和 `on_content` 语义如下：
+The semantics of `stream_output` and `on_content` in `call_llm` are:
 
-- `stream_output=True` 且传入 `on_content` 时，每个正文 chunk 调用一次回调，不额外写标准输出；回调异常会被隔离。
-- `stream_output=True` 且没有回调时，保留独立调用的标准输出兼容行为。
-- `stream_output=False` 时不打印正文，也不调用回调，但仍累积并返回完整 assistant message。未显式指定时，quiet 模式默认为关闭流式观察，其余模式默认为开启。
+- With `stream_output=True` and `on_content` passed, the callback is called once per text chunk, with no extra writes to standard output; callback exceptions are isolated.
+- With `stream_output=True` and no callback, the standard output compatibility behavior of standalone calls is kept.
+- With `stream_output=False`, text is not printed and the callback is not called, but the full assistant message is still accumulated and returned. When not specified explicitly, quiet mode defaults to streaming observation off, and the other modes default to on.
 
-终端呈现是观察层：输出流关闭、重定向或写入失败不会改变工具协议或让执行失败。权限询问仍由 `PermissionGate` 同步发出，即使在 quiet 模式也必须让用户看到提示并输入 `once`、`always` 或 `reject`。
+Terminal presentation is an observation layer: a closed output stream, redirection, or write failure does not change the tool protocol or make execution fail. Permission prompts are still issued synchronously by `PermissionGate`; even in quiet mode the user must see the prompt and enter `once`, `always`, or `reject`.
 
 ---
 
-## 4. 测试
+## 4. Tests
 
-### 4.1 运行 smoke test
+### 4.1 Run the smoke tests
 ```bash
-# 需 PYTHONPATH=src（未 pip install 时）
+# Requires PYTHONPATH=src (when not pip installed)
 $env:PYTHONPATH="src"; python tests/test_prompt.py   # system prompt
-$env:PYTHONPATH="src"; python tests/test_loop.py      # import 链路
-$env:PYTHONPATH="src"; python tests/test_tools.py     # 工具 + 权限
+$env:PYTHONPATH="src"; python tests/test_loop.py      # import chain
+$env:PYTHONPATH="src"; python tests/test_tools.py     # tools + permissions
 $env:PYTHONPATH="src"; python tests/test_state.py      # AgentState
-$env:PYTHONPATH="src"; python tests/test_context.py    # 预算、裁剪与压缩
-$env:PYTHONPATH="src"; python tests/test_executor.py   # Executor 结果回调
+$env:PYTHONPATH="src"; python tests/test_context.py    # budget, trimming, and compaction
+$env:PYTHONPATH="src"; python tests/test_executor.py   # Executor result callback
 ```
-覆盖：system prompt 分层组装、import 链路、registry 注册、AgentState、ContextManager 预算/裁剪/压缩、Executor 结果回调、calculate 正常/非法输入、read_file 分段读取、读写文件、edit_file 精确替换/多匹配安全检查、list_dir、grep、run_shell 执行/退出码/二维权限、权限闸门。
+Coverage: layered system prompt assembly, import chain, registry registration, AgentState, ContextManager budget/trimming/compaction, Executor result callback, calculate normal/illegal input, read_file partial reads, file read/write, edit_file exact replacement/multi-match safety check, list_dir, grep, run_shell execution/exit code/two-dimensional permissions, and the permission gate.
 
-### 4.2 快速验证 import 链路
+### 4.2 Quickly verify the import chain
 ```bash
 PYTHONPATH=src python -c "from mini_agent.state import AgentState; from mini_agent.tools import create_registry; print([t.name for t in create_registry(AgentState()).list_tools()])"
-# 期望输出包含: calculate, read_file, write_file, edit_file, list_dir, grep, run_shell, start_process, write_process
+# Expected output contains: calculate, read_file, write_file, edit_file, list_dir, grep, run_shell, start_process, write_process
 ```
 
 ---
 
-## 5. 常见问题
+## 5. FAQ
 
-### Q1：运行报 502 / 连接网关失败
-确认 `config_local.py` 的 `BASE_URL` 和 `API_KEY` 正确，且网络可达配置的网关。
-> 注意：必须用 `http.client`（代码已如此），不能用 requests/urllib——网关对 `Accept-Encoding: gzip` 响应异常。`call_llm` 已显式设 `Accept-Encoding: identity` 绕过，并按 `BASE_URL` 的 scheme 选择 HTTP 或 HTTPS 连接。
+### Q1: Running reports 502 / failed to connect to the gateway
+Confirm that `BASE_URL` and `API_KEY` in `config_local.py` are correct and the configured gateway is reachable on the network.
+> Note: `http.client` must be used (the code already does), not requests/urllib—the gateway responds abnormally to `Accept-Encoding: gzip`. `call_llm` explicitly sets `Accept-Encoding: identity` to work around it, and chooses an HTTP or HTTPS connection by the scheme of `BASE_URL`.
 
-### Q2：任务没完成就停了
-可能触发 `MAX_ITERATIONS=50` 上限，agent 返回 `"达到最大迭代次数"`。可在 `config_local.py` 中调整，但注意长对话会累积上下文。
+### Q2: The task stopped before it was done
+The `MAX_ITERATIONS=50` limit may have been hit, and the agent returns `"Maximum iterations reached"`. It can be adjusted in `config_local.py`, but note that long conversations accumulate context.
 
-### Q3：工具失败直接报错退出
-agent loop 不对 LLM 或 CLI 顶层异常做兜底；这是为了保持核心路径清晰。工具层（`ToolExecutor.execute`）会捕获 handler 异常并将错误结果回灌给 LLM，但 loop 本身的顶层异常仍会向上抛出。
+### Q3: A tool failure exits with an error directly
+The agent loop has no fallback for top-level LLM or CLI exceptions; this keeps the core path clear. The tool layer (`ToolExecutor.execute`) catches handler exceptions and feeds error results back to the LLM, but top-level exceptions of the loop itself still propagate up.
 
-### Q4：write_file 被拒绝
-检查权限交互的输入。选 `reject` 或输错字符会拒绝。重新运行即可。
+### Q4: write_file was refused
+Check your input to the permission prompt. Choosing `reject` or mistyping refuses. Just run again.
 
-### Q5：中文乱码（Windows 控制台）
-`__main__.py` 已对 win32 设 `sys.stdout.reconfigure(encoding="utf-8")`。若仍乱码，PowerShell 执行 `chcp 65001` 切到 UTF-8。
+### Q5: Garbled non-ASCII text (Windows console)
+`__main__.py` already sets `sys.stdout.reconfigure(encoding="utf-8")` for win32. If text is still garbled, run `chcp 65001` in PowerShell to switch to UTF-8.
 
-### Q6：后台进程显示 awaiting_process
-这是非终态交接，表示模型已经暂停回复、`wait_process` 超时，或 stdin 写入仍在途，但任务登记的进程尚未完全收束。继续输入即可恢复原任务；恢复前 Runtime 会先同步进程。可用 `read_process` 读取日志、`get_process` 查看 stdin 状态；可用 terminate_process 或 kill_process 控制当前任务的进程；`/new`、`/reset` 和退出 CLI 时会清理当前任务的进程及写入线程。
+### Q6: A background process shows awaiting_process
+This is a non-terminal handoff, meaning the model has paused its reply, `wait_process` timed out, or a stdin write is still in flight, while the processes registered for the task have not fully finished. Just keep typing to resume the original task; before resuming, the Runtime first syncs processes. Use `read_process` to read logs and `get_process` to see the stdin state; use terminate_process or kill_process to control the current task's processes; `/new`, `/reset`, and exiting the CLI clean up the current task's processes and writer threads.
 
-## 可选父任务累计 token 上限
+## Optional Cumulative Token Limit for Parent Tasks
 
-在本地 `config_local.py` 设置 `PARENT_TASK_TOKEN_BUDGET = 64000` 可给新父任务启用累计模型预算；默认 `None` 保持 CLI 原行为。上限计入父主请求及同模型历史摘要；子代理按原独立和聚合预算管理。评测 suite 1.5 固定显式启用 64,000，不随普通 CLI 的关闭设置取消。
+Setting `PARENT_TASK_TOKEN_BUDGET = 64000` in the local `config_local.py` enables a cumulative model budget for new parent tasks; the default `None` keeps the original CLI behavior. The limit counts parent main requests and same-model history summaries; subagents are managed by the original separate and aggregate budgets. Evaluation suite 1.5 explicitly enables a fixed 64,000, which is not cancelled by the ordinary CLI's off setting.
 
-预算开启后，执行/摘要/收尾的输出上限为 1024/512/512，并服从较小的模型配置上限。最近两轮完整工具回合进入请求视图；较老结果可裁剪或整轮省略，入选推理字段保持原文，完整本地 history 和已有会话证据保留。任务给出明确路径时直接读取，避免先重复列目录。
+With the budget on, the output limits for execution/summary/finishing are 1024/512/512, bound by the smaller model configuration limit. The last two complete tool turns enter the request view; older results can be trimmed or omitted as whole turns, selected reasoning fields keep their original text, and the full local history and existing session evidence are kept. When the task gives an explicit path, it is read directly, to avoid listing directories repeatedly first.
 
-OpenAI Chat 预算准入按实际请求 JSON 的消息、角色字段、工具 schema、键和标点估算 UTF-8 大小，再用 `ceil(bytes × 1.1 ÷ 3)` 得到本地代理值。它不是 provider tokenizer；真实用量仍以 provider 响应为准，校准只吸收同一 estimator 版本、binding、工具 schema 和请求类别的观测。估算值过大时先裁剪可省略的历史工具回合，不删除受保护指令、State 或用户纠正；若这些受保护内容仍放不下，就在请求前拒绝。其他协议保持原有估算路径。对未知 provider 隐藏上下文没有绝对不超额保证，响应超出预留时仍阻止工具执行。
+OpenAI Chat budget admission estimates the UTF-8 size from the messages, role fields, tool schemas, keys, and punctuation of the actual request JSON, then uses `ceil(bytes × 1.1 ÷ 3)` to get a local proxy value. It is not a provider tokenizer; real usage is still decided by the provider response, and calibration only absorbs observations with the same estimator version, binding, tool schema, and request category. When the estimate is too large, omittable historical tool turns are trimmed first, without deleting protected instructions, State, or user corrections; if this protected content still does not fit, the request is refused before sending. Other protocols keep the original estimate path. There is no absolute no-overrun guarantee for hidden context of unknown providers, and when a response exceeds the reservation, tool execution is still blocked.
 
-请求前、结算后都提交预算账本。提交失败时停止请求或后续工具；未知调用按预留全额计费，不当作零。已有账本恢复时继续使用保存的上限与用量，修改配置不能为同一任务补预算。旧会话没有该字段时不追补费用、不自动启用新配置；`/new` 创建的新任务可按当前配置启用。
+The budget ledger is committed both before the request and after settlement. When a commit fails, the request or later tools stop; unknown calls are charged the full reservation and not treated as zero. When an existing ledger is restored, the saved limit and usage keep being used, and changing configuration cannot add budget to the same task. When an old session lacks this field, no charges are added after the fact and the new configuration is not enabled automatically; a new task created by `/new` can be enabled by the current configuration.
 
-Runtime 将计划推进和验证纳入当前工作请求可用的预算，只单独预留后续无工具最终回复的额度。收尾预留按当前受保护指令、用户约束和完成事实估算，不再次预留一份当前验证请求，也不按未完成步骤数重复扣留。低预算提醒仍要求模型优先验证与收尾；这不保证模型选择正确顺序，也不保证未来 State 增长或任意 provider 响应都在估算内。只有实际无完成阻塞且已有当前代验证或完整计划时才进入无工具收尾；仍须模型真实回复和原完成条件通过。无法容纳受保护内容时会明确 `token_limit`，拒绝诊断保留上下文下限、可用输入额度和收尾预留，不删除约束、取消验证或自动宣布完成。
+The Runtime includes plan progress and verification in the budget available to the current working request, and separately reserves only the quota for the later tool-free final reply. The finishing reservation is estimated from the current protected instructions, user constraints, and completion facts, without reserving another copy of the current verification request and without deducting repeatedly by the number of unfinished steps. The low-budget reminder still requires the model to prioritize verification and finishing; this does not guarantee that the model chooses the correct order, nor that future State growth or any provider response stays within the estimate. Only when there are actually no completion blockers and current-generation verification or a complete plan exists does it enter the tool-free finish; a real model reply and the original completion conditions must still pass. When protected content cannot fit, it states `token_limit` explicitly, and the refusal diagnostics keep the context floor, available input quota, and finishing reservation, without deleting constraints, cancelling verification, or automatically declaring completion.

@@ -1,40 +1,40 @@
-# 第 27 课：观察后台进程
+# Lesson 27: Observing background processes
 
-上一课：[后台进程启动与任务边界](26-background-process-boundaries.md) · [教程总览](README.md) · 下一课：[控制后台进程](28-process-control.md)
+Previous: [Background process start and task boundaries](26-background-process-boundaries.md) · [Tutorial overview](README.md) · Next: [Controlling background processes](28-process-control.md)
 
-代码快照：`v0.27` · 相邻差异：`v0.26..v0.27` · 示例命令环境：Bash/zsh
+Code snapshot: `v0.27` · Adjacent diff: `v0.26..v0.27` · Shell for examples: Bash/zsh
 
-`v0.27` tag 由仓库维护者手动创建。tag 尚未创建时，可在当前分支阅读和运行本课的接口；固定源码链接和跨版本 diff 须在 tag 创建后核对。命令行参数仍是 CLI 的首条任务，处理后会进入交互循环。
+The `v0.27` tag is created manually by the repository maintainer. Before the tag exists, you can read and run this lesson's interfaces on the current branch; pinned source links and cross-version diffs must be checked after the tag is created. A command-line argument is still the CLI's first task, and the program enters the interactive loop after handling it.
 
-## 本课目标
+## Lesson Goals
 
-想象 Agent 启动了一个开发服务器。服务器很快打印 `ready`，但真正的错误可能在几秒后才出现在 stderr；服务器也可能长时间没有新输出。只返回启动时的 `process_id`，无法回答三个实际问题：它现在还活着吗？刚才输出了什么？它最后成功还是失败？
+Imagine the Agent has started a development server. The server quickly prints `ready`, but the real error may only appear on stderr a few seconds later; the server may also go a long time without new output. Returning only the `process_id` from startup cannot answer three practical questions: is it still alive now? What did it just output? Did it finally succeed or fail?
 
-本课给这个进程增加一条“观察通道”。读完后，你应该能顺着一次调用解释下面的链路：
+This lesson adds an "observation channel" for this process. After reading it, you should be able to follow one call and explain the chain below:
 
-1. Agent 用 `get_process` 或 `list_processes` 查询生命周期，用 `read_process` 取出尚未交付的 stdout/stderr。
-2. `read_process` 用两个字节游标记住已经交付的位置，因此重复读取不会重复返回日志。
-3. 环形缓冲被新输出覆盖时，结果显式报告缺口；Agent 不会把一段残缺日志误当成完整日志。
-4. 没有输出时，`wait_process` 只等待一个有上限的时间，超时后把任务交回 CLI，而不是继续消耗 LLM 回合。
-5. 进程自然退出后，Runtime 记录一次退出事实；退出前得到的验证不能跨到新的 generation（验证代次）。
+1. The Agent queries the lifecycle with `get_process` or `list_processes`, and takes stdout/stderr not yet delivered with `read_process`.
+2. `read_process` uses two byte cursors to remember what has already been delivered, so repeated reads never return the same logs again.
+3. When the ring buffer is overwritten by new output, the result reports the gap explicitly; the Agent never mistakes a partial log for a complete one.
+4. When there is no output, `wait_process` waits only for a bounded time and hands the task back to the CLI after the timeout, instead of continuing to consume LLM rounds.
+5. After the process exits naturally, the Runtime records one exit fact; verification obtained before the exit cannot carry over into the new generation (verification generation).
 
-这里的“观察”只读取当前任务登记的进程。主动终止和 stdin 写入分别留给下一课及 `v0.29`，本课不会提前使用它们。
+"Observation" here reads only the processes registered by the current task. Active termination and stdin writes are left to the next lesson and to `v0.29` respectively; this lesson does not use them early.
 
-## 上一版的问题
+## Problems in the Previous Version
 
-`v0.26` 已经解决了后台启动最危险的部分：`start_process` 创建进程后立即返回；两个后台收集线程持续排空 stdout 和 stderr；每条流最多保留 64 KiB。这样，子进程不会因为 Agent 暂时没有读日志而被管道写满。
+`v0.26` already solved the most dangerous part of background starts: `start_process` returns immediately after creating the process; two background collector threads keep draining stdout and stderr; each stream keeps at most 64 KiB. So a subprocess is never stalled by a full pipe just because the Agent has not read its logs for a while.
 
-但是，排空只是“把日志安全地接住”，还不是“把日志交给模型”。上一版的启动结果大致只有下面这些信息：
+But draining only "catches the logs safely"; it does not yet "hand the logs to the model". The previous version's start result had roughly only this information:
 
 ```json
 {"process_id":"proc-1","pid":12345,"status":"running"}
 ```
 
-这能证明进程创建成功，不能说明它后来打印了什么，也不能说明它是否已经退出。若把整个缓冲区每轮都返回，模型会反复看到旧日志；若让模型每隔一小段时间调用一次查询，又会在“仍然没有输出”时浪费工具回合。`v0.27` 要把这两种情况区分开：有新事实时交付新事实，没有新事实时有限等待并交接。
+This proves the process was created successfully, but it cannot say what it printed later or whether it has already exited. If the whole buffer were returned every round, the model would see old logs again and again; if the model called a query every short interval, it would waste tool rounds while "there is still no output". `v0.27` separates these two cases: deliver new facts when there are new facts, and wait boundedly and hand off when there are none.
 
-## 前置条件与版本切换
+## Prerequisites and Version Checkout
 
-需要基础 Python、Bash/zsh，以及上一课提到的任务专属 `process_id`、stdout/stderr 排空和任务边界。下面的命令先让你看到“观察接口插在哪里”，再切换到本课代码；`git diff --stat` 是范围速览，后面的文件和符号才是理解重点。
+You need basic Python, Bash/zsh, and the task-scoped `process_id`, stdout/stderr draining, and task boundaries mentioned in the previous lesson. The commands below first show you "where the observation interfaces plug in", then switch to this lesson's code; `git diff --stat` is a quick look at the scope, while the files and symbols later are the focus.
 
 ```bash
 git checkout v0.26
@@ -43,91 +43,91 @@ git diff v0.26..v0.27 -- src/mini_agent/processes.py src/mini_agent/tools/proces
 git checkout v0.27
 ```
 
-没有 `v0.27` tag 时，留在当前开发分支运行本课命令即可；固定源码链接和跨版本事实检查等 tag 创建后再核对。
+Without the `v0.27` tag, stay on the current development branch to run this lesson's commands; check pinned source links and cross-version facts after the tag is created.
 
-## 新增与改动文件
+## New and Changed Files
 
-先用这张表建立地图。它不要求读者记住所有文件；后面每次提到一个内部名称时，都会说明它解决的具体问题。
+Use this table to build a map first. You do not need to memorize all the files; each time an internal name comes up later, the text explains the specific problem it solves.
 
-| 文件 | 本课作用 |
+| File | Role in this lesson |
 | --- | --- |
-| `src/mini_agent/processes.py` | 在 v0.26 的字节环上增加逐流读取游标、UTF-8 片段读取和有界等待。 |
-| `src/mini_agent/tools/process.py` | 发布 `get_process`、`read_process`、`list_processes`、`wait_process` 四个观察工具。 |
-| `src/mini_agent/state.py` | 把状态、输出位置和一次性退出事实写入可快照的 State，并在自然非零退出时建立失败事实。 |
-| `src/mini_agent/agent.py` | 按工具调用顺序提交观察结果；等待超时后进入 `awaiting_process`，把任务交回 CLI。 |
-| `src/mini_agent/trace.py` | 只读检查进程启动、退出、失败和 generation 之间的引用。 |
+| `src/mini_agent/processes.py` | Adds per-stream read cursors, UTF-8 fragment reads, and bounded waits on top of the v0.26 byte ring. |
+| `src/mini_agent/tools/process.py` | Releases four observation tools: `get_process`, `read_process`, `list_processes`, and `wait_process`. |
+| `src/mini_agent/state.py` | Writes status, output positions, and one-time exit facts into snapshottable State, and creates a failure fact on a natural nonzero exit. |
+| `src/mini_agent/agent.py` | Commits observation results in tool call order; after a wait timeout, enters `awaiting_process` and hands the task back to the CLI. |
+| `src/mini_agent/trace.py` | Checks, read-only, the references between process start, exit, failure, and generation. |
 
-## 版本变更定位
+## Version Change Map
 
-图例：`[旧]` 上一版已有，`[+]` 本版新增，`[~]` 本版修改，`[C]` 主要消费者，`[B]` 本版边界。
+Legend: `[old]` already in the previous version, `[+]` new in this version, `[~]` changed in this version, `[C]` main consumer, `[B]` boundary of this version.
 
-上一版已经在后台收集输出，但模型没有读取入口：
-
-```text
-[旧] start_process
-       -> [C] ProcessManager: Popen + stdout/stderr 字节环
-       -> role=tool 返回 process_id
-
-[旧] agent_loop 安全点
-       -> State 同步自然退出
-       -> 活动进程仍会阻止错误 done
-[B] 模型只能知道“已经启动”，不能查询状态或读取新增日志
-```
-
-本版把观察工具接到同一条任务归属和工具协议上：
+The previous version already collected output in the background, but the model had no way to read it:
 
 ```text
-[旧] start_process -> [C] ProcessManager 的进程与有界字节环
-                           |
-             [+] get_process / list_processes
-             [+] read_process / wait_process
-                           |
-             [~] agent_loop 按模型顺序执行并逐个回灌 role=tool
-                           +-> read：新增 stdout/stderr + 新位置 + 缺口
-                           +-> wait 超时：still_running
-                                         -> [C] awaiting_process -> CLI
-                           +-> 自然零退出：ProcessEvent(exited)
-                           +-> 自然非零退出：ProcessEvent(failed)
-                                                 -> FailureEvent
-                           -> 后继 generation -> 独立 verification
-[C] State 保存可解释的位置和生命周期事实；Trace 只读检查这些事实
-[B] 本版不提供终止、kill、stdin、PTY 或任意 PID 操作
+[old] start_process
+       -> [C] ProcessManager: Popen + stdout/stderr byte rings
+       -> role=tool returns process_id
+
+[old] agent_loop safe points
+       -> State syncs natural exits
+       -> active processes still prevent a wrong done
+[B] the model can only know "it started", and cannot query status or read new logs
 ```
 
-观察工具返回的内容会先形成完整的 `role=tool` 消息，再进入下一次 LLM 请求。特别是 `wait_process` 超时，虽然任务会交回 CLI，但对应的工具结果仍然必须先回灌；否则下一次上下文会出现没有结果的工具调用。
+This version connects the observation tools to the same task ownership and tool protocol:
 
-## 关键流程：四个工具各回答什么
+```text
+[old] start_process -> [C] ProcessManager processes and bounded byte rings
+                            |
+              [+] get_process / list_processes
+              [+] read_process / wait_process
+                            |
+              [~] agent_loop runs them in model order and feeds back role=tool one by one
+                            +-> read: new stdout/stderr + new positions + gaps
+                            +-> wait timeout: still_running
+                                          -> [C] awaiting_process -> CLI
+                            +-> natural zero exit: ProcessEvent(exited)
+                            +-> natural nonzero exit: ProcessEvent(failed)
+                                                  -> FailureEvent
+                            -> successor generation -> independent verification
+[C] State stores explainable positions and lifecycle facts; Trace checks these facts read-only
+[B] this version provides no termination, kill, stdin, PTY, or arbitrary PID operations
+```
 
-可以把四个工具看成四种不同的问题，而不是四个相似的查询接口：
+The content returned by an observation tool first forms a complete `role=tool` message before the next LLM request. In particular, when `wait_process` times out, even though the task is handed back to the CLI, the matching tool result must still be fed back first; otherwise the next context would contain a tool call without a result.
 
-| 工具 | 它回答的问题 | 是否消费日志 |
+## Key Flow: What Each of the Four Tools Answers
+
+Think of the four tools as four different questions, not four similar query interfaces:
+
+| Tool | The question it answers | Consumes logs? |
 | --- | --- | --- |
-| `get_process(process_id)` | 进程现在是什么状态？退出码是多少？累计输出到哪个字节位置？ | 否 |
-| `list_processes()` | 当前任务登记了哪些进程？哪些仍在运行？ | 否 |
-| `read_process(process_id)` | 自上次读取后，stdout/stderr 新增了什么？ | 是，推进两个读取游标 |
-| `wait_process(process_id)` | 在有限时间内是否有新输出，或进程是否退出？ | 否 |
+| `get_process(process_id)` | What state is the process in now? What is its exit code? Up to which byte position has output accumulated? | No |
+| `list_processes()` | Which processes has the current task registered? Which are still running? | No |
+| `read_process(process_id)` | What new stdout/stderr has appeared since the last read? | Yes, advances both read cursors |
+| `wait_process(process_id)` | Within a bounded time, is there new output, or did the process exit? | No |
 
-`process_id` 是 Runtime 给当前任务分配的标识。它和操作系统的 PID 不同：PID 只在启动结果中用于诊断显示，观察工具不会让模型拿一个任意 PID 去查询系统上的其他进程。未知、过期或跨任务的 `process_id` 会得到 `unknown_process_id`，不会替模型越过任务归属边界。
+The `process_id` is an identifier the Runtime allocates for the current task. It is different from the operating system PID: the PID appears in the start result only for diagnostic display, and the observation tools never let the model use an arbitrary PID to query other processes on the system. An unknown, expired, or cross-task `process_id` gets `unknown_process_id`, and the model is not allowed past the task ownership boundary.
 
-典型的观察顺序是：先 `start_process` 拿到 `process_id`，再用 `wait_process` 等待 `ready`，然后用 `read_process` 读取响应，最后用 `get_process` 确认状态和退出码。若已经知道输出马上到达，也可以直接读取；`wait_process` 只是减少“没有新事实时不断轮询”的成本。
+A typical observation order: first `start_process` to get a `process_id`, then `wait_process` to wait for `ready`, then `read_process` to read the response, and finally `get_process` to confirm the status and exit code. If you already know output is about to arrive, you can also read directly; `wait_process` only reduces the cost of "polling over and over when there are no new facts".
 
-## 核心概念一：读取游标让日志只出现一次
+## Core Concept 1: Read Cursors Make Logs Appear Only Once
 
-### 要解决的问题
+### The problem to solve
 
-stdout 和 stderr 是两个独立的字节流。后台线程已经把它们放进内存缓冲，但 Agent 需要一个规则知道“哪些字节已经交付过”。如果每次从 0 开始读取，旧日志会在每个工具回合重复出现；如果只看当前缓冲长度，缓冲淘汰后又无法知道中间是否丢过内容。
+stdout and stderr are two independent byte streams. The background threads already put them into in-memory buffers, but the Agent needs a rule to know "which bytes have already been delivered". If every read starts from 0, old logs appear again in every tool round; if only the current buffer length is used, after buffer eviction there is no way to know whether content was lost in between.
 
-### 直观解释
+### Intuitive explanation
 
-每条流都有一个绝对字节位置，表示“上一次成功交给模型之后，下一次从哪里继续”。例如 stdout 依次产生：
+Each stream has an absolute byte position meaning "after the last successful delivery to the model, where the next read continues from". For example, stdout produces:
 
 ```text
-ready\n       6 个 UTF-8 字节
+ready\n       6 UTF-8 bytes
 ```
 
-第一次读取返回 `ready\n`，并把 stdout 游标推进到 6。第二次读取如果没有新字节，就返回空的 `stdout`，游标仍然是 6。stderr 有自己的游标，所以 stderr 何时到达不会改变 stdout 的位置。
+The first read returns `ready\n` and advances the stdout cursor to 6. If there are no new bytes, the second read returns an empty `stdout`, and the cursor is still 6. stderr has its own cursor, so when stderr output arrives does not change the stdout position.
 
-下面是实际协议的一个最小形状。字段名比示例内容更重要：正文是本次新增片段，`next_*_offset` 是下一次读取的起点。
+Below is a minimal shape of the actual protocol. The field names matter more than the example content: the body is the newly added fragment, and `next_*_offset` is where the next read starts.
 
 ```json
 {
@@ -146,12 +146,12 @@ ready\n       6 个 UTF-8 字节
 }
 ```
 
-### 代码中真正改变游标的位置
+### Where the code actually changes the cursor
 
-实现先从 Manager 的游标计算片段，组装出结果，确认结果可以返回后才写回游标。下面省略了 JSON 预算和 stdout/stderr 分配，只保留这条顺序；顺序保证了“交付过的内容不会再次交付”。
+The implementation first computes the fragments from the Manager's cursors, assembles the result, and writes the cursors back only after confirming the result can be returned. The code below omits the JSON budget and the stdout/stderr split and keeps only this order; the order guarantees that "content already delivered is never delivered again".
 
 ```python
-# v0.27 ProcessManager.read_process 的关键顺序
+# Key order in v0.27 ProcessManager.read_process
 stdout, out_next, out_gap, out_lost, _ = self._stream_fragment(
     managed.stdout_ring, managed.stdout_cursor, ...
 )
@@ -170,37 +170,37 @@ managed.stderr_cursor = err_next
 return result
 ```
 
-这里的游标是**字节**位置，不是 Python 字符串下标。一个中文字符通常占多个 UTF-8 字节，后台线程可能先收到它的一部分。实现使用增量解码器：未收齐的尾部暂时不推进游标，下一次读取会从同一个字节继续；进程已经结束时，剩余非法或不完整字节才用替代字符交付。这样既不会重复中文字符，也不会把半个字符交给模型。
+The cursor here is a **byte** position, not a Python string index. One CJK character usually takes several UTF-8 bytes, and the background thread may receive only part of it first. The implementation uses an incremental decoder: an incomplete tail does not advance the cursor for now, and the next read continues from the same byte; only after the process has ended are remaining invalid or incomplete bytes delivered with replacement characters. This way characters are neither repeated nor delivered half to the model.
 
-### 读得太晚时为什么要报告缺口
+### Why reading too late must report a gap
 
-每条流只保留最近 64 KiB。假设游标还在 0，stdout 已经产生了 64 KiB 以上内容，最早的字节被环形缓冲淘汰；这时下一次读取只能从当前缓冲的起点开始。结果会把 `stdout_output_gap` 设为 `true`，并在 `stdout_lost_bytes` 中报告估计丢失的字节数。stderr 也有对应字段，`output_gap` 是两条流的汇总标记。
+Each stream keeps only the most recent 64 KiB. Suppose the cursor is still at 0 and stdout has already produced more than 64 KiB, so the earliest bytes were evicted by the ring buffer; the next read can then only start from the current start of the buffer. The result sets `stdout_output_gap` to `true` and reports the estimated number of lost bytes in `stdout_lost_bytes`. stderr has matching fields, and `output_gap` is the combined flag for both streams.
 
-缺口不是普通的空输出。空输出表示“当前没有尚未交付的新内容”；缺口表示“旧内容已经无法恢复”。Agent 看到缺口后可以把后续日志当作诊断线索，但不能声称自己看到了完整历史。这个取舍让内存有上限，也让信息损失可见。
+A gap is not ordinary empty output. Empty output means "there is currently no undelivered new content"; a gap means "old content can no longer be recovered". After the Agent sees a gap, it can treat later logs as diagnostic clues but cannot claim it saw the complete history. This trade-off keeps memory bounded and makes information loss visible.
 
-`max_chars` 默认是 2000，允许范围是 1–4000；两个流共享结果预算，完整 JSON 结果最多 8000 个字符。限制的是一次交给模型的结果，不是后台收集线程的总写入量。
+`max_chars` defaults to 2000 with an allowed range of 1–4000; the two streams share the result budget, and the full JSON result is at most 8000 characters. It limits the result handed to the model at one time, not the total amount the background collector threads write.
 
-## 核心概念二：观察状态与交付日志是两件事
+## Core Concept 2: Observing Status and Delivering Logs Are Two Different Things
 
-`get_process` 不消费日志，因此适合回答“是否已经退出”和“退出码是多少”；`read_process` 会推进游标，因此适合回答“上次读取以后发生了什么”。`list_processes` 只返回当前任务的有界元数据，不包含日志正文；记录太多时从较早记录开始省略，并给出 `omitted_count`。把这三者混在一起，会让模型不知道一次查询是否已经改变了后续读取结果。
+`get_process` does not consume logs, so it is suited to answering "has it exited yet" and "what is the exit code"; `read_process` advances the cursors, so it is suited to answering "what happened since the last read". `list_processes` returns only bounded metadata for the current task, without log bodies; when there are too many records, earlier records are omitted and an `omitted_count` is given. Mixing these three would leave the model unsure whether a query has already changed the result of later reads.
 
-`wait_process` 又比 `get_process` 多一步：它可以在后台线程发现新输出或进程退出时提前返回，但不消费日志。它的返回原因有三种：
+`wait_process` goes one step further than `get_process`: it can return early when a background thread finds new output or the process exits, but it does not consume logs. It returns one of three reasons:
 
 ```text
-reason=output_available  -> 有未读 stdout/stderr，随后调用 read_process
-reason=exited            -> 已确认进程结束，随后调用 read_process/get_process
-reason=still_running      -> 到达等待上限仍无新事实，任务交回 CLI
+reason=output_available  -> there is unread stdout/stderr; call read_process next
+reason=exited            -> the process is confirmed ended; call read_process/get_process next
+reason=still_running      -> the wait limit was reached with no new facts; the task is handed back to the CLI
 ```
 
-默认等待 1000 毫秒，允许范围是 0–30000 毫秒。等待工具必须独占一个工具回合，因为它是一个有时间边界的控制流动作；如果同一轮还包含其他工具调用，Runtime 会为每个 call 回灌拒绝结果，而不会让其中一个调用在不清晰的时间点继续等待。
+The default wait is 1000 milliseconds, with an allowed range of 0–30000 milliseconds. The wait tool must be alone in its tool round, because it is a time-bounded control flow action; if the same round contains other tool calls, the Runtime feeds back a rejection result for every call instead of letting one of them keep waiting at an unclear point in time.
 
-## 核心概念三：没有输出时要等待和交接
+## Core Concept 3: Wait and Hand Off When There Is No Output
 
-### 为什么不能一直问模型
+### Why the model cannot just keep asking
 
-服务器可能 10 分钟都没有新日志，但这不代表任务失败，也不代表任务已经完成。若 Agent 每秒调用一次 LLM 去问“有变化吗”，它会把轮次和上下文预算消耗在重复观察上。反复得到相同状态或空日志也不算新的进展。
+A server may produce no new logs for 10 minutes, but that does not mean the task failed or that it is done. If the Agent called the LLM every second to ask "anything changed?", it would spend rounds and context budget on repeated observation. Getting the same status or empty logs again and again does not count as new progress either.
 
-`wait_process` 因此只占用一个有上限的工具调用。若超时返回：
+So `wait_process` takes only one bounded tool call. If it returns on timeout:
 
 ```json
 {
@@ -213,36 +213,36 @@ reason=still_running      -> 到达等待上限仍无新事实，任务交回 CL
 }
 ```
 
-Agent 会先把这一条结果写进 history，然后进入 `awaiting_process`。这是一个“等用户下一次输入再继续”的非终态，意思是任务还没有完成，后台进程也仍然属于当前任务；它不是 `done`、不是 `blocked`，也不是进程失败。用户继续输入时，CLI 先同步真实进程状态，再恢复原任务，避免模型看到过期的 `running`。
+The Agent first writes this result into history, then enters `awaiting_process`. This is a non-terminal state meaning "continue after the user's next input": the task is not done, and the background process still belongs to the current task; it is not `done`, not `blocked`, and not a process failure. When the user keeps typing, the CLI first syncs the real process state, then resumes the original task, so the model never sees a stale `running`.
 
-如果模型没有调用工具就直接回复文本，而此时仍有活动进程，Runtime 也会走同一类交接。这条护栏不能由模型的一句“进程还在运行”来伪造，必须由真实的 Manager 和 State 共同确认。
+If the model replies with text directly without calling a tool while there are still active processes, the Runtime takes the same kind of handoff. This guard cannot be forged by the model saying "the process is still running"; it must be confirmed by the real Manager and State together.
 
-## 实现拆解：退出是前台提交的生命周期事实
+## Implementation Breakdown: An Exit Is a Lifecycle Fact Committed in the Foreground
 
-### 收集线程只收集，Runtime 才改变 State
+### Collector threads only collect; only the Runtime changes State
 
-Manager 持有 `Popen`、进程组、收集线程、字节环和读取游标；这些是当前 CLI 进程内的运行资源，不能放进快照。后台线程只负责排空 stdout/stderr 和通知等待者。它不直接创建 `ProcessEvent`、`FailureEvent` 或 generation。
+The Manager holds the `Popen`, process group, collector threads, byte rings, and read cursors; these are runtime resources inside the current CLI process and cannot go into snapshots. The background threads are only responsible for draining stdout/stderr and notifying waiters. They do not create `ProcessEvent`, `FailureEvent`, or generations directly.
 
-前台 Runtime 在几个安全点调用 `sync_processes()`：
+The foreground Runtime calls `sync_processes()` at several safe points:
 
 ```text
-LLM 请求前
-工具结果全部回灌后
-无 tool_calls 的完成判断前
-用户从 awaiting_process 继续任务时
+before an LLM request
+after all tool results are fed back
+before the completion decision without tool_calls
+when the user continues the task from awaiting_process
 ```
 
-这保证 State 看到的是一个完整、可解释的观察。同步会更新 stdout/stderr 的累计位置；只有首次确认稳定退出时才追加最终 `ProcessEvent`。重复 `get_process`、重复 `read_process` 或重复同步不会复制退出事件。
+This guarantees that what State sees is one complete, explainable observation. Sync updates the cumulative stdout/stderr positions; only the first confirmation of a stable exit appends the final `ProcessEvent`. Repeated `get_process`, repeated `read_process`, or repeated syncs never duplicate the exit event.
 
-### 什么叫“确认稳定退出”
+### What "confirming a stable exit" means
 
-Manager 不把 `Popen.poll()` 立刻返回的退出码当作完整退出。它还要确认 POSIX 下受管进程组已经消失，并确认 stdout、stderr 收集线程都读到 EOF。原因是外层 shell 可能先退出，而它的后代仍在运行或仍持有管道。只确认直接子进程会让 Agent 过早以为资源已经收口。
+The Manager does not treat the exit code that `Popen.poll()` returns immediately as a complete exit. It also confirms that, on POSIX, the managed process group is gone, and that both the stdout and stderr collector threads have reached EOF. The reason is that the outer shell may exit first while its descendants are still running or still hold the pipes. Confirming only the direct child would make the Agent believe too early that the resources are finished.
 
-确认后，零退出码形成 `ProcessEvent(kind="exited")`；非零退出码形成 `ProcessEvent(kind="failed")`，并额外形成一个 `FailureEvent`。非零退出不能靠解析日志文字推断，必须来自真实的退出码。
+After confirmation, a zero exit code forms `ProcessEvent(kind="exited")`; a nonzero exit code forms `ProcessEvent(kind="failed")` plus a `FailureEvent`. A nonzero exit cannot be inferred by parsing log text; it must come from the real exit code.
 
-### 为什么自然失败要连接启动事实
+### Why a natural failure links to the start fact
 
-`FailureEvent` 会引用启动 attempt（一次已经进入执行记录的工具尝试）和产生它的进程事件。可以把因果关系读成：
+The `FailureEvent` references the start attempt (a tool attempt already recorded in the execution records) and the process event that produced it. The causal relationship reads like this:
 
 ```text
 start_process attempt
@@ -252,61 +252,61 @@ ProcessEvent(kind=failed, exit_code=7)
 FailureEvent(caused_by_process_event_id=...)
 ```
 
-这让 Repair Loop（失败后的诊断、恢复和验证循环）知道失败来自哪一个进程，而不必把一次观察调用伪装成失败的执行调用。多次同步只会找到同一个 `terminal_event_id`，所以同一退出只产生一次失败事实。
+This lets the Repair Loop (the diagnosis, recovery, and verification loop after a failure) know which process the failure came from, without disguising an observation call as the failed execution call. Repeated syncs only find the same `terminal_event_id`, so one exit produces only one failure fact.
 
-### 退出为什么会开启新的 generation
+### Why an exit opens a new generation
 
-`generation` 是验证代次：它标记一组验证证据是在环境经历哪些副作用之前还是之后获得的。后台进程即使不修改仓库，也可能写文件、生成缓存、占用端口或改变外部服务状态。进程退出时，Runtime 会清除当前验证证据、开启由退出事件关联的后继 generation，并设置 `verification_required`。
+A `generation` is a verification generation: it marks whether a set of verification evidence was obtained before or after the environment went through certain side effects. Even if a background process does not change the repository, it may write files, create caches, hold ports, or change the state of external services. When the process exits, the Runtime clears the current verification evidence, opens a successor generation linked to the exit event, and sets `verification_required`.
 
-因此，“启动成功”“读到了 `ready`”“进程以 0 退出”都不是最终 verification。退出后仍需在新的 generation 独立调用 `run_shell(purpose="verification")`；若是非零退出，还要先进入现有诊断或重规划流程。若已有另一个活动失败或正在严格验证，进程退出会保留双方事实，并在无法安全判断时阻塞任务，而不是覆盖原来的修复义务。
+So "started successfully", "read `ready`", and "the process exited with 0" are not final verification. After the exit, `run_shell(purpose="verification")` must still be called independently in the new generation; for a nonzero exit, the existing diagnosis or replanning flow comes first. If there is already another active failure or a strict verification in progress, the process exit keeps both facts and blocks the task when it cannot judge safely, instead of overwriting the original repair obligation.
 
-## 运行与观察
+## Run and Observe
 
-下面的命令适用于 Bash/zsh，用于运行本版与后台观察直接相关的测试场景：
+The command below is for Bash/zsh and runs the test scenarios of this version that relate directly to background observation:
 
 ```bash
 PYTHONPATH=src python -m pytest -q tests/test_process_management_v027.py
 ```
 
-观察测试结果时，不要只看“全部通过”。把现象和概念对应起来：
+When you look at the test results, do not look only at "all passed". Map each observation to a concept:
 
-| 现象 | 它证明了什么 |
+| Observation | What it proves |
 | --- | --- |
-| UTF-8 字符跨收集块后只返回一次 | 游标按字节保存，增量解码不会重复或交付半个字符。 |
-| 两次 `read_process` 的第二次正文为空 | 游标在成功返回后推进，读取是增量的。 |
-| 缓冲淘汰后出现 `output_gap` 和丢失字节数 | 有界内存不会掩盖日志缺失。 |
-| `wait_process` 返回 `output_available` 后 `read_process` 仍能读到日志 | 等待只观察，不消费游标。 |
-| 非零退出只产生一个带因果引用的失败事实 | 前台同步是幂等的，失败来自真实退出事件。 |
-| `wait_process` 超时后 LLM 只被调用一次，状态为 `awaiting_process` | 无输出会交回 CLI，不会自动轮询消耗回合。 |
+| A UTF-8 character split across collected chunks is returned only once | Cursors are kept in bytes, and incremental decoding neither repeats nor delivers half a character. |
+| The second of two `read_process` calls has an empty body | The cursor advances after a successful return, so reads are incremental. |
+| After buffer eviction, `output_gap` and the lost byte count appear | Bounded memory does not hide missing logs. |
+| After `wait_process` returns `output_available`, `read_process` can still read the logs | Waiting only observes and does not consume the cursor. |
+| A nonzero exit produces only one failure fact with a causal reference | Foreground sync is idempotent, and the failure comes from a real exit event. |
+| After a `wait_process` timeout, the LLM is called only once and the state is `awaiting_process` | No output hands back to the CLI instead of polling automatically and consuming rounds. |
 
-也可以在当前代码分支让 Agent 启动一个会先打印 `ready`、随后退出的短命令，然后依次调用 `get_process`、`read_process` 和 `wait_process`。如果读取发生在进程退出之后，仍应能看到尾部输出；如果等待没有新输出，应看到 `still_running`，而不是把空结果当成失败。
+On the current code branch, you can also let the Agent start a short command that first prints `ready` and then exits, then call `get_process`, `read_process`, and `wait_process` in turn. If the read happens after the process exits, you should still see the tail of the output; if the wait has no new output, you should see `still_running` instead of an empty result being treated as a failure.
 
-## 为什么这样设计
+## Why This Design
 
-把读取游标放在拥有句柄的 Manager，是为了让同一任务内的多次观察共享一个确定的位置；把日志正文留在本次工具结果，是为了避免 State 和 Trace 无限增长。代价是 CLI 进程结束后不能重新连接旧的 `Popen` 和管道，Trace 也只能回放已经提交的结构化事实。
+The read cursor lives in the Manager that owns the handles so that multiple observations within one task share one deterministic position; the log body stays in this tool result so that State and Trace do not grow without limit. The cost is that after the CLI process ends, the old `Popen` and pipes cannot be reconnected, and Trace can only replay structured facts that have already been committed.
 
-stdout 和 stderr 分开保存，能分别报告位置和缺口，代价是本课不承诺两条流在终端上的精确混排顺序。想要终端式交互的程序还需要 stdin、回显和 PTY 语义，这不属于本版。
+Storing stdout and stderr separately lets each report its own position and gap; the cost is that this lesson makes no promise about the exact interleaving of the two streams on a terminal. Programs that want terminal-style interaction also need stdin, echo, and PTY semantics, which are not part of this version.
 
-等待采用“有上限的工具调用 + CLI 交接”，是因为没有输出不等于没有未来，也不值得让一次 LLM 回合无限占用。代价是用户可能需要再次输入才能恢复观察。把退出事实放在前台同步点提交，则能同时满足工具协议完整、State 可快照、Trace 只读和退出事件幂等这几个要求。
+Waiting uses "a bounded tool call + CLI handoff" because no output does not mean no future, and it is not worth letting one LLM round be held indefinitely. The cost is that the user may need to type again to resume observation. Committing exit facts at foreground sync points satisfies several requirements at once: a complete tool protocol, snapshottable State, read-only Trace, and idempotent exit events.
 
-## 设计边界
+## Design Boundaries
 
-- 观察工具只能访问当前任务登记的 `process_id`；不能查询任意 PID，也不能跨 CLI 会话重连。
-- `get_process`、`list_processes`、`read_process` 和 `wait_process` 不会终止进程，不会推进计划步骤，也不会产生 verification evidence。
-- 每条输出流最多保留 64 KiB；`output_gap` 出现后不能恢复被淘汰的历史。
-- `read_process` 的 `max_chars` 默认 2000，范围 1–4000；`wait_process` 默认 1000 毫秒，范围 0–30000 毫秒。
-- 观察工具结果不会代替 `role=tool` 回灌；同轮多个观察调用按模型顺序提交，`wait_process` 必须独占回合。
-- 自然退出会使旧验证失效；活动进程、待验证 generation 或已有修复义务仍然会阻止任务错误完成。
-- 本课不提供 `terminate_process`、`kill_process`、`write_process` 或 PTY；主动控制见下一课，管道 stdin 见 `v0.29`。
+- The observation tools can only access `process_id`s registered by the current task; they cannot query arbitrary PIDs or reconnect across CLI sessions.
+- `get_process`, `list_processes`, `read_process`, and `wait_process` do not terminate processes, do not advance plan steps, and produce no verification evidence.
+- Each output stream keeps at most 64 KiB; after `output_gap` appears, evicted history cannot be recovered.
+- `read_process`'s `max_chars` defaults to 2000 with a range of 1–4000; `wait_process` defaults to 1000 milliseconds with a range of 0–30000 milliseconds.
+- Observation tool results do not replace `role=tool` feedback; multiple observation calls in one round commit in model order, and `wait_process` must be alone in its round.
+- A natural exit invalidates old verification; active processes, a generation awaiting verification, or an existing repair obligation still prevent the task from finishing wrongly.
+- This lesson provides no `terminate_process`, `kill_process`, `write_process`, or PTY; active control is in the next lesson, and pipe stdin is in `v0.29`.
 
-## 本版特性、下一课与代码索引
+## Version Features, Next Lesson, and Code Index
 
-本版新增四个当前任务内的只读观察工具、逐流增量输出、字节游标、缺口报告、自然退出事实、非零退出的 `FailureEvent` 和有界等待交接。下一课会在这个观察结果之上增加受权限保护的正常终止与强制结束；本课不把“观察到进程”当成“可以控制进程”。
+This version adds four read-only observation tools within the current task, per-stream incremental output, byte cursors, gap reports, natural exit facts, a `FailureEvent` for nonzero exits, and a bounded wait handoff. The next lesson builds permission-protected normal termination and forced kill on top of these observation results; this lesson does not treat "observing a process" as "being allowed to control it".
 
-固定源码入口：
+Pinned source entries:
 
-- [Manager 的读取游标与等待](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.27/src/mini_agent/processes.py)
-- [四个观察工具的协议](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.27/src/mini_agent/tools/process.py)
-- [退出失败事实与前台同步](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.27/src/mini_agent/state.py)
-- [agent loop 的串行观察和交接](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.27/src/mini_agent/agent.py)
-- [Trace 的跨 generation 因果校验](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.27/src/mini_agent/trace.py)
+- [The Manager's read cursors and waits](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.27/src/mini_agent/processes.py)
+- [The protocol of the four observation tools](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.27/src/mini_agent/tools/process.py)
+- [Exit failure facts and foreground sync](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.27/src/mini_agent/state.py)
+- [Serial observation and handoff in the agent loop](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.27/src/mini_agent/agent.py)
+- [Trace's cross-generation causal checks](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.27/src/mini_agent/trace.py)

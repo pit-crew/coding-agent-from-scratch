@@ -1,13 +1,13 @@
-# #09 输入低估的离线修复（2026-09-30）
+# Offline Fix of the #09 Input Underestimate (2026-09-30)
 
-#09 唯一成功返回的请求：旧本地估算 2,918、冷启动预留 6,092、provider 实报输入 13,748；任务总余额仍有 50,188。原请求正文没有归档，故不能从历史证据量化各类漏项，也不能推断 provider 是否添加隐藏上下文。
+The only successfully returned request of #09: old local estimate 2,918, cold-start reservation 6,092, provider-reported input 13,748; the task's total balance still had 50,188. The original request body was not archived, so the kinds of missing items cannot be quantified from historical evidence, and whether the provider added hidden context cannot be inferred.
 
-本轮只修改本地准入算法与回归，不发送模型探针、不运行 21 槽位 live、不修改原始证据。`src/mini_agent/budget.py` 增加 OpenAI Chat 请求代理估算：依照实际 request JSON 形状序列化消息、角色、工具 schema、键和标点，计算 UTF-8 字节数并取 `ceil(bytes × 1.1 ÷ 3)`。`src/mini_agent/runtime.py` 使用这个数进行主请求、摘要和最终回复预留，并将估算器版本加入校准 key，防止旧任务中按不同口径得到的样本混用；已发生的用量与 pending 账本仍按原值结算。非 OpenAI Chat 绑定继续采用原路径。
+This round only changes the local admission algorithm and regressions; it sends no model probes, runs no 21-slot live, and changes no raw evidence. `src/mini_agent/budget.py` adds an OpenAI Chat request proxy estimate: following the actual request JSON shape, it serializes messages, roles, tool schemas, keys, and punctuation, computes the UTF-8 byte count, and takes `ceil(bytes × 1.1 ÷ 3)`. `src/mini_agent/runtime.py` uses this number for main request, summary, and final reply reservations, and adds the estimator version to the calibration key, so samples from old tasks measured under different rules are not mixed; incurred usage and the pending ledger are still settled at their original values. Non-OpenAI Chat bindings keep the original path.
 
-`src/mini_agent/context.py` 在准入容量不足时，先裁剪历史工具结果或整轮省略，再按完整请求代理值复核。受保护指令、结构化 State 与每条用户纠正都保留；裁剪仍按完整工具调用和结果回合进行。受保护部分本身放不下时请求前拒绝，不删除约束或绕过权限、Plan 与验证。诊断保留非正文估算和准入结果。
+When admission capacity is insufficient, `src/mini_agent/context.py` first trims historical tool results or omits whole rounds, then rechecks against the full request proxy value. Protected instructions, the structured State, and every user correction are kept; trimming still works on complete tool call and result rounds. When the protected part itself does not fit, the request is refused before sending, without deleting constraints or bypassing permissions, Plan, and verification. Diagnostics keep body-free estimates and admission results.
 
-新增离线回归覆盖与 #09 量级相近的中英文消息及工具 schema **形状代理**、真实 OpenAI Chat 请求字节序列化、旧/新校准键隔离、用户纠正与工具协议完整性，以及长历史下 19k/27k 余额的计划推进、验证与最终回复。形状代理不声称重建了 #09 的原始请求，也不声称代理值等于真实 token 数。
+New offline regressions cover a **shape proxy** of mixed-language messages and tool schemas of a magnitude similar to #09, real OpenAI Chat request byte serialization, old/new calibration key isolation, user correction and tool protocol integrity, and plan progress, verification, and final reply with 19k/27k balances under long histories. The shape proxy does not claim to rebuild the original #09 request, nor that the proxy value equals the real token count.
 
-费用依据和 binding 指纹仍未解决；当前候选与 #09 不可直接比较。未来付费探针须另行满足 binding 选择、明确 USD 总上限及可执行费率或 provider 硬账单限额。新候选运行时指纹已变化，suite 1.5 的旧审阅清单不能直接用于新 live；历史批次和恢复分母不追溯改变。
+The cost basis and binding fingerprint are still unresolved; the current candidate cannot be compared directly with #09. Future paid probes must separately meet binding selection, an explicit total USD cap, and an enforceable rate or provider hard billing limit. The new candidate's runtime fingerprint has changed, so the old suite 1.5 review manifest cannot be used directly for a new live; historical batches and recovery denominators are not changed retroactively.
 
-离线验收的具体计数及运行目录见 [`estimator-offline-validation.json`](estimator-offline-validation.json)。
+For the specific offline acceptance counts and run directories, see [`estimator-offline-validation.json`](estimator-offline-validation.json).

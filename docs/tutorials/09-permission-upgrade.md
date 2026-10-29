@@ -1,44 +1,44 @@
-# 第 9 课：权限系统升级
+# Lesson 9: Permission system upgrade
 
-> 版本 v0.09 | [上一课](08-file-operations.md) | [下一课](10-shell-execution.md)
+> Version v0.09 | [Previous lesson](08-file-operations.md) | [Next lesson](10-shell-execution.md)
 
-> 代码快照：`v0.09` · 相邻差异：`v0.08..v0.09` · 命令环境：Bash/zsh
+> Code snapshot: `v0.09` · Adjacent diff: `v0.08..v0.09` · Shell: Bash/zsh
 >
-> 运行要求：Python 3.10+。该 tag 的 `pyproject.toml` 仍标 3.9，但源码已使用 3.10 语法。
+> Requirements: Python 3.10+. The `pyproject.toml` at this tag still says 3.9, but the source already uses 3.10 syntax.
 
-## 本课目标
+## Lesson Goals
 
-上一版只能按工具名决定放行、询问还是拒绝。同一个工具面对不同文件或命令时，往往只能采用同一种处理方式，权限粒度太粗。
+The previous version could only decide by tool name whether to allow, ask, or deny. When the same tool faced different files or commands, it usually had to treat them all the same way; the permission granularity was too coarse.
 
-这一课把权限升级为二维 `(tool_name, pattern) -> action`：除了工具名，还会检查文件路径或命令模式。这样可以为 v0.10 的 `run_shell` 做准备，让安全命令自动放行，危险命令继续询问。
+This lesson upgrades permissions to a two-dimensional `(tool_name, pattern) -> action`: besides the tool name, it also checks the file path or command pattern. This prepares for `run_shell` in v0.10, so that safe commands are allowed automatically and dangerous commands still ask.
 
-## 前置
+## Prerequisites
 
-- 已读上一课文档
-- `git checkout v0.09` 切到本版代码（或直接看 `src/mini_agent/permission.py`）
+- Read the previous lesson
+- `git checkout v0.09` to switch to this version's code (or look directly at `src/mini_agent/permission.py`)
 
-## 新增/改动了什么
+## What Was Added or Changed
 
 ```bash
 git diff --stat v0.08..v0.09
 ```
 
-| 文件 | 改动 |
+| File | Change |
 |------|------|
-| `src/mini_agent/permission.py` | 重写：Rule 三元组 + fnmatch + findLast + approve(pattern) + _extract_pattern |
-| `tests/test_tools.py` | 新增 4 个二维权限测试 |
+| `src/mini_agent/permission.py` | Rewritten: Rule triple + fnmatch + findLast + approve(pattern) + _extract_pattern |
+| `tests/test_tools.py` | Adds 4 two-dimensional permission tests |
 
-> `tools/base.py` 不改——`PermissionGate.guard()` 签名不变，内部从 args 提取 pattern。
+> `tools/base.py` is unchanged — the signature of `PermissionGate.guard()` stays the same, and it extracts the pattern from args internally.
 
-## 核心概念
+## Core Concepts
 
-### 1. Rule 三元组：从嵌套 dict 到扁平 list
+### 1. The Rule triple: from a nested dict to a flat list
 
-先看上一版的限制：v0.04 的规则是嵌套 dict：`{"write_file": "ask"}`，只能按工具名控制。它无法表达“只允许写某类文件”这样的要求。
+First the limitation of the previous version: v0.04 rules were a nested dict, `{"write_file": "ask"}`, which can only control by tool name. It cannot express a requirement such as "only allow writing certain kinds of files".
 
-v0.09 把规则保存为扁平列表。每条规则都记录工具、匹配模式和动作，下面这三个字段合在一起就是一个 Rule（三元组）：
+v0.09 stores rules as a flat list. Each rule records the tool, the matching pattern, and the action; these three fields together are a Rule (triple).
 
-v0.09 内部存扁平 `list[dict]`，每条规则是三元组：
+Internally, v0.09 stores a flat `list[dict]`, and each rule is a triple:
 
 ```python
 [
@@ -48,19 +48,19 @@ v0.09 内部存扁平 `list[dict]`，每条规则是三元组：
 ]
 ```
 
-构造函数 `_from_config()` 仍兼容两种配置格式，因此旧配置不需要立刻改写：
+The constructor `_from_config()` still accepts two configuration formats, so old configurations do not need to be rewritten right away:
 
 ```python
-# 简单格式（一维兼容，pattern 默认 "*"）
+# Simple format (one-dimensional compatible, pattern defaults to "*")
 PermissionPolicy({"write_file": "ask"})
 
-# 复杂格式（二维，按 pattern 细控）
+# Complex format (two-dimensional, fine control by pattern)
 PermissionPolicy({"read_file": {"*": "allow", "*.env": "deny"}})
 ```
 
-### 2. check()：fnmatch + findLast
+### 2. check(): fnmatch + findLast
 
-有了多条规则之后，运行时必须回答“当前调用应该执行哪一条规则”。`check()` 会把工具名和模式分别拿去匹配，并从后往前查找。
+With several rules, the runtime must answer "which rule applies to the current call". `check()` matches the tool name and the pattern separately, searching from the end backwards.
 
 ```python
 def check(self, tool_name: str, pattern: str = "*") -> str:
@@ -68,138 +68,138 @@ def check(self, tool_name: str, pattern: str = "*") -> str:
     for rule in reversed(merged):
         if fnmatch.fnmatch(tool_name, rule["permission"]) and fnmatch.fnmatch(pattern, rule["pattern"]):
             return rule["action"]
-    return ASK  # 未匹配默认 ask
+    return ASK  # No match defaults to ask
 ```
 
-**关键设计**：
-- `fnmatch.fnmatch()` 做 wildcard 匹配（通配符匹配）：`*` 匹配任意字符，`?` 匹配单字符。
-- `reversed()` 从后往前找，体现 `findLast` 语义，也就是后出现的规则优先级更高。
-- 如果没有任何规则匹配，结果一定是 `ask`，由用户确认后才会继续。
+**Key design**:
+- `fnmatch.fnmatch()` does wildcard matching: `*` matches any characters, and `?` matches a single character.
+- `reversed()` searches from the end backwards, giving `findLast` semantics: rules that appear later have higher priority.
+- If no rule matches, the result is always `ask`, and the call continues only after the user confirms.
 
-**为什么用 findLast？** 运行时批准过的规则会追加到 `self._approved` 末尾。`merged = rules + approved` 后再反向扫描，就会先看到 approved 规则，自然覆盖前面的 `ask`，不需要显式删除旧规则。
+**Why findLast?** Rules approved at runtime are appended to the end of `self._approved`. After `merged = rules + approved`, a reverse scan sees the approved rules first, which naturally override an earlier `ask` without explicitly deleting old rules.
 
-### 3. approve()：存 (tool_name, pattern)
+### 3. approve(): storing (tool_name, pattern)
 
-当用户选择“始终允许”时，系统要记住允许的范围。v0.09 连工具名和模式一起保存，所以一次批准不会意外扩大到所有文件。
+When the user chooses "always allow", the system must remember the scope of what was allowed. v0.09 stores the tool name and the pattern together, so one approval does not accidentally extend to all files.
 
 ```python
-# v0.04：只存工具名
+# v0.04: stores only the tool name
 def approve(self, tool_name: str):
     self._approved.add(tool_name)
 
-# v0.09：存 (tool_name, pattern)
+# v0.09: stores (tool_name, pattern)
 def approve(self, tool_name: str, pattern: str = "*"):
     self._approved.append({
         "permission": tool_name, "pattern": pattern, "action": "allow"
     })
 ```
 
-效果是：用户对 `write_file` + `*.txt` 选 `always` 后，后续写 `.txt` 文件不再询问，但写 `.py` 文件仍然会询问。
+The effect: after the user chooses `always` for `write_file` + `*.txt`, later writes to `.txt` files no longer ask, but writes to `.py` files still ask.
 
-### 4. _extract_pattern()：从 args 提取 pattern
+### 4. _extract_pattern(): extracting the pattern from args
 
-工具调用的参数里没有统一叫作 `pattern` 的字段，因此闸门需要先从参数提取用于匹配的文本：文件工具取路径，shell 工具取完整命令，其他工具使用 `*`。
+Tool call arguments have no common field called `pattern`, so the gate first extracts the text to match from the arguments: file tools use the path, the shell tool uses the full command, and other tools use `*`.
 
 ```python
 @staticmethod
 def _extract_pattern(tool_name: str, args: dict) -> str:
     if tool_name == "run_shell":
-        return args.get("command", "*")  # v0.10 直接用完整命令做 pattern
+        return args.get("command", "*")  # v0.10 uses the full command as the pattern
     if tool_name in ("read_file", "write_file", "edit_file"):
         return args.get("path", "*")
     return "*"
 ```
 
-`PermissionGate.guard()` 调用 `_extract_pattern()`，把得到的 pattern 传给 `check()`。对文件工具，pattern 是文件路径，`fnmatch` 可以用 `*.env` 等模式匹配文件名。
+`PermissionGate.guard()` calls `_extract_pattern()` and passes the resulting pattern to `check()`. For file tools the pattern is the file path, and `fnmatch` can match file names with patterns such as `*.env`.
 
-## 为什么这样设计
+## Why This Design
 
-### 为什么不沿用一维？
+### Why not stay one-dimensional?
 
-一维权限 `tool_name -> action` 无法区分同一工具的不同操作。比如 `run_shell` 执行 `git status`（通常安全）和 `rm -rf /`（危险）时只能共用一个 action。结果要么全部放行，要么全部询问。
+One-dimensional permissions, `tool_name -> action`, cannot tell different operations of the same tool apart. For example, `run_shell` running `git status` (usually safe) and `rm -rf /` (dangerous) would have to share one action. Either everything is allowed or everything asks.
 
-二维权限按命令模式分别处理：`git *` 可以 allow，`rm *` 可以 deny，其他命令保持 ask。
+Two-dimensional permissions handle each command pattern separately: `git *` can be allow, `rm *` can be deny, and other commands stay ask.
 
-### 为什么用 findLast 而非 first？
+### Why findLast instead of first?
 
-OpenCode 的 `evaluate()` 使用 `findLast`，所以后出现的规则优先级更高。运行时追加的 `approved` 规则会自然覆盖前面的 `ask` 规则。
+OpenCode's `evaluate()` uses `findLast`, so rules that appear later have higher priority. `approved` rules appended at runtime naturally override earlier `ask` rules.
 
-如果改用 first，前面的 ask 会挡住 approved，系统就得显式删除旧规则，逻辑更复杂。
+With first, an earlier ask would block the approved rule, and the system would have to delete old rules explicitly, which makes the logic more complex.
 
-### 为什么未匹配默认 ask 而非 allow？
+### Why does no match default to ask instead of allow?
 
-这是安全优先的选择。新工具或没有配置的工具一定要先询问用户，避免危险操作被静默放行。
+This is a safety-first choice. A new tool or an unconfigured tool must ask the user first, so that dangerous operations are not silently allowed.
 
-### 为什么 _extract_pattern 对 run_shell 只返回完整命令？
+### Why does _extract_pattern return only the full command for run_shell?
 
-v0.09 只升级权限框架，还没有实现 `run_shell` 工具。`_extract_pattern()` 先返回完整命令字符串，v0.10 再直接用 fnmatch 通配符（如 `git *`）按命令前缀匹配。这里不做 BashArity 命令泛化，因为 fnmatch 已经够用。
+v0.09 only upgrades the permission framework and does not yet implement the `run_shell` tool. `_extract_pattern()` first returns the full command string, and v0.10 then matches command prefixes directly with fnmatch wildcards (such as `git *`). No BashArity command generalization is done here, because fnmatch is already enough.
 
-### 为什么现有工具行为不变？（二维退化为一维）
+### Why does existing tool behavior stay the same? (two dimensions degrade to one)
 
-升级后，`calculate`/`read_file`/`write_file`/`edit_file`/`list_dir`/`grep` 这 6 个工具的实际权限判定仍与 v0.08 完全一致。这是为了向后兼容，并不代表二维匹配没有生效。原因有二：
+After the upgrade, the actual permission decisions for the 6 tools `calculate`/`read_file`/`write_file`/`edit_file`/`list_dir`/`grep` are exactly the same as in v0.08. This is for backward compatibility; it does not mean two-dimensional matching is inactive. There are two reasons:
 
-**① 规则里 pattern 全是 `*`**
+**① All rule patterns are `*`**
 
-`PERMISSION_RULES`（`permission.py` 的硬编码配置）仍是简单 dict 格式：
+`PERMISSION_RULES` (the hard-coded configuration in `permission.py`) is still in simple dict format:
 
 ```python
 PERMISSION_RULES = {
-    "read_file": ALLOW,   # _from_config 转成 {permission: "read_file", pattern: "*", action: "allow"}
-    "write_file": ASK,    # _from_config 转成 {permission: "write_file", pattern: "*", action: "ask"}
+    "read_file": ALLOW,   # _from_config turns this into {permission: "read_file", pattern: "*", action: "allow"}
+    "write_file": ASK,    # _from_config turns this into {permission: "write_file", pattern: "*", action: "ask"}
     ...
 }
 ```
 
-`_from_config()` 把简单格式 `"write_file": "ask"` 统一补成 `pattern="*"`（见 `permission.py:68`），没有按路径细分的规则条目。
+`_from_config()` fills in `pattern="*"` for the simple format `"write_file": "ask"` (see `permission.py:68`), and there are no rule entries split by path.
 
-**② `fnmatch("*", X)` 恒为 True**
+**② `fnmatch("*", X)` is always True**
 
-`check()` 里对 pattern 做 `fnmatch` 匹配（`permission.py:84`）：
+`check()` matches the pattern with `fnmatch` (`permission.py:84`):
 
-- 对 `calculate`/`list_dir`/`grep`：`_extract_pattern` 返回 `"*"`（`permission.py:147`），规则 pattern 也是 `"*"`，`fnmatch("*", "*")` → True，等价于一维判定。
-- 对 `read_file`/`write_file`/`edit_file`：`_extract_pattern` 返回真实 path（如 `"a.txt"`，`permission.py:145`），但规则 pattern 仍是 `"*"`，`fnmatch("*", "a.txt")` → True，同样等价于一维。
+- For `calculate`/`list_dir`/`grep`: `_extract_pattern` returns `"*"` (`permission.py:147`), the rule pattern is also `"*"`, and `fnmatch("*", "*")` → True, equivalent to the one-dimensional decision.
+- For `read_file`/`write_file`/`edit_file`: `_extract_pattern` returns the real path (such as `"a.txt"`, `permission.py:145`), but the rule pattern is still `"*"`, and `fnmatch("*", "a.txt")` → True, again equivalent to one dimension.
 
-**设计意图**：二维权限主要服务于 v0.10 的 `run_shell`，因为 shell 命令确实需要按模式区分（`git *` allow、`rm *` deny）。v0.09 没有给文件工具预置细粒度规则，仍用 `*` 兜底；如果确实需要按路径限制，可以显式配置：
+**Design intent**: two-dimensional permissions mainly serve `run_shell` in v0.10, because shell commands really need to be distinguished by pattern (`git *` allow, `rm *` deny). v0.09 does not preset fine-grained rules for file tools and still falls back to `*`; if you really need to restrict by path, configure it explicitly:
 
 ```python
 PermissionPolicy({"read_file": {"*": "allow", "*.env": "deny", "*.key": "deny"}})
 ```
 
-**唯一行为差异是 approve 粒度收窄。**
+**The only behavior difference is the narrower approve granularity.**
 
-v0.09 的 `approve()` 存 `(tool_name, pattern)` 而不是只存 `tool_name`（`permission.py:88-95`）。因此对 `a.txt` 选择 `always` 后，写 `b.txt` 仍会询问。免问范围从“整个工具”收窄为“工具加路径模式”，行为更安全。
+v0.09's `approve()` stores `(tool_name, pattern)` instead of only `tool_name` (`permission.py:88-95`). So after you choose `always` for `a.txt`, writing `b.txt` still asks. The no-ask scope narrows from "the whole tool" to "the tool plus a path pattern", which is safer.
 
-如果要让所有 `write_file` 都免问，可以显式配置 `{"write_file": {"*": "allow"}}`，或者在 `always` 时让 pattern 使用 `"*"`。
+To make all `write_file` calls skip the question, configure `{"write_file": {"*": "allow"}}` explicitly, or use `"*"` as the pattern when choosing `always`.
 
-### 借鉴了 OpenCode 什么？去掉了什么？
+### What was borrowed from OpenCode, and what was removed?
 
-借鉴：
-- `evaluate()` 的 `findLast` + `Wildcard.match` + 未匹配默认 ask
-- `fromConfig()` 支持简单+复杂两种格式
-- `approve()` 存 pattern 而非只存工具名
+Borrowed:
+- `evaluate()`'s `findLast` + `Wildcard.match` + no match defaults to ask
+- `fromConfig()` supports both the simple and the complex format
+- `approve()` stores the pattern, not only the tool name
 
-去掉（CLI 同步交互不需要）：
-- 事件总线 `Bus.publish`——`input()` 同步阻塞即可
-- `pending` 待处理队列——无异步 UI
-- 规则持久化到磁盘——保持内存级
-- `CorrectedError`（reject 带说明）——CLI 下难以收集说明
+Removed (not needed for synchronous CLI interaction):
+- The event bus `Bus.publish` — a synchronous blocking `input()` is enough
+- The `pending` queue — there is no asynchronous UI
+- Persisting rules to disk — they stay in memory
+- `CorrectedError` (reject with an explanation) — explanations are hard to collect in a CLI
 
-## 使用指导
+## Usage Guide
 
-### 本版可用的命令
+### Commands available in this version
 
 ```bash
-# 跑测试
+# Run the tests
 PYTHONPATH=src python tests/test_tools.py
 
-# 验证权限系统
+# Verify the permission system
 PYTHONPATH=src python -c "from mini_agent.permission import PermissionPolicy; p = PermissionPolicy({'read_file': {'*': 'allow', '*.env': 'deny'}}); print(p.check('read_file', 'secret.env'))"
-# 期望输出: deny
+# Expected output: deny
 ```
 
-### 本版典型示例
+### Typical examples for this version
 
-**示例 1：按文件名模式控制读权限**
+**Example 1: control read permission by file name pattern**
 
 ```python
 from mini_agent.permission import PermissionPolicy
@@ -210,30 +210,30 @@ policy.check("read_file", "config.env.example") # → allow
 policy.check("read_file", "README.md")         # → allow
 ```
 
-**示例 2：always 存 pattern，同类免问**
+**Example 2: always stores the pattern, so similar calls skip the question**
 
 ```python
 policy = PermissionPolicy({"write_file": "ask"})
 policy.approve("write_file", "*.txt")
-policy.check("write_file", "test.txt")  # → allow（approved 了 *.txt）
-policy.check("write_file", "test.py")   # → ask（未 approved *.py）
+policy.check("write_file", "test.txt")  # → allow (*.txt was approved)
+policy.check("write_file", "test.py")   # → ask (*.py was not approved)
 ```
 
-**示例 3：findLast 优先级**
+**Example 3: findLast priority**
 
 ```python
 policy = PermissionPolicy({"write_file": "ask"})
 policy.approve("write_file", "*")
-policy.check("write_file", "anything")  # → allow（approved 追加在末尾，覆盖 ask）
+policy.check("write_file", "anything")  # → allow (approved is appended at the end and overrides ask)
 ```
 
-### 本版独有特性
+### Features unique to this version
 
-- **二维权限匹配**：`fnmatch` 按 pattern 控制同一工具的不同操作
-- **findLast 优先级**：后出现的规则优先级更高，approved 自然覆盖 ask
-- **向后兼容**：旧版简单 dict 格式 `{"write_file": "ask"}` 仍然可用，pattern 默认 `"*"`
+- **Two-dimensional permission matching**: `fnmatch` controls different operations of the same tool by pattern
+- **findLast priority**: rules that appear later have higher priority, so approved naturally overrides ask
+- **Backward compatible**: the old simple dict format `{"write_file": "ask"}` still works, with the pattern defaulting to `"*"`
 
-## 本版完整代码
+## Full Code for This Version
 
-- [`src/mini_agent/permission.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.09/src/mini_agent/permission.py) — 权限系统核心
-- [`tests/test_tools.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.09/tests/test_tools.py) — 19 个 smoke test
+- [`src/mini_agent/permission.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.09/src/mini_agent/permission.py) — permission system core
+- [`tests/test_tools.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.09/tests/test_tools.py) — 19 smoke tests

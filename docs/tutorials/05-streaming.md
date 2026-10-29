@@ -1,75 +1,75 @@
-# 第 5 课：流式输出
+# Lesson 5: Streaming output
 
-> 版本 v0.05 | [上一课](04-permission-gate.md) | [下一课](06-concurrent-tool-calls.md)
+> Version v0.05 | [Previous lesson](04-permission-gate.md) | [Next lesson](06-concurrent-tool-calls.md)
 
-> 代码快照：`v0.05` · 相邻差异：`v0.04..v0.05` · 命令环境：Bash/zsh
+> Code snapshot: `v0.05` · Adjacent diff: `v0.04..v0.05` · Shell: Bash/zsh
 >
-> 运行要求：Python 3.10+。该 tag 的 `pyproject.toml` 仍标 3.9，但源码已使用 3.10 语法。
+> Requirements: Python 3.10+. The `pyproject.toml` at this tag still says 3.9, but the source already uses 3.10 syntax.
 
-## 本课目标
+## Lesson Goals
 
-上一版要等模型生成完整回复后，终端才会显示内容。回复一长，等待会很明显。
-这一版让 `call_llm` 边接收边显示回复，并处理 `tool_calls` 被拆到多个 chunk 的情况。
+In the previous version, the terminal showed nothing until the model had generated the full reply. With a long reply, the wait is obvious.
+This version makes `call_llm` show the reply as it arrives, and handles the case where `tool_calls` are split across several chunks.
 
-## 前置
+## Prerequisites
 
-- 已读 [第 4 课](04-permission-gate.md)，理解权限闸门
-- `git checkout v0.05` 切到本版代码
+- Read [Lesson 4](04-permission-gate.md) and understand the permission gate
+- `git checkout v0.05` to switch to this version's code
 
-## 新增/改动了什么
+## What Was Added or Changed
 
 ```
  src/mini_agent/
- └── agent.py            # 改：call_llm 改流式（stream=True + SSE 解析 + chunk 拼接）
+ └── agent.py            # Changed: call_llm becomes streaming (stream=True + SSE parsing + chunk assembly)
 ```
 
-> 本版只改 `agent.py` 一个文件。工具、权限、config 都不变。
+> This version changes only `agent.py`. Tools, permissions, and config are unchanged.
 
-## 核心概念
+## Core Concepts
 
-### 非流式 vs 流式
+### Non-streaming vs streaming
 
-上一版是非流式（模型生成完再一次返回）：LLM 先生成完整 JSON，`call_llm` 解析后才返回 message。
-所以终端必须等模型全部生成完，长回复时会长时间没有反馈。
+The previous version was non-streaming (the model returns everything at once after it finishes): the LLM generated the full JSON first, and `call_llm` returned the message only after parsing it.
+So the terminal had to wait until the model was completely done, and long replies gave no feedback for a long time.
 
-这一版改用流式（模型生成一点就发送一点）。这些小片段叫 chunk，传输格式是 Server-Sent Events（服务器发送事件，简称 SSE）。
-`call_llm` 逐个读取并打印 chunk，因此终端会逐字出现内容；但这只改变显示方式，不代表模型一定更快完成。
+This version switches to streaming (the model sends a little as soon as it generates it). These small pieces are called chunks, and the transport format is Server-Sent Events (SSE).
+`call_llm` reads and prints chunks one by one, so content appears word by word in the terminal; this only changes how it is displayed and does not mean the model finishes faster.
 
-### SSE 协议（Server-Sent Events）
+### The SSE protocol (Server-Sent Events)
 
-问题在于：流式响应不再是一个完整 JSON，而是一串文本。每行是一个 `data:` 事件：
+The problem is that a streaming response is no longer one complete JSON document but a sequence of text lines. Each line is a `data:` event:
 
 ```
-data: {"choices":[{"delta":{"content":"你"}}]}
-data: {"choices":[{"delta":{"content":"好"}}]}
-data: {"choices":[{"delta":{"content":"！"}}]}
+data: {"choices":[{"delta":{"content":"Hel"}}]}
+data: {"choices":[{"delta":{"content":"lo"}}]}
+data: {"choices":[{"delta":{"content":"!"}}]}
 data: [DONE]
 ```
 
-每个 chunk 的 `delta` 里可能包含：
-- `content`：一小段文本（边收边打印）
-- `tool_calls`：工具调用的片段（跨 chunk 拼接）
+The `delta` of each chunk may contain:
+- `content`: a small piece of text (printed as it arrives)
+- `tool_calls`: fragments of a tool call (assembled across chunks)
 
-收到 `data: [DONE]` 后，流才确定结束。
+The stream is known to be finished only after `data: [DONE]` is received.
 
-### call_llm 流式实现（`src/mini_agent/agent.py:12`）
+### Streaming implementation of call_llm (`src/mini_agent/agent.py:12`)
 
-要让服务端按流式方式返回，需要在请求中打开开关并声明接收 SSE：
+To make the server return a stream, the request must turn on a switch and declare that it accepts SSE:
 ```python
 body = json.dumps({
     "model": MODEL,
     "messages": messages,
-    "stream": True,              # ← 新增：开启流式
+    "stream": True,              # ← New: turn on streaming
     "tools": registry.schemas(),
 }, ensure_ascii=False).encode()
 
 headers = {
     ...
-    "Accept": "text/event-stream",  # ← 新增：声明接收 SSE
+    "Accept": "text/event-stream",  # ← New: declare that SSE is accepted
 }
 ```
 
-收到响应后，代码逐行读取 `resp`，再解析每个 `data:` 事件：
+After the response arrives, the code reads `resp` line by line and parses each `data:` event:
 
 ```python
 content_parts = []
@@ -84,12 +84,12 @@ for raw in resp:
     chunk = json.loads(line[6:])
     delta = chunk["choices"][0].get("delta", {})
 
-    # content 边收边打印（打字机效果）
+    # Print content as it arrives (typewriter effect)
     if delta.get("content"):
         content_parts.append(delta["content"])
         print(delta["content"], end="", flush=True)
 
-    # tool_calls 的 arguments 跨 chunk 拼接
+    # Assemble tool_calls arguments across chunks
     for tc in delta.get("tool_calls", []):
         idx = tc.get("index", 0)
         slot = tool_calls_acc.setdefault(idx, {
@@ -105,7 +105,7 @@ for raw in resp:
             slot["function"]["arguments"] += fn["arguments"]
 ```
 
-循环结束后，再拼成与非流式格式一致的 message，后续 agent loop 不需要知道本次是流式响应：
+After the loop ends, the code builds a message in the same format as the non-streaming one, so the rest of the agent loop does not need to know this response was streamed:
 ```python
 message = {"role": "assistant", "content": "".join(content_parts) or None}
 if tool_calls_acc:
@@ -113,9 +113,9 @@ if tool_calls_acc:
 return message
 ```
 
-### tool_calls 的跨 chunk 拼接
+### Assembling tool_calls across chunks
 
-文本可以直接逐段显示，但工具调用不能这样处理。流式传输时，一个 tool_call 可能被拆成多个 chunk：
+Text can be shown piece by piece, but tool calls cannot. During streaming, one tool_call may be split into several chunks:
 
 ```
 chunk 1: {"tool_calls":[{"index":0, "id":"call_abc", "function":{"name":"calculate"}}]}
@@ -123,116 +123,116 @@ chunk 2: {"tool_calls":[{"index":0, "function":{"arguments":"{\"expr"}}]}
 chunk 3: {"tool_calls":[{"index":0, "function":{"arguments":"ession\": \"3+5\"}"}}]}
 ```
 
-这里的 `arguments` 是字符串片段，要用 `+=` 拼起来，不是把几个 JSON 对象合并。`index` 用来标识同一个 tool_call。
-代码按 `index` 暂存片段，只有流结束后才能得到完整的 tool_calls 列表。
+The `arguments` here are string fragments that must be joined with `+=`; this is not a merge of several JSON objects. `index` identifies the same tool_call.
+The code buffers fragments by `index`, and only after the stream ends does it have the complete tool_calls list.
 
-## 为什么这样设计
+## Why This Design
 
-### 为什么用 http.client 而不是 requests
+### Why http.client instead of requests
 
-实际接入时，`your-gateway-host` 网关对 `Accept-Encoding: gzip` 的响应会异常返回 502。
-压缩后的 SSE 流还可能让 chunk 边界难以判断。`http.client` 配合 `Accept-Encoding: identity` 会请求未压缩的原始文本，逐行解析才可靠。
+In real use, the `your-gateway-host` gateway responds abnormally with 502 to `Accept-Encoding: gzip`.
+A compressed SSE stream can also make chunk boundaries hard to detect. `http.client` with `Accept-Encoding: identity` requests the raw uncompressed text, so parsing line by line is reliable.
 
-### 为什么 content 边收边 print 而不是收完再 print
+### Why content is printed as it arrives instead of after it is complete
 
-边收边 `print` 会产生“打字机效果”：用户能先看到已经生成的文字，不必等几秒后整段出现。
-`flush=True` 会立即刷新输出；否则文字可能还留在缓冲区，终端看起来仍像一次性显示。
+Printing as it arrives produces a "typewriter effect": the user can see the text that has already been generated instead of waiting a few seconds for the whole block.
+`flush=True` flushes output immediately; otherwise the text may stay in the buffer, and the terminal still looks like it shows everything at once.
 
-### 为什么 tool_calls 不边收边 print
+### Why tool_calls are not printed as they arrive
 
-content 是普通文本，逐字打印有意义。tool_calls 是包含工具名和参数 JSON 的结构化数据，打印半截参数只会得到难以阅读的内容。
-因此代码等它收完整后，再打印一次决策：`print(f"  决策调用: {name}({arguments})")`。
+Content is ordinary text, so printing it word by word makes sense. tool_calls are structured data containing a tool name and argument JSON; printing half an argument only produces unreadable content.
+So the code waits until the call is complete and then prints the decision once: `print(f"  Decided call: {name}({arguments})")`.
 
-### 为什么 agent_loop 里 print 标记移到 call_llm 之前
+### Why the print marker in agent_loop moves before call_llm
 
-v0.04 的 `agent_loop` 先调用 `call_llm`，再打印 `=== [N] LLM 回复 ===`。
-这一版必须先打印标记再调用 `call_llm`。因为 content 会在 `call_llm` 内立即输出，标记放在后面就会出现在回复之后，终端顺序会乱。
+In v0.04, `agent_loop` called `call_llm` first and then printed `=== [N] LLM reply ===`.
+This version must print the marker before calling `call_llm`. Because content is printed immediately inside `call_llm`, a marker printed afterwards would appear after the reply, and the terminal order would be wrong.
 
-## 使用指导
+## Usage Guide
 
-### 本版可用的命令
+### Commands available in this version
 
 ```bash
-# 命令行首条任务（观察打字机效果）
-PYTHONPATH=src python -m mini_agent "用一句话介绍你自己"
+# Command-line first task (observe the typewriter effect)
+PYTHONPATH=src python -m mini_agent "Introduce yourself in one sentence"
 
-# 带工具调用
-PYTHONPATH=src python -m mini_agent "计算 123 * 456"
+# With a tool call
+PYTHONPATH=src python -m mini_agent "calculate 123 * 456"
 
-# 跑 smoke test
+# Run the smoke test
 PYTHONPATH=src python tests/test_tools.py
 ```
 
-### 本版典型示例
+### Typical examples for this version
 
-**示例 1：观察打字机效果**
+**Example 1: observe the typewriter effect**
 ```bash
-PYTHONPATH=src python -m mini_agent "用一句话介绍你自己"
+PYTHONPATH=src python -m mini_agent "Introduce yourself in one sentence"
 ```
-预期：终端会逐字出现 LLM 的回复，而不是等几秒后一次性弹出。
-注意：回复目前会打印两遍。第一遍来自 `call_llm` 的流式输出，第二遍来自 `__main__.py` 的 `print(reply)`。
-这是 v0.05 已知的显示问题，后续版本会调整 `__main__.py`。
+Expected: the LLM reply appears word by word in the terminal, instead of popping up all at once after a few seconds.
+Note: the reply is currently printed twice. The first copy comes from the streaming output of `call_llm`, and the second from `print(reply)` in `__main__.py`.
+This is a known display problem in v0.05; later versions adjust `__main__.py`.
 
-**示例 2：流式 + 工具调用**
+**Example 2: streaming + tool call**
 ```bash
-PYTHONPATH=src python -m mini_agent "计算 123 * 456"
+PYTHONPATH=src python -m mini_agent "calculate 123 * 456"
 ```
-预期输出：
+Expected output:
 ```
-=== [1] LLM 回复 ===
-  决策调用: calculate({"expression": "123 * 456"})
-[Executor] 执行 Tool: calculate
+=== [1] LLM reply ===
+  Decided call: calculate({"expression": "123 * 456"})
+[Executor] Running Tool: calculate
 ...
-  执行结果: 56088
+  Result: 56088
 
-=== [2] LLM 回复 ===
-123 × 456 的计算结果是 56088。
+=== [2] LLM reply ===
+123 × 456 equals 56088.
 ```
-注意：第 2 轮没有工具调用，最终回复会由流式输出逐字显示。
+Note: round 2 has no tool call, so the final reply is shown word by word by the streaming output.
 
-**示例 3：长回复体感对比**
+**Example 3: compare the feel of a long reply**
 ```bash
-# v0.04（非流式）：等 3-5 秒后一次性弹出
+# v0.04 (non-streaming): pops up all at once after 3-5 seconds
 git checkout v0.04
-PYTHONPATH=src python -m mini_agent "详细介绍 Python 的历史"
+PYTHONPATH=src python -m mini_agent "Describe the history of Python in detail"
 
-# v0.05（流式）：立刻开始逐字出现
+# v0.05 (streaming): starts appearing word by word immediately
 git checkout v0.05
-PYTHONPATH=src python -m mini_agent "详细介绍 Python 的历史"
+PYTHONPATH=src python -m mini_agent "Describe the history of Python in detail"
 ```
 
-### 本版独有特性
+### Features unique to this version
 
-- **打字机效果**：终端会逐字出现 LLM 回复，这是 v0.05 最容易观察到的变化。
-- **SSE 解析**：`call_llm` 逐行读取 `data:` 事件，再解析 JSON chunk。
-- **tool_calls 跨 chunk 拼接**：`arguments` 分片到达后用 `+=` 拼接，并按 `index` 归并。
-- **回复打印两遍**：`call_llm` 流式打印后，`__main__.py` 还会执行 `print(reply)`；这是已知问题。
+- **Typewriter effect**: the LLM reply appears word by word in the terminal; this is the easiest change to observe in v0.05.
+- **SSE parsing**: `call_llm` reads `data:` events line by line, then parses the JSON chunks.
+- **Assembling tool_calls across chunks**: `arguments` fragments are joined with `+=` as they arrive and grouped by `index`.
+- **Reply printed twice**: after `call_llm` prints the stream, `__main__.py` still runs `print(reply)`; this is a known problem.
 
-## 动手验证
+## Hands-On Verification
 
-1. **跑 smoke test**：
+1. **Run the smoke test**:
    ```bash
    PYTHONPATH=src python tests/test_tools.py
    ```
-   预期：8 个 PASS（工具测试不受流式影响）。
+   Expected: 8 PASS lines (tool tests are not affected by streaming).
 
-2. **观察打字机效果**：
+2. **Observe the typewriter effect**:
    ```bash
-   PYTHONPATH=src python -m mini_agent "用一句话介绍你自己"
+   PYTHONPATH=src python -m mini_agent "Introduce yourself in one sentence"
    ```
-   预期：终端逐字出现回复。
+   Expected: the reply appears word by word in the terminal.
 
-3. **对比 v0.04 vs v0.05**：
+3. **Compare v0.04 vs v0.05**:
    ```bash
    git checkout v0.04
-   PYTHONPATH=src python -m mini_agent "详细介绍 Python 的历史"
-   # 感受：等几秒后一次性弹出
+   PYTHONPATH=src python -m mini_agent "Describe the history of Python in detail"
+   # Feel: pops up all at once after a few seconds
 
    git checkout v0.05
-   PYTHONPATH=src python -m mini_agent "详细介绍 Python 的历史"
-   # 感受：立刻开始逐字出现
+   PYTHONPATH=src python -m mini_agent "Describe the history of Python in detail"
+   # Feel: starts appearing word by word immediately
    ```
 
-## 本版完整代码
+## Full Code for This Version
 
-- [`src/mini_agent/agent.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.05/src/mini_agent/agent.py) — 流式 `call_llm` + `agent_loop`
+- [`src/mini_agent/agent.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.05/src/mini_agent/agent.py) — streaming `call_llm` + `agent_loop`

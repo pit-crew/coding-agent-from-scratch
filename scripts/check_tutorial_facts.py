@@ -73,8 +73,8 @@ PATCHES = {
     "13-context-compaction.md": ("v0.13.1", "v0.13..v0.13.1"),
 }
 META_RE = re.compile(
-    r"(?:代码|补丁)快照：`(?P<tag>v[0-9.]+)` · 相邻差异："
-    r"(?:(?:`(?P<diff>v[0-9.]+\.\.v[0-9.]+)`)|无（首版）)"
+    r"(?:Code|Patch) snapshot: `(?P<tag>v[0-9.]+)` · Adjacent diff: "
+    r"(?:(?:`(?P<diff>v[0-9.]+\.\.v[0-9.]+)`)|none \(first version\))"
 )
 LINK_RE = re.compile(re.escape(REPO_URL) + r"(?P<tag>v[0-9.]+)/(?P<path>[^)\s]+)")
 
@@ -93,7 +93,7 @@ def check_tutorial(name: str, expected: tuple[str, str | None]) -> list[str]:
     required = [expected]
     if name in PATCHES:
         required.append(PATCHES[name])
-    errors = [f"缺少或错误的版本声明：{item}" for item in required if item not in metadata]
+    errors = [f"missing or wrong version declaration: {item}" for item in required if item not in metadata]
 
     declared_tags = {tag for tag, _ in required}
     missing_tags = {
@@ -101,31 +101,31 @@ def check_tutorial(name: str, expected: tuple[str, str | None]) -> list[str]:
         if not git_exists(f"refs/tags/{tag}^{{commit}}")
     }
     for tag in sorted(missing_tags):
-        errors.append(f"tag 不存在：{tag}（请由用户手动创建后重跑）")
+        errors.append(f"tag does not exist: {tag} (the user must create it manually, then run again)")
     for tag in declared_tags:
         if tag not in missing_tags and not git_exists(f"refs/tags/{tag}^{{commit}}"):
-            errors.append(f"tag 不存在：{tag}")
+            errors.append(f"tag does not exist: {tag}")
     for _, baseline in required:
         if baseline:
             left, right = baseline.split("..", 1)
             if (not git_exists(f"refs/tags/{left}^{{commit}}")
                     or (right not in missing_tags
                         and not git_exists(f"refs/tags/{right}^{{commit}}"))):
-                errors.append(f"diff 基线不存在：{baseline}")
+                errors.append(f"diff baseline does not exist: {baseline}")
 
     links = list(LINK_RE.finditer(text))
     if not links:
-        errors.append("缺少 tag 固定源码链接")
+        errors.append("missing tag-pinned source link")
     linked_tags = {match.group("tag") for match in links}
     for patch_tag in declared_tags:
         if patch_tag not in linked_tags:
-            errors.append(f"代码快照没有源码链接：{patch_tag}")
+            errors.append(f"code snapshot has no source link: {patch_tag}")
     for match in links:
         tag, path = match.group("tag"), match.group("path")
         if tag not in declared_tags:
-            errors.append(f"源码链接 tag 未在本课声明：{tag}/{path}")
+            errors.append(f"source link tag is not declared in this lesson: {tag}/{path}")
         if tag not in missing_tags and not git_exists(f"{tag}:{path}"):
-            errors.append(f"tag 中路径不存在：{tag}:{path}")
+            errors.append(f"path does not exist in tag: {tag}:{path}")
     return errors
 
 

@@ -1,65 +1,65 @@
-# 第 11 课：上下文架构
+# Lesson 11: Context architecture
 
-> 版本 v0.11 | [上一课](10-shell-execution.md) | [返回教程总览](README.md)
+> Version v0.11 | [Previous lesson](10-shell-execution.md) | [Back to the tutorial overview](README.md)
 
-> 代码快照：`v0.11` · 相邻差异：`v0.10..v0.11` · 命令环境：Bash/zsh
+> Code snapshot: `v0.11` · Adjacent diff: `v0.10..v0.11` · Shell: Bash/zsh
 >
-> 运行要求：Python 3.10+。该 tag 的 `pyproject.toml` 仍标 3.9，但源码已使用 3.10 语法。
+> Requirements: Python 3.10+. The `pyproject.toml` at this tag still says 3.9, but the source already uses 3.10 syntax.
 
-## 本课目标
+## Lesson Goals
 
-对话变长后，agent 不能永远把所有内容都发给模型。可是任务进度、改过哪些文件、发生过哪些错误，又不能随着旧消息一起丢掉。
+When a conversation gets long, the agent cannot keep sending everything to the model. But task progress, which files were changed, and which errors happened must not be lost along with old messages.
 
-这一课引入 `AgentState` 和 `ContextManager`。前者记录执行事实，后者负责准备发给 LLM 的上下文。两者分开后，后续可以裁剪消息，却不会丢失任务状态。
+This lesson introduces `AgentState` and `ContextManager`. The first records execution facts; the second prepares the context sent to the LLM. With the two separated, later versions can trim messages without losing task state.
 
-本版是**纯重构**：外部行为与 v0.10 完全一致。它不会裁剪、压缩或估算 token，只先把职责边界放好。v0.12 的预算与裁剪、v0.13 的上下文压缩都会在这条边界内实现。
+This version is a **pure refactoring**: external behavior is exactly the same as v0.10. It does not trim, compact, or estimate tokens; it only puts the responsibility boundaries in place first. The budget and trimming of v0.12 and the context compaction of v0.13 are both implemented inside this boundary.
 
-## 前置
+## Prerequisites
 
-- 已读上一课文档
-- `git checkout v0.11` 切到本版代码（或直接看 `src/mini_agent/state.py` 和 `src/mini_agent/context.py`）
+- Read the previous lesson
+- `git checkout v0.11` to switch to this version's code (or look directly at `src/mini_agent/state.py` and `src/mini_agent/context.py`)
 
-## 新增/改动了什么
+## What Was Added or Changed
 
 ```bash
 git diff --stat v0.10..v0.11
 ```
 
-| 文件 | 改动 |
+| File | Change |
 |------|------|
-| `src/mini_agent/state.py` | **新增**：`AgentState` 数据类 + `record_tool` 执行记录接口 |
-| `src/mini_agent/context.py` | **新增**：`ContextManager`（`prepare_messages()` 统一入口） |
-| `src/mini_agent/agent.py` | `agent_loop` 改为接收 `context_manager` + `tool_executor`，经 `prepare_messages()` 调 LLM |
-| `src/mini_agent/tools/base.py` | `ToolExecutor` 加 `on_result` 结果回调 |
-| `src/mini_agent/__main__.py` | 组装 AgentState + ContextManager 注入 loop |
-| `tests/test_state.py` | **新增**：State 单测（10 个） |
-| `tests/test_context.py` | **新增**：ContextManager 单测（5 个） |
-| `tests/test_executor.py` | **新增**：Executor 回调单测（14 个） |
+| `src/mini_agent/state.py` | **New**: `AgentState` dataclass + `record_tool` execution record interface |
+| `src/mini_agent/context.py` | **New**: `ContextManager` (single `prepare_messages()` entry) |
+| `src/mini_agent/agent.py` | `agent_loop` now takes `context_manager` + `tool_executor` and calls the LLM through `prepare_messages()` |
+| `src/mini_agent/tools/base.py` | `ToolExecutor` adds an `on_result` callback |
+| `src/mini_agent/__main__.py` | Assembles AgentState + ContextManager and injects them into the loop |
+| `tests/test_state.py` | **New**: State unit tests (10) |
+| `tests/test_context.py` | **New**: ContextManager unit tests (5) |
+| `tests/test_executor.py` | **New**: Executor callback unit tests (14) |
 
-## 核心概念
+## Core Concepts
 
 ### 1. Agent State ≠ LLM Context
 
-v0.10 及之前，agent 的全部“记忆”都在 `messages` 列表里：任务、历史对话和工具结果混在一起。消息越长，之后越可能需要裁掉；但执行状态不能跟着消失。
+In v0.10 and earlier, all of the agent's "memory" was in the `messages` list: the task, the conversation history, and tool results were mixed together. The longer the messages, the more likely they will need trimming later; but execution state must not disappear with them.
 
-这就是“上下文是易耗品，状态不是”的意思：LLM Context（模型上下文）可以缩短，AgentState（执行状态）必须独立保留。
+This is what "context is consumable, state is not" means: the LLM Context (model context) can shrink, but AgentState (execution state) must be kept independently.
 
 ```
-messages（LLM 上下文）          AgentState（执行状态）
-├── system prompt               ├── task        当前任务
-├── user task                   ├── current_goal 当前目标
-├── assistant / tool 消息对      ├── tool_history 工具执行记录
-│   （越长越贵，迟早要裁）        ├── files_changed 改过哪些文件
-└── ...                         ├── errors      出过哪些错
-                                └── status      running/done/failed
+messages (LLM context)          AgentState (execution state)
+├── system prompt               ├── task          current task
+├── user task                   ├── current_goal  current goal
+├── assistant / tool pairs      ├── tool_history  tool execution records
+│   (longer = costlier,         ├── files_changed which files were changed
+│    trimmed sooner or later)   ├── errors        which errors happened
+└── ...                         └── status        running/done/failed
 ```
 
-- **messages** 之后可能被裁剪、截断或摘要（v0.12/v0.13 的主题），因此信息会减少。
-- **AgentState** 独立存在，不参与裁剪或压缩。上下文缩短后，它仍保留执行事实。
+- **messages** may later be trimmed, truncated, or summarized (the topics of v0.12/v0.13), so information is lost.
+- **AgentState** exists independently and is not trimmed or compacted. After the context shrinks, it still keeps the execution facts.
 
-v0.09 已经有类似做法：PermissionGate 的 always 状态存在 messages 之外，删掉消息也不会影响它。
+v0.09 already did something similar: the PermissionGate's always state lives outside messages, so deleting messages does not affect it.
 
-### 2. AgentState：由执行结果驱动
+### 2. AgentState: driven by execution results
 
 ```python
 @dataclass
@@ -74,55 +74,55 @@ class AgentState:
     def record_tool(self, name, args, ok, brief): ...
 ```
 
-工具可以并发执行，因此 State 的记录必须来自真实结果，并且能安全地被多个线程更新。关键设计如下：
+Tools can run concurrently, so State records must come from real results and must be safe to update from several threads. The key design:
 
-- **只记事实，不做转述**：`record_tool` 从真实执行结果回调中记录工具、参数、成败和结果摘要。`files_changed` 与 `errors` 根据这些记录生成。v0.13 的 summary 可能因压缩而变化，State 仍保持准确。
-- **线程安全**：v0.06 起，同一轮的多个 tool_calls 可能并发执行。回调来自线程池工作线程，所以更新使用 `Lock`，读取通过 `snapshot()` 取得独立副本。
-- **不进 messages**：State 由 ContextManager 持有，本版不会把它渲染进上下文；v0.13 才会注入 Structured State。
+- **Record facts, not paraphrases**: `record_tool` records the tool, arguments, success or failure, and a result brief from the real execution result callback. `files_changed` and `errors` are derived from these records. The v0.13 summary may change through compaction, but State stays accurate.
+- **Thread safety**: since v0.06, several tool_calls in the same round may run concurrently. Callbacks come from thread pool worker threads, so updates use a `Lock`, and reads get an independent copy through `snapshot()`.
+- **Not in messages**: State is held by the ContextManager, and this version does not render it into the context; Structured State is injected only in v0.13.
 
-### 3. ContextManager：LLM 调用前统一入口
+### 3. ContextManager: the single entry before LLM calls
 
 ```python
 class ContextManager:
     def __init__(self, state: AgentState, history: list[dict]): ...
 
     def prepare_messages(self) -> list[dict]:
-        """LLM 调用前统一入口。本版直接返回完整 messages（立边界，不裁剪）。"""
+        """Single entry before LLM calls. This version returns the full messages as is (sets the boundary, no trimming)."""
         return self.history
 ```
 
-本版 `prepare_messages()` 只是原样返回 history，看起来“什么都没做”。它先成为唯一入口，后续策略才有固定的位置可以加入：
+In this version, `prepare_messages()` just returns the history unchanged and seems to "do nothing". It becomes the single entry first, so later strategies have a fixed place to plug in:
 
 ```
 agent_loop ──> cm.prepare_messages() ──> call_llm
                      ↑
-        v0.12 在这里做预算检查 + 裁剪
-        v0.13 在这里做压缩 + State 注入
+        v0.12 adds budget checks + trimming here
+        v0.13 adds compaction + State injection here
 ```
 
-所有 LLM 请求都经过这里构建。以后新增上下文策略时，`agent_loop` 不需要修改。
+All LLM requests are built here. When new context strategies are added later, `agent_loop` does not need to change.
 
-### 4. Executor 结果回调（D5）
+### 4. Executor result callback (D5)
 
 ```python
 class ToolExecutor:
     def __init__(self, registry, gate=None, on_result=None): ...
 ```
 
-工具执行后，如何把结果记入 State？这里使用 **Executor 回调**，而不是让 loop 自己记账：
+After a tool runs, how does the result get into State? This version uses an **Executor callback** instead of having the loop do the bookkeeping:
 
 ```python
-# __main__.py 组装
+# Assembly in __main__.py
 state = AgentState()
 context = ContextManager(state, history)
 tool_executor = ToolExecutor(registry, on_result=state.record_tool)
 ```
 
-如果让 `agent_loop` 顺手更新 State，每次修改 loop 都要记得同步两份数据，之后很容易漏掉路径。回调把“记录状态”集中到 Executor：权限拒绝、handler 异常和执行成功这三条路径都会经过 `_notify_result`，brief 会截断到 200 字符。
+If `agent_loop` updated State along the way, every change to the loop would need to remember to sync two pieces of data, and paths would easily be missed later. The callback concentrates "recording state" in the Executor: the three paths — permission denied, handler exception, and success — all pass through `_notify_result`, and the brief is truncated to 200 characters.
 
-回调本身若抛异常，只会打印日志，一定不会改变工具执行结果。它只观察结果，不参与执行。
+If the callback itself raises an exception, it only prints a log and never changes the tool execution result. It only observes results and does not take part in execution.
 
-### 5. agent_loop 签名变化
+### 5. Change to the agent_loop signature
 
 ```python
 # v0.10
@@ -132,47 +132,47 @@ def agent_loop(messages): ...
 def agent_loop(context_manager, tool_executor): ...
 ```
 
-loop 只向 `context_manager.history` 追加 assistant 和 tool 消息，不把 AgentState 序列化到 messages。
+The loop only appends assistant and tool messages to `context_manager.history` and does not serialize AgentState into messages.
 
-这保留了既有协议不变量：同一轮的全部 tool calls 都会得到对应的 `role=tool` 结果，再进入下一轮。v0.11 的变化是把消息准备与执行状态的职责显式拆开，并没有修复一个来自 v0.10 的“半截状态”缺陷。
+This keeps the existing protocol invariant: all tool calls of a round get their matching `role=tool` results before the next round. The change in v0.11 makes the separate responsibilities of message preparation and execution state explicit; it does not fix a "half state" defect from v0.10.
 
-## 为什么这样设计
+## Why This Design
 
-### 为什么本版什么都不"做"？
+### Why does this version not "do" anything?
 
-上下文管理先会遇到的通常不是算法问题，而是职责混在一起：裁剪散在 loop 中，状态和消息互相影响，摘要时机也难控制。
+The first problem in context management is usually not an algorithm but mixed responsibilities: trimming scattered across the loop, state and messages affecting each other, and summary timing that is hard to control.
 
-v0.11 先明确规则：只有 ContextManager 准备 messages，AgentState 专门保存状态。因为外部行为不变，回归验证也直接，tests 全绿并跑通典型任务即可。
+v0.11 first makes the rules clear: only the ContextManager prepares messages, and AgentState is dedicated to state. Because external behavior is unchanged, regression verification is direct: all tests green plus a typical task run.
 
-### 为什么 State 更新放 Executor 而不是 loop？
+### Why is the State update in the Executor and not the loop?
 
-见上文 D5。还有一点：`record_tool` 只有在 `ok=True` 且工具是 `write_file`/`edit_file` 时才记录路径；失败调用不会算作“改过文件”。这类规则放在 State 内部，调用方只提供原始事实。
+See D5 above. One more point: `record_tool` records a path only when `ok=True` and the tool is `write_file`/`edit_file`; failed calls do not count as "changed files". Rules like this live inside State, and callers only provide raw facts.
 
-### 为什么 snapshot() 返回深拷贝？
+### Why does snapshot() return a deep copy?
 
-工具并发执行时，读取方拿到的列表可能正被工作线程追加。`snapshot()` 会在锁内 deepcopy，所以调用方拿到的是一致且独立的视图。
+When tools run concurrently, a list a reader gets may be being appended to by a worker thread. `snapshot()` does a deepcopy inside the lock, so the caller gets a consistent, independent view.
 
-## 使用指导
+## Usage Guide
 
-### 本版可用的命令
+### Commands available in this version
 
 ```bash
-# 跑全量测试（61 个）
+# Run the full test suite (61 tests)
 PYTHONPATH=src python -m pytest tests/ -q
 
-# 单独跑新增测试
+# Run only the new tests
 PYTHONPATH=src python -m pytest tests/test_state.py tests/test_context.py tests/test_executor.py -q
 
-# 验证 AgentState 记录
+# Verify AgentState records
 PYTHONPATH=src python -c "
 from mini_agent.state import AgentState
 s = AgentState()
-s.record_tool('write_file', {'path': 'a.txt', 'content': 'hi'}, True, '已写入 a.txt')
+s.record_tool('write_file', {'path': 'a.txt', 'content': 'hi'}, True, 'Wrote a.txt')
 print(s.files_changed)   # ['a.txt']
 print(s.tool_history)    # [{tool: write_file, ...}]
 "
 
-# 验证 prepare_messages 恒等返回
+# Verify that prepare_messages returns the same object
 PYTHONPATH=src python -c "
 from mini_agent.state import AgentState
 from mini_agent.context import ContextManager
@@ -182,9 +182,9 @@ print(cm.prepare_messages() is history)  # True
 "
 ```
 
-### 本版典型示例
+### Typical examples for this version
 
-**示例 1：Executor 回调更新 State**
+**Example 1: the Executor callback updates State**
 
 ```python
 from mini_agent.state import AgentState
@@ -199,29 +199,29 @@ print(state.tool_history[-1])  # {'tool': 'calculate', 'args': {...}, 'ok': True
 print(state.status)             # running
 ```
 
-**示例 2：CLI 行为与 v0.10 一致**
+**Example 2: CLI behavior matches v0.10**
 
 ```bash
-PYTHONPATH=src python -m mini_agent "读取 examples/input.txt 并计算里面的算式"
-# 交互流程、权限提问、流式输出与 v0.10 完全相同
-# 区别只在内部：Executor 每次执行后悄悄记了一笔 State
+PYTHONPATH=src python -m mini_agent "read examples/input.txt and calculate the expression in it"
+# The interaction flow, permission prompts, and streaming output are exactly the same as v0.10
+# The only difference is internal: the Executor quietly records State after each execution
 ```
 
-### 本版独有特性
+### Features unique to this version
 
-- **AgentState 独立对象**：不进 messages、不被 loop 直接操作，并发安全
-- **ContextManager 统一入口**：所有 LLM 请求经 `prepare_messages()` 构建
-- **Executor 结果回调**：权限拒绝/异常/成功三路径都回灌 State，loop 零感知
-- **半截状态消除**：每轮 tool results 全部回灌后才进下一轮，协议始终合法
+- **AgentState as an independent object**: not in messages, not operated on directly by the loop, safe under concurrency
+- **ContextManager as the single entry**: all LLM requests are built through `prepare_messages()`
+- **Executor result callback**: the permission denied/exception/success paths all feed State, and the loop is unaware of it
+- **No half state**: all tool results of a round are fed back before the next round, so the protocol is always valid
 
-## 下一课预告
+## Next Lesson Preview
 
-边界立好了，v0.12 在 `prepare_messages()` 里做真事：token 启发式估算（`len(text) // 3`）、Context Budget 比例配置、超限时按轮次原子裁剪（一轮 = assistant(tool_calls) + 其全部 tool results，绝不拆散——孤儿 tool result 会被 OpenAI 协议直接 400）。
+With the boundary in place, v0.12 does real work in `prepare_messages()`: heuristic token estimation (`len(text) // 3`), Context Budget ratio configuration, and atomic trimming by round when the limit is exceeded (a round = assistant(tool_calls) + all its tool results, never split — an orphan tool result is rejected outright with a 400 under the OpenAI protocol).
 
-## 本版完整代码
+## Full Code for This Version
 
 - [`src/mini_agent/state.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.11/src/mini_agent/state.py) — AgentState
 - [`src/mini_agent/context.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.11/src/mini_agent/context.py) — ContextManager
 - [`src/mini_agent/agent.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.11/src/mini_agent/agent.py) — agent loop
-- [`src/mini_agent/tools/base.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.11/src/mini_agent/tools/base.py) — Executor 回调
-- [`tests/test_context.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.11/tests/test_context.py) — 上下文测试
+- [`src/mini_agent/tools/base.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.11/src/mini_agent/tools/base.py) — Executor callback
+- [`tests/test_context.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.11/tests/test_context.py) — context tests

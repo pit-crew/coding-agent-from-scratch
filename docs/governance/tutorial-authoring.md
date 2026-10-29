@@ -1,58 +1,59 @@
-# 教程作者规范
+# Tutorial Authoring Rules
 
-本文件定义 `docs/tutorials/` 版本课程的写作要求。教程面向刚接触 Agent 的开发者，帮助读者理解版本演进和设计取舍，不是版本更新摘要、测试说明或交付验收单；代码是实现事实来源，计划文档描述意图与验收。
+This file defines the writing requirements for version lessons in `docs/tutorials/`. Tutorials are for developers who are new to Agents. They help readers understand how versions evolve and why design trade-offs were made. They are not version update summaries, test descriptions, or delivery checklists. The code is the source of truth for the implementation; plan documents describe intent and acceptance.
 
-## 读者基线与表达
+## Reader Baseline and Style
 
-教程默认读者具备基础 Python 和命令行能力，但不了解 Agent、项目架构和内部术语。可以使用基础 Python 语法、常用终端命令和最基本的 Git 操作；不能假定读者已经理解 agent loop、tool call、上下文、状态、权限等概念，也不能假定读者熟悉本项目的模块、类、函数和字段。
+The default reader has basic Python and command-line skills but does not know Agents, the project architecture, or internal terms. You may use basic Python syntax, common terminal commands, and the most basic Git operations. Do not assume the reader already understands concepts such as the agent loop, tool calls, context, state, or permissions, and do not assume the reader knows this project's modules, classes, functions, or fields.
 
-- 整体文风必须通俗、清晰、易懂。优先使用常用中文，句子短而直接，避免不必要的专业术语、连续的抽象名词、过长句子和未经解释的内部缩写。
-- 先说明读者遇到的问题和直观含义，再引入准确的技术名称与内部实现。不要先集中罗列模块、字段和函数，再要求读者自行拼接它们之间的关系。
-- 技术术语、缩写和项目内部概念首次出现时，必须就近用一句常用中文解释它是什么、解决什么问题；只展开英文全称不算解释。
-- 代码、真实 diff、命令或图表出现前要说明为什么需要看，出现后要指出关键内容、预期现象及其说明的问题，不能把材料本身当作结论。
-- 每个段落集中表达一个主要意思，每次只增加理解当前内容所需的新概念。删除内部符号名称后，问题、思路和结论仍应连贯。
-- 通俗不等于牺牲准确性。协议、安全、调用链等内容仍须使用准确术语并说明含义，不使用会掩盖真实行为或边界的类比。
+- The overall style must be plain, clear, and easy to understand. Prefer common English words and short, direct sentences. Avoid unnecessary jargon, chains of abstract nouns, long sentences, and unexplained internal abbreviations.
+- First describe the problem the reader meets and its intuitive meaning, then introduce the precise technical name and the internal implementation. Do not list modules, fields, and functions first and leave the reader to connect them.
+- When a technical term, abbreviation, or internal project concept first appears, explain nearby, in one plain sentence, what it is and what problem it solves. Expanding an abbreviation alone does not count as an explanation.
+- Before code, a real diff, a command, or a diagram, say why the reader should look at it. After it, point out the key content, the expected result, and what it shows. Do not treat the material itself as the conclusion.
+- Each paragraph expresses one main idea and adds only the new concepts needed for the current content. If you remove internal symbol names, the problem, approach, and conclusion must still read coherently.
+- Plain does not mean imprecise. Protocols, safety, call chains, and similar topics still use precise terms with explanations. Do not use analogies that hide real behavior or boundaries.
 
-## 内容原则
+## Content Principles
 
-- 每课只讲当前版本相对上一版本新增的核心概念，并提供 `git checkout` / `git diff` 入口；不要提前描述后续版本行为。
-- 每课必须在开头声明唯一代码快照 tag、相邻差异基线和示例命令适用的 shell。补丁内容必须单独声明补丁 tag 与基线。
-- 先解释上一版的限制和本版要解决的问题，再解释实现、关键取舍及边界。
-- 默认值、调用顺序、失败路径、返回值、配置项和命令必须与对应 tag 的实现一致。
-- 突出一个教学主线；代码片段保持最小，完整实现使用 `https://github.com/liiiiiiiiil/agent-from-scratch/blob/<tag>/<path>` 固定链接，不链接默认分支或作者本机路径。
-- 协议、安全、并发、预算、异常降级等主题要同时说明正常路径、不变量和刻意不解决的问题。
-- 每个核心概念按“要解决的问题、直观解释、最小代码或真实 diff、运行结果与边界”的顺序介绍。不要先集中罗列内部模块、字段和函数，再要求读者自行拼接它们之间的关系。
-- 教学链路优先于章节数量。相关内容可以合并，避免在“核心概念”“关键流程”“实现拆解”和“设计边界”中重复说明同一事实；文件表、流程图、映射表和代码片段表达相同内容时，只保留最有助于理解的一种。
-- “运行与观察”不只给出命令，还应说明读者应观察到的关键现象，以及该现象如何证明本课概念；不能只提供没有预期输出或状态变化说明的启动命令。
-- 每课围绕一个明确的学习结果展开；运行命令和观察现象只在帮助理解本课概念时提供，不把孤立的离线示例当作固定章节。
+- Each lesson covers only the core concepts the current version adds over the previous version, and provides `git checkout` / `git diff` entry points. Do not describe later version behavior in advance.
+- Each lesson must declare, at the top, its single code snapshot tag, its adjacent diff baseline, and the shell the example commands use. Patch content must declare its own patch tag and baseline.
+- First explain the limits of the previous version and the problem this version solves, then the implementation, key trade-offs, and boundaries.
+- Default values, call order, failure paths, return values, configuration items, and commands must match the implementation at the corresponding tag.
+- Keep one teaching thread. Keep code snippets minimal; for full implementations, use pinned links of the form `https://github.com/liiiiiiiiil/agent-from-scratch/blob/<tag>/<path>`. Do not link to the default branch or to the author's local paths.
+- For topics such as protocols, safety, concurrency, budgets, and exception degradation, describe the normal path, the invariants, and the problems the version intentionally does not solve.
+- Introduce each core concept in this order: the problem to solve, an intuitive explanation, minimal code or a real diff, then the run result and boundaries. Do not list internal modules, fields, and functions first and leave the reader to connect them.
+- The teaching thread is more important than the number of sections. Merge related content. Do not repeat the same fact in "Core Concepts", "Key Flow", "Implementation Breakdown", and "Design Boundaries". When a file table, flow diagram, mapping table, and code snippet express the same content, keep only the one that helps understanding most.
+- "Run and Observe" does not only give commands. It also says what key result the reader should see and how that result demonstrates the lesson's concept. Do not give only a start command without expected output or state changes.
+- Each lesson centers on one clear learning outcome. Give run commands and observations only when they help the reader understand the concept. Do not make isolated offline examples a fixed section.
 
-## 每课结构
+## Lesson Structure
 
-原则上包含：版本/上下课导航；代码 tag 与相邻 diff 基线；目标；前置条件与 tag 切换；改动文件表和 `git diff --stat`；版本变更定位；上一版的问题；核心概念、流程与数据结构；实现拆解；为什么这样设计；设计边界；本版特性、下一课预告和 tag 固定代码索引。章节可以合并或压缩，但学习链路不能中断；每个核心概念至少配一个就近的关键代码片段或真实 diff，并说明它解决的具体问题。
+In principle a lesson contains: version/previous/next navigation; the code tag and adjacent diff baseline; goals; prerequisites and tag checkout; the changed file table and `git diff --stat`; the version change map; the problem in the previous version; core concepts, flow, and data structures; implementation breakdown; why this design; design boundaries; and version features, a next-lesson preview, and a tag-pinned code index. Sections can be merged or shortened, but the learning thread must not break. Each core concept needs at least one nearby key code snippet or real diff, with an explanation of the specific problem it solves.
 
-“版本变更定位”回答“本版本相对上一版本改了什么、放在哪里”，与“关键流程”回答“当前版本如何运行”不同。跨模块、改变调用链或改变运行时流程的版本，默认使用“上一版基线图 + 本版变更图”；局部函数、单个工具或配置改动可以使用变更表或真实 diff。图示必须使用图例区分 `[旧]` 上一版已有、`[+]` 本版新增、`[~]` 本版修改、`[C]` 主要消费者和 `[B]` 本版边界/不负责。
+The "Version Change Map" answers "what did this version change compared with the previous version, and where". This is different from "Key Flow", which answers "how does the current version run". For versions that cross modules, change the call chain, or change the runtime flow, use by default "a baseline diagram of the previous version + a change diagram of this version". Local function, single tool, or configuration changes can use a change table or a real diff. Diagrams must use a legend that marks `[old]` already in the previous version, `[+]` new in this version, `[~]` changed in this version, `[C]` main consumer, and `[B]` boundary of this version / not its responsibility.
 
-基线图必须能单独说明上一版的真实入口、关键调用链、数据或消息流向和收口方式；变更图必须保留相关旧节点，并标出本版插入点、新能力入口、主要消费者，以及正常路径和至少一条重要失败/降级路径。节点应是对应 tag 中真实存在的模块、函数、状态字段或协议步骤，箭头应表示真实调用、数据流或控制流。图后可增加变更映射表，将节点/边对应到文件和符号；图示不能只是重复改动文件列表。作者必须用 `git show <tag>` 或真实 diff 核对节点和调用顺序，不得把后续版本能力提前画入当前课。
+The baseline diagram must stand alone and show the previous version's real entry point, key call chain, data or message flow, and how it finishes. The change diagram must keep the related old nodes and mark this version's insertion points, new capability entry points, main consumers, the normal path, and at least one important failure/degradation path. Nodes must be modules, functions, state fields, or protocol steps that really exist at the corresponding tag. Arrows must show real calls, data flow, or control flow. After the diagram you can add a change mapping table that maps nodes/edges to files and symbols. A diagram must not only repeat the list of changed files. Authors must check nodes and call order with `git show <tag>` or the real diff, and must not draw later-version capabilities into the current lesson.
 
-默认使用可直接阅读的 ASCII 文本图，不依赖外部图片、图床或额外渲染服务；使用 Mermaid 等格式时也必须保留可读源码。
+By default use ASCII text diagrams that can be read directly, without external images, image hosts, or extra rendering services. If you use Mermaid or a similar format, keep the readable source.
 
-“为什么这样设计”是面向读者的必备章节：说明可选方案、当前取舍、由此带来的限制，以及本版刻意不解决的问题。历史课程可使用“为什么需要本版”作为等价标题；新课程统一使用“为什么这样设计”。
+"Why This Design" is a required reader-facing section. It explains the alternatives, the current trade-off, the resulting limits, and the problems this version intentionally does not solve. Historical lessons may use "Why This Version Is Needed" as an equivalent title; new lessons use "Why This Design".
 
-教程命令默认使用 Bash/zsh，并统一写成 `PYTHONPATH=src python ...`；PowerShell 等价写法只需在教程总览集中说明。带命令行参数的 CLI 调用称为“命令行首条任务”，不得暗示处理参数后进程立即退出。
+Tutorial commands use Bash/zsh by default and are written as `PYTHONPATH=src python ...`. PowerShell equivalents are described only once, in the tutorial overview. A CLI call with a command-line argument is called a "command-line first task"; do not suggest that the process exits right after it handles the argument.
 
-## 同步与验收
+## Sync and Acceptance
 
-完成版本时同步 README（中英文）、教程索引、操作手册、CHANGELOG、`pyproject.toml` 版本信息，并检查链接、代码片段、命令和协议描述。测试覆盖、完整验证命令与版本交付验收维护在计划文档、治理规则和自动化脚本中，不写入学习教程。
+When a version is complete, sync the README, the tutorial index, the operation manual, CHANGELOG, and the version in `pyproject.toml`, and check links, code snippets, commands, and protocol descriptions. Test coverage, full verification commands, and version delivery acceptance are kept in plan documents, governance rules, and automation scripts, not in tutorials.
 
-`scripts/check_tutorials.py` 只检查教程结构与格式；`scripts/check_tutorial_facts.py` 使用本地 Git 对象检查版本/tag 映射、相邻基线和固定源码路径。提交教程前必须同时运行两者。
+`scripts/check_tutorials.py` checks only tutorial structure and format; `scripts/check_tutorial_facts.py` uses local Git objects to check version/tag mappings, adjacent baselines, and pinned source paths. Run both before you commit a tutorial.
 
-## 提交前自检
+## Pre-Commit Self-Check
 
-- 读者只看本课和上一课即可理解目标、改动、设计取舍和运行方式，不依赖维护者口头补充。
-- 新术语、缩写和项目内部概念在首次出现处已有直观解释；正文先让读者理解问题和目标，再引入内部实现名称。
-- 每段代码、diff、命令和图表都说明了用途、关键内容和应观察到的结果，没有要求读者自行推导结论。
-- 正文不依赖只有项目维护者才知道的隐含背景；删除内部符号名称后，章节的问题、思路和结论仍可由 Agent 新手复述。
-- 所有命令注明 Bash/zsh 或其他 shell；命令、默认值和协议字段均以对应代码 tag 为准，源码链接固定到该 tag。
-- 跨模块版本同时提供上一版基线图和本版变更图；图例、入口、变更插入点、主要消费者、失败/降级路径和边界均已标出，并已用 tag/diff 核对。
-- “为什么这样设计”同时解释收益、代价和未解决问题，不把本版刻意不支持的能力描述成已实现。
-- 不新增“最小离线示例”“测试与验收”或测试覆盖清单章节；测试文件只有在帮助理解实现时才可作为源码索引引用，这些内容由计划、治理和自动化检查维护。
+- A reader can understand the goal, changes, design trade-offs, and how to run the lesson from this lesson and the previous one alone, without verbal help from a maintainer.
+- New terms, abbreviations, and internal project concepts have an intuitive explanation where they first appear; the text lets the reader understand the problem and goal before it introduces internal implementation names.
+- Each code block, diff, command, and diagram states its purpose, key content, and the expected result; the reader does not have to derive the conclusion alone.
+- The text does not depend on implicit background that only maintainers know; with internal symbol names removed, an Agent beginner can still restate each section's problem, approach, and conclusion.
+- All commands state Bash/zsh or another shell; commands, defaults, and protocol fields follow the corresponding code tag, and source links are pinned to that tag.
+- Cross-module versions provide both the previous version's baseline diagram and this version's change diagram; the legend, entry points, change insertion points, main consumers, failure/degradation paths, and boundaries are all marked and checked against the tag/diff.
+- "Why This Design" explains benefits, costs, and unsolved problems, and does not describe capabilities this version intentionally does not support as implemented.
+- Do not add sections such as "Minimal Offline Example", "Tests and Acceptance", or test coverage lists. Test files may be cited in the source index only when they help understand the implementation; that content is maintained by plans, governance, and automated checks.
+- Lessons are written in English. The required section headings are those checked by `scripts/check_tutorials.py`, and the version line uses the form ``> Code snapshot: `vX` · Adjacent diff: `vA..vB` · Shell: Bash/zsh``; the first version uses `none (first version)` as its adjacent diff, and patches use `Patch snapshot:`.

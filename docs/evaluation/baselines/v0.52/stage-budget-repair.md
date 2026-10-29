@@ -1,32 +1,32 @@
-# suite 1.5 后的预算与协议定点修复
+# Targeted Budget and Protocol Fixes After Suite 1.5
 
-## 问题与修改
+## Problem and changes
 
-live-20260929-07 中 11 次预算拒绝发生时还有约 11k–27k 余额。旧 Runtime 同时扣留当前验证、计划推进和未来最终回复的额度，再按未来轮数限制当前输入；验证请求仍走 work 路径，无法使用为自己扣留的额度。余额不等于可发送额度，原拒绝日志又丢失了受保护上下文大小，不能据旧证据逐一计算修复后的模型结果。
+In live-20260929-07, the 11 budget refusals happened while about 11k–27k of balance remained. The old Runtime held back quota for the current verification, plan progress, and the future final reply at the same time, and then limited the current input by the number of future rounds; verification requests still went through the work path and could not use the quota held back for themselves. Balance is not the same as sendable quota, and the original refusal logs also lost the protected context size, so the post-fix model results cannot be computed one by one from the old evidence.
 
-本轮让当前工作请求使用计划推进和验证所需的额度，只单独预留后续无工具最终回复。预留按当前受保护指令、全部用户约束和完成事实的本地估算，使用收尾请求自身的校准规则，加 256 输入余量和至多 512 输出额度。历史工具回合不进入这个收尾下限估算；实际工作和收尾请求仍可携带最近两轮完整工具回合，并按额度裁剪。没有自动执行验证、推进计划或宣布完成。
+This round lets the current working request use the quota needed for plan progress and verification, and separately reserves only the later tool-free final reply. The reservation is a local estimate from the current protected instructions, all user constraints, and completion facts, using the finishing request's own calibration rules, plus a 256 input margin and at most 512 output quota. Historical tool rounds do not enter this finishing floor estimate; actual working and finishing requests can still carry the last two complete tool rounds, trimmed by quota. Verification is not run automatically, the plan is not advanced, and completion is not declared.
 
-| 文件 | 本轮修改 |
+| File | Change in this round |
 |---|---|
-| `src/mini_agent/runtime.py` | 移除不可使用的重复阶段预留和按假定未来轮数分摊的当前输入上限；按真实收尾下限预留；拒绝时保留非零输入下限、额度、阻塞项和阶段。 |
-| `src/mini_agent/context.py` | 输出无正文的上下文下限和裁剪前大小；允许只读计算不带工具历史的收尾下限；保留所有用户纠正。 |
-| `src/mini_agent/evaluation/reliability_diagnostics.py` | 原样观察生产 Runtime 的预算决策，失败请求也保留诊断，不创建第二套准入规则。 |
-| `src/mini_agent/providers/base.py`、`openai_chat.py` | 工具参数 JSON 错误记录安全类别、参数长度、解析位置、标准化停止原因、响应模式及已报告用量；不保留参数或推理正文。 |
-| `src/mini_agent/providers/catalog.py` | 完整响应参数校验失败时仍结算 provider 已报告的用量；未知用量仍按预算预留保守结算。 |
-| `src/mini_agent/evaluation/reliability_worker.py` | 完整非流式响应的非法 JSON 参数、明确 length 停止的参数错误作为生成失败留在恢复评分；来源不明的流式拼装错误仍归未确认协议错误。 |
-| `tests/test_task_budget_v052.py` | 长调查历史、受保护指令约 2k、工具 schema 约 1k、暖校准正误差 3k；19k/27k 余额分别完成验证+回复、计划推进+验证+回复；11k 不足时拒绝且不发生模型 I/O。 |
-| `tests/test_reasoning_content_v052.py`、`test_evaluation_worker_v052.py` | 完整响应/流式、长度上限/非法 JSON/非 object 的分类、脱敏、用量及恢复分母回归。 |
+| `src/mini_agent/runtime.py` | Removes the unusable duplicate phase reservations and the current input limit split by assumed future rounds; reserves by the real finishing floor; on refusal keeps the non-zero input floor, quota, blockers, and phase. |
+| `src/mini_agent/context.py` | Outputs a body-free context floor and pre-trim size; allows read-only computation of the finishing floor without tool history; keeps all user corrections. |
+| `src/mini_agent/evaluation/reliability_diagnostics.py` | Observes the production Runtime's budget decisions as is, keeps diagnostics for failed requests too, and creates no second admission rule set. |
+| `src/mini_agent/providers/base.py`, `openai_chat.py` | Tool argument JSON errors record a safe category, argument length, parse position, normalized stop reason, response mode, and reported usage; argument or reasoning bodies are not kept. |
+| `src/mini_agent/providers/catalog.py` | When argument validation of a complete response fails, the usage already reported by the provider is still settled; unknown usage is still settled conservatively at the budget reservation. |
+| `src/mini_agent/evaluation/reliability_worker.py` | Illegal JSON arguments of complete non-streaming responses and argument errors with an explicit length stop stay in recovery grading as generation failures; streaming assembly errors of unknown source are still classified as unconfirmed protocol errors. |
+| `tests/test_task_budget_v052.py` | Long investigation history, protected instructions of about 2k, tool schemas of about 1k, and a warm calibration positive error of 3k; balances of 19k/27k complete verification + reply and plan progress + verification + reply respectively; at 11k it refuses with no model I/O. |
+| `tests/test_reasoning_content_v052.py`, `test_evaluation_worker_v052.py` | Regressions for classification, redaction, usage, and recovery denominators of complete/streaming responses, length limits, illegal JSON, and non-objects. |
 
-`budget_stage` 是诊断标记，不替代 State 阶段闸门或工具权限。可用预算不保证模型停止调查并选择验证；最终回复预留也只是估算，未来 State、用户输入和 provider 误差增长仍可使请求无法准入。11k 回归的拒绝只说明该固定输入无法容纳请求，不证明历史所有 11k 拒绝都合理。
+`budget_stage` is a diagnostic marker and does not replace the State phase gate or tool permissions. Available budget does not guarantee that the model stops investigating and chooses verification; the final reply reservation is also only an estimate, and future growth of State, user input, and provider error can still make a request inadmissible. The refusal in the 11k regression only shows that that fixed input cannot fit the request, not that all historical 11k refusals were reasonable.
 
-## 协议分类的证据边界
+## Evidence boundary of protocol classification
 
-旧批次两个错误的栈都落在工具参数 JSON 解析，但没有停止原因或原始长度证据，不能确认是截断、模型生成错误还是传输/拼装问题，也不能认定为 HTTP 400。本轮分类只应用于新证据：完整非流式消息的非法参数按输出失败计分；已完成流的 `length` 停止说明发生输出上限停止，但不证明上限是唯一原因；其他流式参数错误保留未确认来源。没有自动补闭合 JSON、执行坏参数、重试或回退模型。
+The stacks of the two errors in the old batch both fell in tool argument JSON parsing, but there is no stop reason or raw length evidence, so it cannot be confirmed whether it was truncation, a model generation error, or a transport/assembly problem, nor can it be identified as HTTP 400. The classification of this round applies only to new evidence: illegal arguments of a complete non-streaming message are scored as output failures; a `length` stop of a completed stream shows that an output limit stop happened, but does not prove the limit was the only cause; other streaming argument errors keep an unconfirmed source. JSON is not closed automatically, bad arguments are not run, and there are no retries or model fallback.
 
-旧 trial、冻结材料、审阅清单、report 和统计保持原样；新增分类不追溯改变旧分母。当前源代码已不同于 suite 1.5 审阅清单中的 Runtime 指纹，不能直接沿用旧清单启动新 live。
+Old trials, frozen material, review manifests, reports, and statistics stay as they are; the new classification does not change old denominators retroactively. The current source already differs from the Runtime fingerprint in the suite 1.5 review manifest, so the old manifest cannot be reused directly to start a new live.
 
-## 验收与后续
+## Acceptance and next steps
 
-本轮只做实现与离线验收，不创建 suite 1.6、不运行新的 paid live，也不创建 Git tag。完整验证结果另存 `stage-budget-repair-validation.json`。
+This round only does implementation and offline acceptance; it creates no suite 1.6, runs no new paid live, and creates no Git tag. The full verification results are saved separately in `stage-budget-repair-validation.json`.
 
-离线回归证明固定输入和确定响应下可以完成这些路径，不代表真实模型恢复率。候选实现通过离线验收后，下一次 live 前重新冻结清单和分类口径，只运行一次独立批次并保留失败。若还有可复现的实现缺陷，定点处理；若剩余失败是模型调查和执行顺序，则记录能力限制，不按恢复率反复修改评测或不断整批重跑。
+Offline regressions prove these paths can complete under fixed inputs and deterministic responses, not the real model recovery rate. After the candidate implementation passes offline acceptance, re-freeze the manifest and classification rules before the next live, run only one separate batch, and keep the failures. If there are still reproducible implementation defects, handle them in a targeted way; if the remaining failures are about model investigation and execution order, record them as ability limits, and do not keep changing the evaluation or rerunning whole batches for the recovery rate.

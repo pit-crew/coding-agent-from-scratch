@@ -1,32 +1,32 @@
-# 第 32 课：把工具调用的关键边界写下来（v0.32）
+# Lesson 32: Writing down the key boundaries of tool calls (v0.32)
 
-上一课：[从完整安全点恢复会话](31-safe-resume.md) · [教程总览](README.md) · 下一课：[崩溃后的调用交接](33-crash-recovery.md)
+Previous: [Resuming a session from a complete safe point](31-safe-resume.md) · [Tutorial overview](README.md) · Next: [Handing off calls after a crash](33-crash-recovery.md)
 
-> 代码快照：`v0.32` · 相邻差异：`v0.31..v0.32` · 命令环境：Bash/zsh
+> Code snapshot: `v0.32` · Adjacent diff: `v0.31..v0.32` · Shell: Bash/zsh
 
-> 运行要求：Python 3.10+。本课建立 schema 3 的工具边界，但仍拒绝直接恢复半轮工具调用；分类和用户交接留到 v0.33。
+> Requirements: Python 3.10+. This lesson establishes the schema 3 tool boundary but still refuses to resume half a round of tool calls directly; classification and user handoff are left to v0.33.
 
-## 本课目标
+## Lesson Goals
 
-想象一个工具回合：模型已经说“请写文件”，程序刚准备执行，或者 handler 已经返回但结果还没来得及写回 session，Python 进程就退出了。v0.31 的最后一个 clean 安全点无法告诉下一次启动“动作停在哪一步”。
+Imagine a tool round: the model has already said "please write the file", and the program is just about to run it, or the handler has returned but the result has not yet been written back to the session, when the Python process exits. The last clean safe point of v0.31 cannot tell the next start "which step the action stopped at".
 
-本课把这个危险窗口拆成可检查的持久事实。读完本课，你应该能解释：
+This lesson splits that dangerous window into checkable durable facts. After this lesson, you should be able to explain:
 
-- `pending`、`handler_admitted` 和 `committed` 分别表示什么；
-- 为什么必须在 handler 前先提交一次准入事实；
-- 为什么 State、`role=tool` 结果和调用记录要一起提交；
-- 为什么同一回合的所有调用完成提交后，才能再次请求 LLM；
-- 为什么 v0.32 记录了中断位置，却仍不自动 replay（重放）旧调用。
+- What `pending`, `handler_admitted`, and `committed` each mean;
+- Why an admission fact must be committed before the handler;
+- Why State, the `role=tool` result, and the call record must be committed together;
+- Why the LLM can be requested again only after all calls of the same round are committed;
+- Why v0.32 records where an interruption happened but still does not automatically replay old calls.
 
-## 上一版的问题
+## Problems in the Previous Version
 
-一次工具调用至少涉及三个不同事实：模型发出了 `tool_calls`；调用通过了参数、计划和权限检查；handler 执行后产生结果并回灌 `role=tool`。v0.31 只有回合结束后才保存安全点。
+One tool call involves at least three different facts: the model issued `tool_calls`; the call passed argument, plan, and permission checks; the handler ran, produced a result, and fed back `role=tool`. v0.31 saves a safe point only after a round ends.
 
-如果 handler 已经开始，随后保存失败，下一次读取旧文件会把“可能已经执行”和“完全没有执行”混在一起。如果 State 已经记账、但消息历史缺少 `role=tool`，下一次 LLM 也会看到一条不完整的协议。因此本版增加一个单文件 `tool_boundary`，专门记录工具回合的中间状态。
+If the handler has started and saving then fails, reading the old file next time mixes "may already have run" with "did not run at all". If State has already recorded it but the message history lacks the `role=tool`, the next LLM call also sees an incomplete protocol. So this version adds a single-file `tool_boundary` dedicated to recording the intermediate state of a tool round.
 
-## 前置条件与版本切换
+## Prerequisites and Version Checkout
 
-需要基础 Python、命令行和第 31 课的 session、State、Context 概念。命令使用 Bash/zsh；tag 是固定学习快照。
+You need basic Python, the command line, and the session, State, and Context concepts from Lesson 31. Commands use Bash/zsh; a tag is a fixed learning snapshot.
 
 ```bash
 git checkout v0.31
@@ -35,58 +35,58 @@ git diff v0.31..v0.32 -- src/mini_agent/session.py src/mini_agent/context.py src
 git checkout v0.32
 ```
 
-## 新增与改动文件
+## New and Changed Files
 
-本版的主线是“回合开始记录 → handler 前准入 → 结果和事实一起提交 → 整轮收口”。
+The main thread of this version is "record at round start → admit before the handler → commit results and facts together → finish the whole round".
 
-| 文件 | 变化 | 作用 |
+| File | Change | Purpose |
 |---|---|---|
-| `src/mini_agent/session.py` | 增加 schema 3 和 `tool_boundary` | 校验调用、结果、State 和顺序，并原子保存 |
-| `src/mini_agent/context.py` | 增加最后一轮结果前缀导出 | 在边界保存时允许受控的半轮上下文 |
-| `src/mini_agent/state.py` | 增加边界专用 pending 导出 | 保存 attempt、预算和 generation 的引用 |
-| `src/mini_agent/tools/base.py` | 拆分 `admit()` 和 `execute_admitted()` | 把“允许进入 handler”与“真正执行”分开 |
-| `src/mini_agent/agent.py` | 增加逐调用提交和整轮收口 | 保证 State、消息和边界记录同步推进 |
-| `src/mini_agent/__main__.py`、`resume.py` | 接入 schema 3 | 区分保存失败，并继续拒绝半轮 safe resume |
+| `src/mini_agent/session.py` | Adds schema 3 and `tool_boundary` | Validates calls, results, State, and order, and saves atomically |
+| `src/mini_agent/context.py` | Adds export of the result prefix of the last round | Allows a controlled half-round context when saving at a boundary |
+| `src/mini_agent/state.py` | Adds a boundary-only pending export | Stores references to attempts, budgets, and generations |
+| `src/mini_agent/tools/base.py` | Splits into `admit()` and `execute_admitted()` | Separates "allowed into the handler" from "actually running" |
+| `src/mini_agent/agent.py` | Adds per-call commits and whole-round finish | Keeps State, messages, and boundary records advancing in sync |
+| `src/mini_agent/__main__.py`, `resume.py` | Connect schema 3 | Distinguish save failures and keep refusing half-round safe resume |
 
-## 版本变更定位
+## Version Change Map
 
-图例：`[旧]` v0.31 已有，`[+]` v0.32 新增，`[~]` v0.32 修改，`[C]` 主要消费者，`[B]` 本课边界。
+Legend: `[old]` already in v0.31, `[+]` new in v0.32, `[~]` changed in v0.32, `[C]` main consumer, `[B]` boundary of this lesson.
 
-旧流程只有一个完整收口：
+The old flow has only one complete finish:
 
 ```text
-[旧] assistant tool_calls
-  -> [旧] handler
-  -> [旧] State + role=tool
-  -> [旧] clean safe point
-  [B] 中途退出时，磁盘没有 handler 是否已进入的事实
+[old] assistant tool_calls
+  -> [old] handler
+  -> [old] State + role=tool
+  -> [old] clean safe point
+  [B] on a mid-round exit, the disk has no fact about whether the handler was entered
 ```
 
-本版把工具回合变成一串受约束的 durable（已写入并校验到磁盘）提交：
+This version turns a tool round into a series of constrained durable (written to disk and validated) commits:
 
 ```text
-[旧] assistant tool_calls
+[old] assistant tool_calls
   -> [+] pending round commit
-  -> [+] 参数 / 计划 / 权限 / 预算检查
+  -> [+] argument / plan / permission / budget checks
   -> [+] handler_admitted + attempt/generation commit
-  -> [旧] handler
+  -> [old] handler
   -> [+] State + role=tool + call committed commit
-  -> [+] 全部 call committed
-  -> [C] 允许下一次 LLM
+  -> [+] all calls committed
+  -> [C] the next LLM request is allowed
 
-[B] 任一提交失败
-  -> 不进入下一步，不请求下一次 LLM
-[B] pending 或部分 committed
-  -> v0.32 只保存中断事实，不自动恢复或 replay
+[B] any commit fails
+  -> do not go to the next step, do not request the next LLM
+[B] pending or partially committed
+  -> v0.32 only saves the interruption facts; no automatic resume or replay
 ```
 
-## 核心概念与数据结构
+## Core Concepts and Data Structures
 
-### 1. `pending` 先记录“模型要求了什么”
+### 1. `pending` first records "what the model asked for"
 
-工具回合开始时，agent loop 会把 assistant 消息和调用顺序写入 `tool_boundary`。每个调用得到稳定的 `invocation_id`，同时保留模型原始的 `tool_call_id`。这一步发生在任何 handler 之前。
+When a tool round starts, the agent loop writes the assistant message and the call order into `tool_boundary`. Each call gets a stable `invocation_id` while keeping the model's original `tool_call_id`. This step happens before any handler.
 
-简化后的记录如下：
+A simplified record:
 
 ```json
 {
@@ -109,60 +109,60 @@ git checkout v0.32
 }
 ```
 
-这里的 `pending` 只表示“边界记录已经落盘”。它不表示 handler 已经开始，也不表示文件写入成功。它只给崩溃后的诊断留下最后一个明确位置。
+`pending` here only means "the boundary record is on disk". It does not mean the handler has started, and it does not mean the file write succeeded. It only leaves the last explicit position for diagnosis after a crash.
 
-参数摘要会脱敏：`content`、`command` 和 `input` 等正文只保留类型、长度或占位信息，尤其不能把 `write_process.input` 变成可重放的 stdin。
+The argument summary is redacted: bodies such as `content`, `command`, and `input` keep only their type, length, or a placeholder; in particular, `write_process.input` must never become replayable stdin.
 
-### 2. handler 前先提交准入
+### 2. Commit admission before the handler
 
-handler 是真正执行工具的函数；准入（admission）是执行器确认“这个调用现在可以进入 handler”的结果。准入检查会涉及工具是否存在、参数是否符合 schema、当前计划/修复阶段是否允许、权限是否允许，以及是否需要预留 attempt 和 generation。
+The handler is the function that actually runs the tool; admission is the executor's confirmation that "this call can now enter the handler". The admission check covers whether the tool exists, whether the arguments match the schema, whether the current plan/repair phase allows it, whether permission allows it, and whether an attempt and a generation need to be reserved.
 
-顺序必须是：
+The order must be:
 
 ```text
 admit()
-  -> 写入 permission / handler_admitted / attempt / generation
+  -> write permission / handler_admitted / attempt / generation
   -> execute_admitted()
 ```
 
-如果写入准入事实失败，就不能调用 `execute_admitted()`。这条规则尤其重要：保存失败时宁可留下 `pending`，也不能让一个已经改变外部世界的动作没有任何持久边界。
+If writing the admission fact fails, `execute_admitted()` must not be called. This rule matters especially: when saving fails, it is better to leave `pending` than to let an action that has already changed the outside world have no durable boundary at all.
 
-权限拒绝或参数错误不会进入 handler，但仍然会产生确定的工具结果；它们不是“副作用未知”。计划工具的校验失败也继续使用 `plan_rejected`，不因为新增持久化就改变原有计划语义。
+Permission denials or argument errors do not enter the handler, but they still produce a definite tool result; they are not "unknown side effects". Plan tool validation failures also keep using `plan_rejected`; the new persistence does not change the existing plan semantics.
 
-### 3. 一个工具结果对应一个原子提交
+### 3. One tool result maps to one atomic commit
 
-handler 返回后，主线程按模型顺序完成一次提交：
+After the handler returns, the main thread completes one commit in the model's order:
 
-1. State 记录 `ExecutionResult`，也就是这次执行的事实；
-2. Context 追加对应的 `role=tool` 消息；
-3. `tool_boundary` 把这个 call 标记为 `committed`，并写入结果引用；
-4. 三者一起原子替换 session 文件。
+1. State records the `ExecutionResult`, that is, the facts of this execution;
+2. Context appends the matching `role=tool` message;
+3. `tool_boundary` marks this call as `committed` and writes the result reference;
+4. All three atomically replace the session file together.
 
-`role=tool` 是模型协议中的工具结果消息，必须带回原始 `tool_call_id`。只有 State、消息和调用记录都可读，才算一个 call committed；同一回合每个 call 都 committed 后，整轮才 committed，agent loop 才能再次请求模型。
+`role=tool` is the tool result message in the model protocol and must carry back the original `tool_call_id`. A call counts as committed only when State, the message, and the call record are all readable; only after every call in the same round is committed is the whole round committed, and only then can the agent loop request the model again.
 
-有些 `effect_class=none` 的只读调用可以并发等待，但提交仍按模型顺序进行。后一个结果即使先返回，也不能越过前一个尚未提交的 call。`effect_class=possible` 的调用继续按现有顺序执行，`run_shell` 仍属于 possible。
+Some read-only calls with `effect_class=none` can wait concurrently, but commits still happen in the model's order. Even if a later result returns first, it cannot jump ahead of an earlier call that is not yet committed. Calls with `effect_class=possible` keep running in the existing order, and `run_shell` is still possible.
 
-### 4. 不同失败也必须各有结果
+### 4. Different failures must each have a result too
 
-工具不存在、参数不合法、权限拒绝、handler 异常、计划拒绝和进程异步退出，都不能让模型协议少一条结果。每个原始 call 恰好对应一个 `role=tool`；但结果可以表示错误或不确定。
+A nonexistent tool, invalid arguments, a permission denial, a handler exception, a plan rejection, and an asynchronous process exit must not leave the model protocol one result short. Each original call maps to exactly one `role=tool`; but the result can express an error or uncertainty.
 
-这条不变量的意义是：模型下一轮看到的是一个完整回合，而不是“有两个调用却只回来了一个结果”。完整协议不等于所有工具都成功。
+The point of this invariant: what the model sees next round is a complete round, not "two calls but only one result came back". A complete protocol does not mean all tools succeeded.
 
-## 为什么这样设计
+## Why This Design
 
-本版使用同一个原子 JSON 文件，而不是再引入一个 journal。这样 State、Context 和调用边界能在同一次替换中保持一致，读者也只需理解一个权威文件。代价是每个小提交都要写文件，磁盘写入更频繁；同时文件仍可能在 handler 返回前停在 pending。
+This version uses the same atomic JSON file rather than introducing a journal. This keeps State, Context, and the call boundary consistent within one replacement, and readers only need to understand one authoritative file. The cost is that every small commit writes the file, so disk writes are more frequent; and the file may still stop at pending before the handler returns.
 
-本版把“准入事实”放在 handler 前，是为了回答“是否已经获得执行资格”，不是为了声称副作用已经发生。即使 `handler_admitted=true`，进程也可能在 handler 内部退出；如果 effect 是 possible，文件或 shell 的外部结果更无法从 session 直接推断。
+This version puts the "admission fact" before the handler to answer "has it earned the right to execute", not to claim that a side effect has happened. Even with `handler_admitted=true`, the process may exit inside the handler; if the effect is possible, the external result of a file or shell action is even less inferable directly from the session.
 
-因此 v0.32 只承诺精确记录中断窗口，不承诺自动重放。下一课才会把这些 pending 调用分类，并交给用户决定如何调查。
+So v0.32 only promises to record the interruption window precisely, not to replay automatically. The next lesson classifies these pending calls and hands them to the user to decide how to investigate.
 
-## 设计边界
+## Design Boundaries
 
-支持的路径是：回合开始保存 pending；准入完成后保存 `handler_admitted`；handler 返回后把 State、`role=tool` 和 call 记录一起提交；全部 call committed 后才允许下一次 LLM。session 仍是单个 schema 3 JSON 文件，没有额外的 journal。
+The supported path: save pending at round start; save `handler_admitted` after admission completes; after the handler returns, commit State, `role=tool`, and the call record together; allow the next LLM only after all calls are committed. The session is still one schema 3 JSON file, with no separate journal.
 
-不支持的路径是：根据 pending 推断 handler 一定没有执行；把脱敏参数当成重试凭据；中断后自动重放 `write_file`、`run_shell`、进程控制或 stdin 写入；在缺少某个 `role=tool` 时继续请求模型。v0.33 才处理“不确定调用”的恢复交接。
+Unsupported paths: inferring from pending that the handler definitely did not run; using redacted arguments as retry credentials; automatically replaying `write_file`, `run_shell`, process control, or stdin writes after an interruption; continuing to request the model while some `role=tool` is missing. v0.33 handles the recovery handoff of "uncertain calls".
 
-## 关键流程
+## Key Flow
 
 ```text
 assistant tool_calls
@@ -175,33 +175,33 @@ assistant tool_calls
   -> complete round
   -> next LLM request
 
-任一 durable commit 失败
-  -> 停在当前边界
-  -> 不进入后续 handler，不请求下一次 LLM
+any durable commit fails
+  -> stop at the current boundary
+  -> do not enter later handlers, do not request the next LLM
 ```
 
-## 实现拆解
+## Implementation Breakdown
 
-[`src/mini_agent/session.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.32/src/mini_agent/session.py) 定义 schema 3、调用引用、顺序校验和原子替换；[`src/mini_agent/context.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.32/src/mini_agent/context.py) 只允许最后一轮按模型顺序导出结果前缀；[`src/mini_agent/state.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.32/src/mini_agent/state.py) 只在边界保存时放行被引用的 pending attempt。
+[`src/mini_agent/session.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.32/src/mini_agent/session.py) defines schema 3, call references, order validation, and atomic replacement; [`src/mini_agent/context.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.32/src/mini_agent/context.py) only allows the last round to export a result prefix in the model's order; [`src/mini_agent/state.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.32/src/mini_agent/state.py) lets referenced pending attempts through only when saving at a boundary.
 
-[`src/mini_agent/tools/base.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.32/src/mini_agent/tools/base.py) 的 `admit()` 与 `execute_admitted()` 划开准入和 handler；[`src/mini_agent/agent.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.32/src/mini_agent/agent.py) 负责回合开始、逐调用提交、按模型顺序回灌和整轮收口。`__main__.py` 和 `resume.py` 负责把保存失败与普通工具错误分开，并继续拒绝半轮 safe resume。
+`admit()` and `execute_admitted()` in [`src/mini_agent/tools/base.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.32/src/mini_agent/tools/base.py) separate admission from the handler; [`src/mini_agent/agent.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.32/src/mini_agent/agent.py) handles round start, per-call commits, feedback in model order, and whole-round finish. `__main__.py` and `resume.py` separate save failures from ordinary tool errors and keep refusing half-round safe resume.
 
-## 运行与观察
+## Run and Observe
 
-下面命令使用 Bash/zsh。命令行首条任务执行后，程序仍会进入交互循环。
+The command below uses Bash/zsh. After the command-line first task runs, the program still enters the interactive loop.
 
 ```bash
-PYTHONPATH=src python -m mini_agent "检查一个小改动"
+PYTHONPATH=src python -m mini_agent "check a small change"
 ```
 
-在任务中输入 `/save` 开启持久化并记录 session ID。完成一轮工具调用后，打开 `~/.mini_agent/sessions/<session_id>.json`，应能看到 `schema_version: 3`；完整回合结束时，`tool_boundary.status` 为 `committed`，每个 call 也为 `committed`，历史中每个 assistant tool call 后都有对应 `role=tool`。
+During the task, enter `/save` to turn on persistence and record the session ID. After one round of tool calls finishes, open `~/.mini_agent/sessions/<session_id>.json`; you should see `schema_version: 3`; when a full round ends, `tool_boundary.status` is `committed`, every call is also `committed`, and every assistant tool call in the history is followed by its matching `role=tool`.
 
-如果故障发生在回合中间，文件可能保留 `pending` 或部分调用已 committed。v0.32 的预期行为是保存这段事实并拒绝把它当作完整安全点；下一课会说明为什么不能直接继续。
+If a fault happens mid-round, the file may keep `pending` or have only some calls committed. The expected behavior in v0.32 is to save these facts and refuse to treat them as a complete safe point; the next lesson explains why it cannot simply continue.
 
-## 本版特性、下一课与代码索引
+## Version Features, Next Lesson, and Code Index
 
-本版新增的是 schema 3、handler 前的准入提交、每个 call 的原子结果提交、整轮 complete 约束和异步进程事实提交。它没有新增 journal，没有把 pending 当成“未执行”，也没有改变 `run_shell=possible`、PermissionGate 或计划拒绝的原有语义。
+What this version adds is schema 3, the admission commit before the handler, an atomic result commit per call, the whole-round complete constraint, and commits of asynchronous process facts. It adds no journal, does not treat pending as "not executed", and does not change the existing semantics of `run_shell=possible`, the PermissionGate, or plan rejection.
 
-下一课 v0.33 会读取 active pending 边界，把调用分成确定未执行和不确定副作用两类，派生新的 session，并通过 `/resolve` 让用户逐项交接。
+The next lesson, v0.33, reads an active pending boundary, classifies calls into definitely not executed and uncertain side effects, derives a new session, and lets the user hand them off one by one with `/resolve`.
 
-核心代码索引：[`session.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.32/src/mini_agent/session.py)、[`context.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.32/src/mini_agent/context.py)、[`state.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.32/src/mini_agent/state.py)、[`tools/base.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.32/src/mini_agent/tools/base.py)、[`agent.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.32/src/mini_agent/agent.py)。
+Core code index: [`session.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.32/src/mini_agent/session.py), [`context.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.32/src/mini_agent/context.py), [`state.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.32/src/mini_agent/state.py), [`tools/base.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.32/src/mini_agent/tools/base.py), [`agent.py`](https://github.com/liiiiiiiiil/agent-from-scratch/blob/v0.32/src/mini_agent/agent.py).
